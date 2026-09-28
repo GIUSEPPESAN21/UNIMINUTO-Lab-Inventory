@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.6.0 — Códigos numéricos y alfanuméricos libres + etiqueta con descripción
+
+- **Códigos libres** (`core/barcode.py`): además de los 3 formatos GLIOPS
+  V3, un item nuevo acepta un código numérico puro de hasta 20 dígitos
+  (ej. `0012345`, con sus ceros a la izquierda) o uno alfanumérico de hasta
+  13 caracteres con letras sin tildes, números y `-` `_` `.` (ej.
+  `LAB-MIC-01`). Se guarda exactamente como se escribe. Los códigos con la
+  forma de GLIOPS que no cumplen sus reglas se siguen rechazando.
+- `CAJA-001` y códigos parecidos de la nomenclatura anterior **ahora son
+  válidos** como alfanuméricos libres.
+- **Etiqueta rediseñada** (`core/labels.py`): aviso institucional, nombre
+  del item, código de barras Code128 y código legible en 50×25 mm. El
+  Code128 se codifica en la app (subconjuntos B y C) y se dibuja con
+  módulos de ancho entero en puntos de impresora; de python-barcode solo se
+  usa la tabla de patrones, porque su codificador 0.16.1 pierde un `99`
+  inicial. El PNG declara 203 dpi para imprimirse a tamaño real.
+- Alta de items: se ignoran los espacios alrededor del código y el error de
+  formato se muestra antes de guardar. La importación CSV explica cómo no
+  perder los ceros a la izquierda al editar en Excel.
+- Pruebas: formatos con letras, lectura del código de barras desde los
+  píxeles de la etiqueta (devuelve el texto exacto) y guardado/recarga real
+  en Excel de `0012345` y `LAB-MIC-01`.
+
 ## v1.5.0 — Registro abierto a cualquier correo .edu/.edu.co + ID Estudiante
 
 - **Dominio institucional generalizado**: el registro ya no esta restringido
