@@ -12,16 +12,17 @@ from core.labels import ITEM_TYPE_BY_CHOICE, ITEM_TYPE_CHOICES, ITEM_TYPE_HELP, 
 from core.ui import page_header
 
 
-def _render_label_download(item_id: str):
-    if not barcode.is_valid_code(item_id):
+def _render_label_download(item: dict):
+    label_png = labels.generate_item_label_png_bytes(item)
+    if not label_png:
         return
     st.download_button(
         "🏷️ Descargar etiqueta",
-        data=labels.generate_label_png_bytes(item_id),
-        file_name=f"etiqueta_{item_id}.png",
+        data=label_png,
+        file_name=f"etiqueta_{item['id']}.png",
         mime="image/png",
         help="Etiqueta 50x25mm lista para la SAT TT 460",
-        key=f"label_scan_{item_id}",
+        key=f"label_scan_{item['id']}",
     )
 
 
@@ -185,7 +186,7 @@ def render():
         if item.get("description"):
             st.caption(item["description"])
         st.caption(f"Ubicacion: {item.get('location') or 'N/A'}")
-        _render_label_download(item["id"])
+        _render_label_download(item)
         children = result["children"]
         if not children:
             st.info(f"Este {ITEM_TYPE_NAMES['master']} todavía no tiene {ITEM_TYPE_NAMES['child']}s registrados dentro.")
@@ -198,5 +199,5 @@ def render():
         st.success(f"✔️ Item encontrado: **{item['name']}** (`{item['id']}`)")
         if result.get("parsed"):
             st.caption(f"📖 {barcode.describe_parsed(result['parsed'])}")
-        _render_label_download(item["id"])
+        _render_label_download(item)
         _render_item_actions(item, parent=result.get("parent"))

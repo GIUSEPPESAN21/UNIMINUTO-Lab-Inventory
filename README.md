@@ -34,7 +34,7 @@ Streamlit (ver sección de Configuración). La base de datos se entrega
 ## Nomenclatura de códigos de inventario (GLIOPS V3)
 
 Al dar de alta un item nuevo (formulario, escaneo o CSV masivo), su código
-debe cumplir uno de estos 3 formatos — validados por regex en
+debe cumplir uno de estos formatos — validados por regex en
 `core/barcode.py`. Los items ya cargados con una nomenclatura anterior
 siguen funcionando con normalidad (solo se valida al crear, no al editar).
 
@@ -43,13 +43,28 @@ siguen funcionando con normalidad (solo se valida al crear, no al editar).
 | Estándar (5 niveles) | `[ESTANTERIA 1-3]-[PISO 1-6]-[CONTENEDOR]-[CAJA]-[ITEM]` | `1-2-05-12-001` | Inventario masivo: insumos, piezas, electrónica |
 | Mesas de trabajo | `M1-E[n]` o `M2-E[n]` | `M1-E2` | Equipos de alto valor (impresora 3D, cortadora láser...) |
 | Exhibición Lego | `E3-LM[n]` | `E3-LM07` | Modelos armados en la Estantería 3 |
+| Numérico libre | Solo dígitos, hasta 20 | `0012345` | Equipos que ya traen su propio código numérico |
+| Alfanumérico libre | Letras sin tildes, números y `-` `_` `.` entre ellos, con al menos una letra, hasta 13 caracteres | `LAB-MIC-01` | Códigos propios del laboratorio |
+
+- El código se guarda como **texto, exactamente como se escribe**: se
+  conservan los ceros a la izquierda y las mayúsculas/minúsculas.
+- Un código con la *forma* de un formato GLIOPS que no cumple sus reglas
+  (`4-2-05-12-001`, `M3-E1`, `m1-e2`, `E4-LM01`) se rechaza en vez de
+  aceptarse como código libre.
+- Los límites de longitud garantizan que el código de barras de un código
+  libre quepa en la etiqueta con barras de 0,25 mm o más. Los códigos
+  estándar de más de 13 caracteres se imprimen con barras de 0,125 mm, que
+  algunos lectores no leen.
 
 ### Etiquetas imprimibles
 
 Desde el catálogo de Inventario o desde Escanear, el botón
-**🏷️ Descargar etiqueta** genera un PNG con el código de barras (Code128)
-centrado y el código en texto legible debajo, en un lienzo de 384×192px
-(≈ 50×25mm a 203dpi) listo para una impresora térmica **SAT TT 460**.
+**🏷️ Descargar etiqueta** genera un PNG de 384×192px (≈ 50×25mm a 203dpi, resolución guardada en el
+archivo) listo para una impresora térmica **SAT TT 460**, con el aviso
+institucional, el nombre del item, el código de barras Code128 y el código
+en texto legible debajo. Las barras se dibujan con un número entero de
+puntos de impresora por módulo: para que salgan exactas, imprime al 100 %
+(tamaño real), sin "ajustar a la página".
 
 ## Roles
 

@@ -125,10 +125,11 @@ def render():
                 if c4.button("✏️", key=f"edit_{item['id']}", help="Editar"):
                     st.session_state.editing_item_id = item["id"]
                     st.rerun()
-                if barcode.is_valid_code(item.get("id", "")):
+                label_png = labels.generate_item_label_png_bytes(item)
+                if label_png:
                     c5.download_button(
                         "🏷️",
-                        data=labels.generate_label_png_bytes(item["id"]),
+                        data=label_png,
                         file_name=f"etiqueta_{item['id']}.png",
                         mime="image/png",
                         key=f"label_{item['id']}",
@@ -144,7 +145,12 @@ def render():
         st.caption(ITEM_TYPE_HELP[ITEM_TYPE_BY_CHOICE[item_kind]])
 
         with st.form("inv_new_item_form"):
-            new_id = st.text_input("Codigo de barras")
+            new_id = st.text_input(
+                "Codigo de barras",
+                placeholder="Ej: 1-2-05-12-001, LAB-MIC-01 o 0012345",
+                help="Se guarda como texto, tal cual lo escribes: se conservan los ceros a la "
+                     "izquierda y las mayusculas/minusculas. Los espacios al inicio o al final se ignoran.",
+            )
             st.caption(barcode.FORMAT_HELP)
             name_label = "Nombre / Característica" if item_kind == ITEM_TYPE_NAMES["child"] else "Nombre"
             name_placeholder = "Ej: Resistencias 220 Ω" if item_kind == ITEM_TYPE_NAMES["child"] else None
@@ -171,8 +177,18 @@ def render():
             submitted = st.form_submit_button("💾 Registrar", type="primary", use_container_width=True)
 
             if submitted:
+                new_id = (new_id or "").strip()  # el codigo siempre es texto, nunca un numero
+                code_error = None
+                if new_id:
+                    try:
+                        barcode.validate_code_format(new_id)
+                    except ValueError as e:
+                        code_error = str(e)
+
                 if not new_id or not name:
                     st.error("Codigo de barras y nombre son obligatorios.")
+                elif code_error:
+                    st.error(code_error)
                 elif storage.get_item(new_id):
                     st.error("Ya existe un item con ese codigo.")
                 elif item_kind == ITEM_TYPE_NAMES["child"] and not parent_id:
@@ -203,6 +219,11 @@ def render():
             "para un Ítem Individual en la columna item_type."
         )
         st.caption(barcode.FORMAT_HELP)
+        st.caption(
+            "La columna id se lee como texto, asi que los ceros a la izquierda (ej. 0012345) se "
+            "conservan. Si editas el CSV en Excel, formatea esa columna como Texto antes de "
+            "guardarlo: Excel los borra."
+        )
         template_csv = (
             "id,name,category,description,item_type,parent_id,unit,quantity,location,min_stock_alert\n"
             "1-2-05-12-000,Caja de Electronica,Electronica,Contenedor principal de componentes,master,,unidad,0,Estante 3,0\n"
