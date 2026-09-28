@@ -48,7 +48,8 @@ class FakeStorage:
     # --- users ---
     def add_user(self, email, **kwargs):
         base = {
-            "id": uuid.uuid4().hex[:10], "full_name": "Usuario", "institutional_email": email.lower(),
+            "id": uuid.uuid4().hex[:10], "full_name": "Usuario", "student_id": "",
+            "institutional_email": email.lower(),
             "password_hash": "", "role": "estudiante", "program_or_department": "",
             "status": "active", "created_at": "",
         }
@@ -66,8 +67,11 @@ class FakeStorage:
         u = self.users.get(user_id)
         return dict(u) if u else None
 
-    def create_user(self, full_name, email, password_hash, role, program="", status="active"):
-        return self.add_user(email, full_name=full_name, password_hash=password_hash, role=role, program_or_department=program, status=status)
+    def create_user(self, full_name, email, password_hash, role, program="", student_id="", status="active"):
+        return self.add_user(
+            email, full_name=full_name, password_hash=password_hash, role=role,
+            program_or_department=program, student_id=student_id, status=status,
+        )
 
     def update_user(self, user_id, changes):
         self.users[user_id].update(changes)

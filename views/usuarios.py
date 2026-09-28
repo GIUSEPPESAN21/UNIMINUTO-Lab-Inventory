@@ -32,7 +32,7 @@ def render():
             with st.container(border=True):
                 c1, c2, c3, c4 = st.columns([3, 2, 2, 2])
                 c1.markdown(f"**{u.get('full_name')}**")
-                c1.caption(u.get("institutional_email"))
+                c1.caption(f"{u.get('institutional_email')} · ID: {u.get('student_id') or 'N/A'}")
                 c2.caption(f"Programa: {u.get('program_or_department') or 'N/A'}")
 
                 new_role = c3.selectbox(

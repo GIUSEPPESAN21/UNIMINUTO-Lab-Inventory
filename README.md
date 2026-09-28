@@ -64,8 +64,11 @@ centrado y el código en texto legible debajo, en un lienzo de 384×192px
 (gestionada por un `maestro`). El rol `maestro` nunca se auto-asigna: la
 primera cuenta maestra se siembra desde los Secrets de Streamlit
 (`MASTER_EMAIL` / `MASTER_INITIAL_PASSWORD`) la primera vez que arranca la app.
-Por defecto solo se aceptan correos `@uniminuto.edu.co` (configurable con
-`ALLOWED_EMAIL_DOMAINS`).
+Se acepta cualquier correo institucional (dominio terminado en `.edu` o
+`.edu.co`), no está restringido a una sola institución. El formulario de
+registro exige, sin excepción: nombre completo (nombre y apellido), **ID
+Estudiante**, correo institucional, programa académico o departamento, y
+contraseña — todos obligatorios.
 
 ## Arquitectura
 

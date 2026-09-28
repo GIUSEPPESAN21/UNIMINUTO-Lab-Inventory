@@ -34,7 +34,7 @@ SHEET_COLUMNS = {
         "created_by", "updated_at",
     ],
     "users": [
-        "id", "full_name", "institutional_email", "password_hash", "role",
+        "id", "full_name", "student_id", "institutional_email", "password_hash", "role",
         "program_or_department", "status", "created_at",
     ],
     "professors_whitelist": [
@@ -657,12 +657,13 @@ class LabStorage:
             return None
         return _row_to_user(rows.iloc[0])
 
-    def create_user(self, full_name: str, email: str, password_hash: str, role: str, program: str = "", status: str = "active") -> dict:
+    def create_user(self, full_name: str, email: str, password_hash: str, role: str, program: str = "", student_id: str = "", status: str = "active") -> dict:
         with _excel_lock:
             dfs = _read_excel()
             row = {
                 "id": _new_id(),
                 "full_name": full_name,
+                "student_id": student_id,
                 "institutional_email": email.lower().strip(),
                 "password_hash": password_hash,
                 "role": role,

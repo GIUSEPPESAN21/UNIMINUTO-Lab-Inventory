@@ -54,8 +54,9 @@ def test_student_self_registration_end_to_end():
 
     # Widgets del formulario de registro (2da pestana) aparecen despues de
     # los del login (1era pestana) en el orden de ejecucion del script.
-    full_name_input, email_input, program_input, pw_input, pw2_input = at.text_input[2:7]
+    full_name_input, student_id_input, email_input, program_input, pw_input, pw2_input = at.text_input[2:8]
     full_name_input.input("Estudiante de Prueba")
+    student_id_input.input("TI2024001")
     email_input.input("estudiante.prueba@uniminuto.edu.co")
     program_input.input("Ingenieria Industrial")
     pw_input.input("ClaveSegura123")

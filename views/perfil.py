@@ -17,6 +17,7 @@ def render():
     c1, c2 = st.columns(2)
     c1.metric("Nombre", user["full_name"])
     c2.metric("Rol", ROLE_LABELS.get(user["role"], user["role"]))
+    st.caption(f"ID Estudiante: {user.get('student_id') or 'N/A'}")
     st.caption(f"Correo institucional: {user['institutional_email']}")
     st.caption(f"Programa / departamento: {user.get('program_or_department') or 'N/A'}")
 

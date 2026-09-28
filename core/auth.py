@@ -8,6 +8,10 @@ Regla de seguridad clave: el rol NUNCA se elige libremente en el registro.
   que unicamente un "maestro" puede editar.
 - El rol "maestro" nunca se auto-asigna: la primera cuenta maestra se siembra desde
   st.secrets (MASTER_EMAIL / MASTER_INITIAL_PASSWORD) si todavia no existe ninguna.
+
+No se restringe el registro a un dominio institucional especifico (asi otros
+laboratorios pueden usar la misma app con su propio correo institucional):
+cualquier correo cuyo dominio termine en ".edu" o ".edu.co" es valido.
 """
 
 import logging
@@ -18,14 +22,7 @@ from core.config import safe_secret
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_ALLOWED_DOMAINS = ["uniminuto.edu.co"]
-
-
-def get_allowed_domains() -> list:
-    raw = safe_secret("ALLOWED_EMAIL_DOMAINS", "")
-    if raw:
-        return [d.strip().lower() for d in raw.split(",") if d.strip()]
-    return DEFAULT_ALLOWED_DOMAINS
+INSTITUTIONAL_EMAIL_SUFFIXES = (".edu", ".edu.co")
 
 
 def is_institutional_email(email: str) -> bool:
@@ -33,7 +30,7 @@ def is_institutional_email(email: str) -> bool:
     if "@" not in email:
         return False
     domain = email.split("@")[-1]
-    return any(domain == d or domain.endswith("." + d) for d in get_allowed_domains())
+    return domain.endswith(INSTITUTIONAL_EMAIL_SUFFIXES)
 
 
 def hash_password(plain_password: str) -> str:
@@ -71,15 +68,20 @@ def ensure_master_seed(storage) -> None:
         logger.error(f"No se pudo sembrar la cuenta maestra: {e}")
 
 
-def register_user(storage, full_name: str, email: str, password: str, program: str):
+def register_user(storage, full_name: str, email: str, password: str, program: str, student_id: str):
     email = (email or "").strip().lower()
     full_name = (full_name or "").strip()
+    program = (program or "").strip()
+    student_id = (student_id or "").strip()
 
-    if not full_name:
-        return None, "El nombre completo es obligatorio."
+    if len(full_name.split()) < 2:
+        return None, "Ingresa tu nombre completo (nombre y apellido)."
     if not is_institutional_email(email):
-        domains = ", ".join(get_allowed_domains())
-        return None, f"Debes registrarte con un correo institucional valido ({domains})."
+        return None, "Debes registrarte con un correo institucional valido (terminado en .edu o .edu.co)."
+    if not student_id:
+        return None, "El ID de estudiante es obligatorio."
+    if not program:
+        return None, "El programa academico o departamento es obligatorio."
     if not password or len(password) < 8:
         return None, "La contrasena debe tener al menos 8 caracteres."
     if storage.get_user_by_email(email):
@@ -93,6 +95,7 @@ def register_user(storage, full_name: str, email: str, password: str, program: s
         password_hash=hash_password(password),
         role=role,
         program=program,
+        student_id=student_id,
         status="active",
     )
     return user, None

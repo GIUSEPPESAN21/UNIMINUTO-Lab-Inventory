@@ -46,21 +46,24 @@ def render():
                         st.rerun()
 
         with tab_register:
-            domains = ", ".join(auth.get_allowed_domains())
-            st.caption(f"Solo se aceptan correos institucionales: {domains}")
+            st.caption("Solo se aceptan correos institucionales (terminados en **.edu** o **.edu.co**).")
+            st.caption("Todos los campos son obligatorios.")
             with st.form("register_form"):
-                full_name = st.text_input("Nombre completo")
-                email = st.text_input("Correo institucional", key="reg_email", placeholder="nombre@uniminuto.edu.co")
-                program = st.text_input("Programa academico o departamento")
-                password = st.text_input("Contrasena", type="password", key="reg_pw")
-                password2 = st.text_input("Confirmar contrasena", type="password", key="reg_pw2")
+                full_name = st.text_input("Nombre completo *", placeholder="Nombre y apellido")
+                student_id = st.text_input("ID Estudiante *", placeholder="Ej: TI2024001")
+                email = st.text_input(
+                    "Correo institucional *", key="reg_email", placeholder="nombre@tuinstitucion.edu.co"
+                )
+                program = st.text_input("Programa academico o departamento *")
+                password = st.text_input("Contrasena *", type="password", key="reg_pw")
+                password2 = st.text_input("Confirmar contrasena *", type="password", key="reg_pw2")
                 submitted = st.form_submit_button("Crear cuenta", type="primary", use_container_width=True)
 
                 if submitted:
                     if password != password2:
                         st.error("Las contrasenas no coinciden.")
                     else:
-                        user, error = auth.register_user(storage, full_name, email, password, program)
+                        user, error = auth.register_user(storage, full_name, email, password, program, student_id)
                         if error:
                             st.error(error)
                         else:

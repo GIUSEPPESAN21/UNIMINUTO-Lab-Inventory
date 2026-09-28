@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.5.0 — Registro abierto a cualquier correo .edu/.edu.co + ID Estudiante
+
+- **Dominio institucional generalizado**: el registro ya no esta restringido
+  al dominio `uniminuto.edu.co` (ni a ningun dominio configurado por
+  Secrets); ahora acepta cualquier correo cuyo dominio termine en `.edu` o
+  `.edu.co`, para que otros laboratorios puedan usar la misma app con su
+  propio correo institucional. Se elimino la variable `ALLOWED_EMAIL_DOMAINS`.
+- **Nuevo campo obligatorio "ID Estudiante"** en el registro
+  (`core/storage.py`: columna `student_id` en la hoja `users`), visible
+  despues en Mi perfil y en Usuarios (solo maestro).
+- El registro ahora exige, sin excepcion, **todos** sus campos: nombre
+  completo (nombre y apellido, no una sola palabra), ID Estudiante, correo
+  institucional valido, programa academico o departamento, y contraseña de
+  al menos 8 caracteres.
+
 ## v1.4.0 — Nomenclatura GLIOPS V3 y etiquetas imprimibles
 
 - **Nueva nomenclatura de codigos de inventario** (Canvas de Estructura y
