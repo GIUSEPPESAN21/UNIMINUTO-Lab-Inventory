@@ -58,11 +58,13 @@ if not st.session_state.user:
 
 user = st.session_state.user
 
-from views import inicio, escanear, inventario, prestamos, usuarios, reportes, acerca_de, perfil
+from views import inicio, escanear, inventario, prestamos, reservas, solicitudes, usuarios, reportes, acerca_de, perfil
 
 pages = {
     "inicio": st.Page(inicio.render, title="Inicio", icon="🏠", default=True, url_path="inicio"),
     "escanear": st.Page(escanear.render, title="Escanear", icon="🛰️", url_path="escanear"),
+    "solicitudes": st.Page(solicitudes.render, title="Solicitudes", icon="📝", url_path="solicitudes"),
+    "reservas": st.Page(reservas.render, title="Reservas", icon="🗓️", url_path="reservas"),
     "prestamos": st.Page(prestamos.render, title="Prestamos", icon="📋", url_path="prestamos"),
 }
 
@@ -79,7 +81,7 @@ pages["acerca_de"] = st.Page(acerca_de.render, title="Acerca de", icon="🏢", u
 st.session_state.pages = pages
 
 # Navegacion agrupada por secciones para que el sidebar sea facil de leer.
-nav_sections = {"🧭 Principal": [pages["inicio"], pages["escanear"], pages["prestamos"]]}
+nav_sections = {"🧭 Principal": [pages["inicio"], pages["escanear"], pages["solicitudes"], pages["reservas"], pages["prestamos"]]}
 if user["role"] in ("profesor", "maestro"):
     nav_sections["🗂️ Gestion del laboratorio"] = [pages["inventario"], pages["reportes"]]
 if user["role"] == "maestro":
