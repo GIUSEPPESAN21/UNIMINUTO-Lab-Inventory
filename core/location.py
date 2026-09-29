@@ -29,13 +29,20 @@ def build_location_guide(item: dict, parent: dict = None) -> dict:
     steps = []
     parsed = None
 
+    navigable_formats = (barcode.FORMAT_STANDARD, barcode.FORMAT_MESA, barcode.FORMAT_LEGO)
     try:
-        parsed = barcode.parse_code(code)
+        candidate = barcode.parse_code(code)
+        parsed = candidate if candidate.get("format") in navigable_formats else None
     except ValueError:
+        parsed = None
+
+    # Un ítem puede tener código libre y heredar la ruta estructurada de su contenedor.
+    if not parsed:
         parent_code = str(parent.get("id") or "").strip()
         if parent_code:
             try:
-                parsed = barcode.parse_code(parent_code)
+                candidate = barcode.parse_code(parent_code)
+                parsed = candidate if candidate.get("format") in navigable_formats else None
             except ValueError:
                 parsed = None
 
