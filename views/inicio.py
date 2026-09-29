@@ -17,7 +17,9 @@ def _quick_guide():
         3. **{ITEM_TYPE_NAMES['standalone']}**: un producto con su propio código, sin contenedor.
         4. Ve a **🛰️ Escanear**, escribe o escanea el código con tu lector USB, y desde ahí puedes
            **dar salida** (llevarte el producto prestado) o **reingresarlo** cuando lo devuelvas.
-        5. En **📋 Préstamos** puedes ver en todo momento qué tienes prestado (o, si eres profesor
+        5. En **📝 Solicitudes** pide un producto o servicio; los responsables reciben correo si SMTP está configurado.
+        6. En **🗓️ Reservas** solicita una actividad o el laboratorio completo y consulta su aprobación.
+        7. En **📋 Préstamos** puedes ver en todo momento qué tienes prestado (o, si eres profesor
            o del perfil maestro, quién tiene qué en todo el laboratorio).
         """)
 
@@ -78,6 +80,10 @@ def render():
         if user["role"] != "estudiante" and "inventario" in pages:
             if st.button("📦 Ir a Inventario", use_container_width=True):
                 st.switch_page(pages["inventario"])
+        if "solicitudes" in pages and st.button("📝 Crear solicitud", use_container_width=True):
+            st.switch_page(pages["solicitudes"])
+        if "reservas" in pages and st.button("🗓️ Reservar laboratorio", use_container_width=True):
+            st.switch_page(pages["reservas"])
         if "prestamos" in pages and st.button("📋 Ver prestamos", use_container_width=True):
             st.switch_page(pages["prestamos"])
 
