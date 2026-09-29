@@ -92,13 +92,45 @@ en texto legible debajo. Las barras se dibujan con un número entero de
 puntos de impresora por módulo: para que salgan exactas, imprime al 100 %
 (tamaño real), sin "ajustar a la página".
 
+## Operación del laboratorio
+
+### Reservas
+
+Todo usuario autenticado puede solicitar una actividad o el laboratorio
+completo. Las fechas se interpretan en `America/Bogota` y se guardan en UTC.
+Una reserva completa entra en conflicto con cualquier reserva aprobada que se
+solape; dos actividades distintas pueden coexistir, pero dos reservas de la
+misma actividad no. Profesor y maestro aprueban/rechazan; el solicitante puede
+cancelar. No se imponen horarios de apertura porque la documentación no los
+define.
+
+### Solicitudes de productos y servicios
+
+Los productos validan existencia, estado y disponibilidad tanto al solicitar
+como al aprobar. Aprobar no descuenta inventario: la salida se confirma en
+Escanear para conservar la cadena de custodia. Los servicios requieren nombre,
+descripción y fecha. Si SMTP está configurado, los administradores reciben un
+correo; si falla, la solicitud permanece guardada y muestra la advertencia.
+
+### Guía móvil de ubicación
+
+Cada producto muestra pasos interactivos derivados del código V3 (estantería,
+piso, contenedor, caja e ítem). Mesa y Lego tienen rutas especiales; códigos
+libres/heredados usan `location`. No se dibuja un mapa porque los documentos no
+incluyen plano, coordenadas ni punto de entrada.
+
+### Corrección de usuarios
+
+El maestro puede corregir nombre, ID, correo institucional y programa. El
+sistema valida campos obligatorios, dominio institucional y unicidad del correo;
+rol, estado y contraseña conservan sus controles independientes.
 ## Roles
 
 | Rol | Puede |
 |---|---|
-| Estudiante | Ver catálogo, escanear y pedir salida a su nombre, ver y reingresar sus propios préstamos |
-| Profesor | Todo lo anterior + alta/edición/baja de ítems, registrar salida/reingreso de cualquier usuario, ver todos los préstamos y reportes |
-| Maestro | Todo lo anterior + gestión de usuarios y roles, lista blanca de profesores, auditoría completa, exportar base de datos |
+| Estudiante | Escanear, solicitar productos/servicios, reservar y gestionar sus préstamos/solicitudes |
+| Profesor | Todo lo anterior + alta/edición/baja de ítems, aprobar solicitudes/reservas, ver préstamos y reportes |
+| Maestro | Todo lo anterior + corregir usuarios, roles/estados, lista blanca y exportación |
 
 **Seguridad del registro:** nadie elige su rol al registrarse. Toda cuenta nace
 `estudiante`; solo nace `profesor` si su correo ya está en la lista blanca
@@ -132,11 +164,15 @@ core/
   ui.py                    Componentes visuales compartidos (logo, encabezados)
   barcode.py              Validación/lectura de codigos (GLIOPS V3) y resolución de escaneo
   loans.py                Checkout / checkin / vencidos
-  notifications.py        Alertas WhatsApp opcionales (Twilio)
+  reservations.py         Validación, conflictos y aprobación de reservas
+  service_requests.py     Solicitudes de productos/servicios y revisión
+  location.py             Rutas de ubicación derivadas del código GLIOPS
+  notifications.py        Correo SMTP + alertas WhatsApp opcionales
   reports.py              Analítica y exportación a Excel
 views/
-  login.py, inicio.py, escanear.py, inventario.py, perfil.py,
-  prestamos.py, usuarios.py, reportes.py, acerca_de.py
+  login.py, inicio.py, escanear.py, inventario.py, solicitudes.py,
+  reservas.py, location_guide.py, perfil.py, prestamos.py, usuarios.py,
+  reportes.py, acerca_de.py
 tests/                  Pruebas unitarias de core/* (pytest, sin tocar Excel/GitHub)
 .github/workflows/ci.yml Integración continua: sintaxis + pruebas en cada push/PR
 ```
@@ -176,6 +212,12 @@ El `GITHUB_TOKEN` debe ser un *fine-grained personal access token* con acceso
 **únicamente** al repositorio `UNIMINUTO-Lab-Database` y permiso
 "Contents: Read and write". No reutilices tokens con acceso a otros
 repositorios.
+
+Para correo automático configura `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`,
+`SMTP_PASSWORD`, `SMTP_FROM_EMAIL` y TLS/SSL en Secrets. Define
+`ADMIN_NOTIFICATION_EMAILS` como lista; si queda vacía, se usan profesores y
+maestros activos. Nunca subas credenciales al repositorio. SMTP es opcional:
+su ausencia no impide guardar una solicitud o reserva.
 
 ## Ejecutar en local
 
