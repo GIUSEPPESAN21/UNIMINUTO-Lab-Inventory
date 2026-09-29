@@ -45,6 +45,17 @@ SHEET_COLUMNS = {
         "user_name", "user_role", "checkout_at", "expected_return_at",
         "return_at", "status", "notes",
     ],
+    "reservations": [
+        "id", "scope_type", "activity", "purpose", "attendees", "start_at", "end_at",
+        "requester_id", "requester_name", "requester_email", "status", "reviewed_by",
+        "reviewed_at", "review_notes", "email_notified", "email_error", "created_at", "updated_at",
+    ],
+    "service_requests": [
+        "id", "request_type", "item_id", "item_name", "quantity", "service_name",
+        "description", "needed_at", "requester_id", "requester_name", "requester_email",
+        "status", "reviewed_by", "reviewed_at", "review_notes", "email_notified",
+        "email_error", "created_at", "updated_at",
+    ],
     "item_history": [
         "id", "item_id", "timestamp", "type", "quantity_change",
         "actor_user_id", "details",
@@ -332,6 +343,44 @@ def _row_to_loan(row: pd.Series) -> dict:
         else:
             loan[date_field] = None
     return _clean_nan(loan)
+
+
+def _parse_record_dates(record: dict, fields: tuple) -> dict:
+    for field in fields:
+        raw = record.get(field)
+        if raw and str(raw).strip() not in ("", "nan", "None"):
+            try:
+                value = datetime.fromisoformat(str(raw))
+                record[field] = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+            except (TypeError, ValueError):
+                record[field] = None
+        else:
+            record[field] = None
+    return record
+
+
+def _row_to_reservation(row: pd.Series) -> dict:
+    record = _clean_nan(row.to_dict())
+    try:
+        record["attendees"] = int(float(record.get("attendees") or 0))
+    except (TypeError, ValueError):
+        record["attendees"] = 0
+    record["email_notified"] = str(record.get("email_notified") or "").lower() in ("true", "1")
+    return _parse_record_dates(
+        record, ("start_at", "end_at", "reviewed_at", "created_at", "updated_at")
+    )
+
+
+def _row_to_service_request(row: pd.Series) -> dict:
+    record = _clean_nan(row.to_dict())
+    try:
+        record["quantity"] = int(float(record.get("quantity") or 0))
+    except (TypeError, ValueError):
+        record["quantity"] = 0
+    record["email_notified"] = str(record.get("email_notified") or "").lower() in ("true", "1")
+    return _parse_record_dates(
+        record, ("needed_at", "reviewed_at", "created_at", "updated_at")
+    )
 
 
 VALID_ITEM_TYPES = ("master", "child", "standalone")
@@ -676,15 +725,40 @@ class LabStorage:
             return row
 
     def update_user(self, user_id: str, changes: dict):
+        """Actualiza solo campos de usuario conocidos y devuelve el registro.
+
+        La vista valida semántica (nombre, correo, programa); esta capa evita
+        columnas arbitrarias y garantiza unicidad de correo para cualquier cliente.
+        """
+        allowed = {
+            "full_name", "student_id", "institutional_email", "password_hash",
+            "role", "program_or_department", "status",
+        }
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValueError(f"Campos de usuario no permitidos: {', '.join(sorted(unknown))}.")
         with _excel_lock:
             dfs = _read_excel()
             df = dfs["users"]
             idx = df.index[df["id"] == user_id].tolist()
-            if idx:
-                for k, v in changes.items():
-                    df.at[idx[0], k] = v
-                dfs["users"] = df
-                _write_and_sync(dfs)
+            if not idx:
+                return None
+            changes = dict(changes)
+            if "institutional_email" in changes:
+                email = str(changes["institutional_email"] or "").lower().strip()
+                duplicate = df[(df["institutional_email"].str.lower().str.strip() == email) & (df["id"] != user_id)]
+                if not duplicate.empty:
+                    raise ValueError("Ya existe otra cuenta con ese correo institucional.")
+                changes["institutional_email"] = email
+            if "role" in changes and changes["role"] not in ("estudiante", "profesor", "maestro"):
+                raise ValueError("Rol de usuario inválido.")
+            if "status" in changes and changes["status"] not in ("active", "disabled"):
+                raise ValueError("Estado de usuario inválido.")
+            for key, value in changes.items():
+                df.at[idx[0], key] = value
+            dfs["users"] = df
+            _write_and_sync(dfs)
+            return _row_to_user(df.loc[idx[0]])
 
     @firestore_retry
     def get_all_users(self) -> list:
@@ -829,3 +903,146 @@ class LabStorage:
         rows = df[df["item_id"] == item_id]
         history = [_clean_nan(row.to_dict()) for _, row in rows.iterrows()]
         return sorted(history, key=lambda x: x.get("timestamp") or "", reverse=True)
+    # ------------------------------------------------------------------
+    # RESERVAS DE LABORATORIO
+    # ------------------------------------------------------------------
+
+    def create_reservation(self, data: dict, user: dict) -> dict:
+        with _excel_lock:
+            dfs = _read_excel()
+            now = _now_str()
+            row = {
+                "id": _new_id(), "scope_type": data["scope_type"],
+                "activity": data.get("activity", ""), "purpose": data.get("purpose", ""),
+                "attendees": int(data.get("attendees", 1)),
+                "start_at": data["start_at"].isoformat(), "end_at": data["end_at"].isoformat(),
+                "requester_id": user["id"], "requester_name": user.get("full_name", ""),
+                "requester_email": user.get("institutional_email", ""), "status": "pending",
+                "reviewed_by": "", "reviewed_at": "", "review_notes": "",
+                "email_notified": False, "email_error": "", "created_at": now, "updated_at": now,
+            }
+            dfs["reservations"] = pd.concat([dfs["reservations"], pd.DataFrame([row])], ignore_index=True)
+            _write_and_sync(dfs)
+            return row
+
+    @firestore_retry
+    def get_reservation(self, reservation_id: str):
+        dfs = _read_excel()
+        rows = dfs["reservations"][dfs["reservations"]["id"] == reservation_id]
+        return None if rows.empty else _row_to_reservation(rows.iloc[0])
+
+    @firestore_retry
+    def get_reservations(self, status: str = None, user_id: str = None) -> list:
+        df = _read_excel()["reservations"]
+        if status:
+            df = df[df["status"] == status]
+        if user_id:
+            df = df[df["requester_id"] == user_id]
+        rows = [_row_to_reservation(row) for _, row in df.iterrows()]
+        aware_min = datetime.min.replace(tzinfo=timezone.utc)
+        return sorted(rows, key=lambda row: row.get("start_at") or aware_min)
+
+    def update_reservation_status(self, reservation_id: str, status: str,
+                                  reviewer_email: str, notes: str = "") -> bool:
+        with _excel_lock:
+            dfs = _read_excel()
+            df = dfs["reservations"]
+            idx = df.index[df["id"] == reservation_id].tolist()
+            if not idx:
+                return False
+            i, now = idx[0], _now_str()
+            df.at[i, "status"] = status
+            df.at[i, "reviewed_by"] = reviewer_email
+            df.at[i, "reviewed_at"] = now
+            df.at[i, "review_notes"] = notes
+            df.at[i, "updated_at"] = now
+            dfs["reservations"] = df
+            _write_and_sync(dfs)
+            return True
+
+    def update_reservation_notification(self, reservation_id: str, sent: bool, error: str = "") -> bool:
+        with _excel_lock:
+            dfs = _read_excel()
+            df = dfs["reservations"]
+            idx = df.index[df["id"] == reservation_id].tolist()
+            if not idx:
+                return False
+            df.at[idx[0], "email_notified"] = bool(sent)
+            df.at[idx[0], "email_error"] = error
+            df.at[idx[0], "updated_at"] = _now_str()
+            dfs["reservations"] = df
+            _write_and_sync(dfs)
+            return True
+
+    # ------------------------------------------------------------------
+    # SOLICITUDES DE PRODUCTOS Y SERVICIOS
+    # ------------------------------------------------------------------
+
+    def create_service_request(self, data: dict, user: dict) -> dict:
+        with _excel_lock:
+            dfs = _read_excel()
+            now = _now_str()
+            row = {
+                "id": _new_id(), "request_type": data["request_type"],
+                "item_id": data.get("item_id", ""), "item_name": data.get("item_name", ""),
+                "quantity": int(data.get("quantity", 0)), "service_name": data.get("service_name", ""),
+                "description": data.get("description", ""), "needed_at": data.get("needed_at", ""),
+                "requester_id": user["id"], "requester_name": user.get("full_name", ""),
+                "requester_email": user.get("institutional_email", ""), "status": "pending",
+                "reviewed_by": "", "reviewed_at": "", "review_notes": "",
+                "email_notified": False, "email_error": "", "created_at": now, "updated_at": now,
+            }
+            dfs["service_requests"] = pd.concat(
+                [dfs["service_requests"], pd.DataFrame([row])], ignore_index=True
+            )
+            _write_and_sync(dfs)
+            return row
+
+    @firestore_retry
+    def get_service_request(self, request_id: str):
+        dfs = _read_excel()
+        rows = dfs["service_requests"][dfs["service_requests"]["id"] == request_id]
+        return None if rows.empty else _row_to_service_request(rows.iloc[0])
+
+    @firestore_retry
+    def get_service_requests(self, status: str = None, user_id: str = None) -> list:
+        df = _read_excel()["service_requests"]
+        if status:
+            df = df[df["status"] == status]
+        if user_id:
+            df = df[df["requester_id"] == user_id]
+        rows = [_row_to_service_request(row) for _, row in df.iterrows()]
+        aware_min = datetime.min.replace(tzinfo=timezone.utc)
+        return sorted(rows, key=lambda row: row.get("created_at") or aware_min, reverse=True)
+
+    def update_service_request_status(self, request_id: str, status: str,
+                                      reviewer_email: str, notes: str = "") -> bool:
+        with _excel_lock:
+            dfs = _read_excel()
+            df = dfs["service_requests"]
+            idx = df.index[df["id"] == request_id].tolist()
+            if not idx:
+                return False
+            i, now = idx[0], _now_str()
+            df.at[i, "status"] = status
+            df.at[i, "reviewed_by"] = reviewer_email
+            df.at[i, "reviewed_at"] = now
+            df.at[i, "review_notes"] = notes
+            df.at[i, "updated_at"] = now
+            dfs["service_requests"] = df
+            _write_and_sync(dfs)
+            return True
+
+    def update_service_request_notification(self, request_id: str, sent: bool, error: str = "") -> bool:
+        with _excel_lock:
+            dfs = _read_excel()
+            df = dfs["service_requests"]
+            idx = df.index[df["id"] == request_id].tolist()
+            if not idx:
+                return False
+            df.at[idx[0], "email_notified"] = bool(sent)
+            df.at[idx[0], "email_error"] = error
+            df.at[idx[0], "updated_at"] = _now_str()
+            dfs["service_requests"] = df
+            _write_and_sync(dfs)
+            return True
