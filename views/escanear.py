@@ -12,6 +12,7 @@ from core import barcode, labels, loans as loans_core, notifications
 from core.labels import ITEM_TYPE_BY_CHOICE, ITEM_TYPE_CHOICES, ITEM_TYPE_HELP, ITEM_TYPE_NAMES
 from core.ui import page_header
 from views.code_input import render_code_input
+from views.location_guide import render_location_guide
 
 
 def _render_label_download(item: dict):
@@ -28,6 +29,8 @@ def _render_label_download(item: dict):
 def _render_item_actions(item: dict, parent: dict = None):
     storage = st.session_state.storage
     user = st.session_state.user
+
+    render_location_guide(item, parent, key_prefix=f"scan_guide_{item['id']}")
 
     if parent:
         st.caption(f"🗄️ Pertenece al {ITEM_TYPE_NAMES['master']}: **{parent.get('name')}** (`{parent.get('id')}`)")
@@ -209,6 +212,7 @@ def render():
             st.caption(item["description"])
         st.caption(f"Ubicacion: {item.get('location') or 'N/A'}")
         _render_label_download(item)
+        render_location_guide(item, key_prefix=f"scan_master_guide_{item['id']}")
         children = result["children"]
         if not children:
             st.info(f"Este {ITEM_TYPE_NAMES['master']} todavía no tiene {ITEM_TYPE_NAMES['child']}s registrados dentro.")
