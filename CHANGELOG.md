@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.8.0 — Reservas, solicitudes, correo y guía móvil
+
+- Reservas de actividad o laboratorio completo con zona `America/Bogota`,
+  validación temporal, conflictos, aprobación y cancelación por roles.
+- Solicitudes de productos y servicios con validación de stock al crear y
+  aprobar, estados gestionables y conservación del checkout como cierre de
+  cadena de custodia.
+- Correo SMTP opcional a destinatarios configurados o profesores/maestros
+  activos. Un fallo de correo no pierde la solicitud.
+- Guía móvil interactiva por pasos desde códigos GLIOPS, Mesa o Lego, con
+  respaldo en la ubicación textual para códigos libres y heredados.
+- Edición validada de nombre, ID, correo y programa por el maestro; correo
+  único y actualización segura limitada a campos conocidos.
+- Nuevas hojas `reservations` y `service_requests`, creadas automáticamente
+  sin migración manual del Excel existente.
+- Nuevos módulos de dominio, componentes reutilizables, navegación y pruebas
+  unitarias/integración para las funciones anteriores.
+
 ## v1.7.0 — Generador asistido y niveles `no aplica` en códigos GLIOPS
 
 - El estándar de cinco niveles acepta ceros finales como marcadores de
