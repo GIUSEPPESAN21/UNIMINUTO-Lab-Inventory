@@ -40,21 +40,47 @@ siguen funcionando con normalidad (solo se valida al crear, no al editar).
 
 | Formato | Patrón | Ejemplo | Uso |
 |---|---|---|---|
-| Estándar (5 niveles) | `[ESTANTERIA 1-3]-[PISO 1-6]-[CONTENEDOR]-[CAJA]-[ITEM]` | `1-2-05-12-001` | Inventario masivo: insumos, piezas, electrónica |
+| Estándar (5 niveles) | `[ESTANTERIA 1-3]-[PISO 1-6]-[CONTENEDOR]-[CAJA]-[ITEM]` | `2-1-01-00-000` | Ubicación jerárquica: contenedor, caja/subcontenedor o ítem |
 | Mesas de trabajo | `M1-E[n]` o `M2-E[n]` | `M1-E2` | Equipos de alto valor (impresora 3D, cortadora láser...) |
 | Exhibición Lego | `E3-LM[n]` | `E3-LM07` | Modelos armados en la Estantería 3 |
 | Numérico libre | Solo dígitos, hasta 20 | `0012345` | Equipos que ya traen su propio código numérico |
 | Alfanumérico libre | Letras sin tildes, números y `-` `_` `.` entre ellos, con al menos una letra, hasta 13 caracteres | `LAB-MIC-01` | Códigos propios del laboratorio |
 
-- El código se guarda como **texto, exactamente como se escribe**: se
-  conservan los ceros a la izquierda y las mayúsculas/minúsculas.
+En el formato estándar los niveles finales que no aplican se representan con
+ceros, siempre de derecha a izquierda:
+
+| Nivel representado | Código canónico | Significado |
+|---|---|---|
+| Contenedor Principal | `2-1-01-00-000` | Caja e ítem no aplican |
+| Caja / Contenedor de Característica | `2-1-01-01-000` | Ítem no aplica |
+| Ítem Individual | `2-1-01-01-001` | Todos los niveles aplican |
+
+El contenedor siempre debe ser positivo y no se acepta un ítem positivo si la
+caja es `00`. Los valores `00`/`000` son marcadores de estructura, no cantidades.
+
+- El modo manual guarda el código como **texto, exactamente como se escribe**:
+  conserva ceros a la izquierda y mayúsculas/minúsculas.
 - Un código con la *forma* de un formato GLIOPS que no cumple sus reglas
-  (`4-2-05-12-001`, `M3-E1`, `m1-e2`, `E4-LM01`) se rechaza en vez de
-  aceptarse como código libre.
-- Los límites de longitud garantizan que el código de barras de un código
-  libre quepa en la etiqueta con barras de 0,25 mm o más. Los códigos
-  estándar de más de 13 caracteres se imprimen con barras de 0,125 mm, que
-  algunos lectores no leen.
+  (`4-2-05-12-001`, `2-1-01-00-001`, `M3-E1`, `m1-e2`) se rechaza.
+- Los límites de longitud garantizan que un código libre quepa en la etiqueta.
+
+### Generador asistido de códigos
+
+El alta desde Inventario ofrece por defecto **Generar automáticamente** y
+mantiene **Escanear o escribir** para códigos preexistentes. El generador:
+
+- construye el estándar GLIOPS según el tipo de ítem, con relleno canónico
+  `2/2/3` y ceros `no aplica` donde corresponde;
+- genera formatos Mesa, Lego, numérico libre o `PREFIJO-NÚMERO`;
+- normaliza a mayúsculas los prefijos generados, muestra el código final en
+  vivo, advierte duplicados o una discrepancia de nivel y permite previsualizar
+  la etiqueta;
+- se reutiliza al registrar un código escaneado que todavía no existe.
+
+La validación de `core/storage.py` sigue siendo la autoridad final antes de
+guardar. La generación no reserva automáticamente "el siguiente número": el
+usuario suministra la numeración para evitar colisiones con el backend actual
+Excel + GitHub.
 
 ### Etiquetas imprimibles
 

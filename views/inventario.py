@@ -9,6 +9,7 @@ from core import barcode
 from core import labels
 from core.labels import ITEM_TYPE_BY_CHOICE, ITEM_TYPE_CHOICES, ITEM_TYPE_HELP, ITEM_TYPE_LABELS, ITEM_TYPE_NAMES
 from core.ui import page_header
+from views.code_input import render_code_input
 
 
 def _edit_item_form(storage, item: dict, user: dict):
@@ -128,11 +129,8 @@ def render():
                 label_png = labels.generate_item_label_png_bytes(item)
                 if label_png:
                     c5.download_button(
-                        "🏷️",
-                        data=label_png,
-                        file_name=f"etiqueta_{item['id']}.png",
-                        mime="image/png",
-                        key=f"label_{item['id']}",
+                        "🏷️", data=label_png, file_name=f"etiqueta_{item['id']}.png",
+                        mime="image/png", key=f"label_{item['id']}",
                         help="Descargar etiqueta (50x25mm, lista para la SAT TT 460)",
                         use_container_width=True,
                     )
@@ -142,16 +140,14 @@ def render():
     with tab_nuevo:
         st.caption("También puedes registrar un item nuevo directamente escaneando su código en la sección Escanear.")
         item_kind = st.radio("¿Qué quieres registrar?", ITEM_TYPE_CHOICES, horizontal=True, key="inv_new_kind")
-        st.caption(ITEM_TYPE_HELP[ITEM_TYPE_BY_CHOICE[item_kind]])
+        item_type = ITEM_TYPE_BY_CHOICE[item_kind]
+        st.caption(ITEM_TYPE_HELP[item_type])
+
+        # Fuera del formulario para que formato, numeracion y vista previa se
+        # actualicen inmediatamente en cada interaccion.
+        new_id = render_code_input(storage, item_type, key_prefix="inv_new_code")
 
         with st.form("inv_new_item_form"):
-            new_id = st.text_input(
-                "Codigo de barras",
-                placeholder="Ej: 1-2-05-12-001, LAB-MIC-01 o 0012345",
-                help="Se guarda como texto, tal cual lo escribes: se conservan los ceros a la "
-                     "izquierda y las mayusculas/minusculas. Los espacios al inicio o al final se ignoran.",
-            )
-            st.caption(barcode.FORMAT_HELP)
             name_label = "Nombre / Característica" if item_kind == ITEM_TYPE_NAMES["child"] else "Nombre"
             name_placeholder = "Ej: Resistencias 220 Ω" if item_kind == ITEM_TYPE_NAMES["child"] else None
             name = st.text_input(name_label, placeholder=name_placeholder)
@@ -177,7 +173,7 @@ def render():
             submitted = st.form_submit_button("💾 Registrar", type="primary", use_container_width=True)
 
             if submitted:
-                new_id = (new_id or "").strip()  # el codigo siempre es texto, nunca un numero
+                new_id = (new_id or "").strip()
                 code_error = None
                 if new_id:
                     try:
@@ -196,14 +192,14 @@ def render():
                 else:
                     data = {
                         "name": name, "category": category, "description": description,
-                        "item_type": ITEM_TYPE_BY_CHOICE[item_kind], "parent_id": parent_id, "unit": "unidad",
+                        "item_type": item_type, "parent_id": parent_id, "unit": "unidad",
                         "quantity": int(quantity), "location": location,
                         "min_stock_alert": int(min_alert), "status": "active",
                         "created_by": user["institutional_email"],
                     }
                     try:
                         storage.save_item(data, new_id, is_new=True, actor_email=user["institutional_email"])
-                        st.success(f"'{name}' registrado correctamente.")
+                        st.success(f"'{name}' registrado correctamente con el código {new_id}.")
                         st.rerun()
                     except ValueError as e:
                         st.error(str(e))
@@ -226,8 +222,8 @@ def render():
         )
         template_csv = (
             "id,name,category,description,item_type,parent_id,unit,quantity,location,min_stock_alert\n"
-            "1-2-05-12-000,Caja de Electronica,Electronica,Contenedor principal de componentes,master,,unidad,0,Estante 3,0\n"
-            "1-2-05-12-001,Resistencias 220 ohm,Electronica,Paquete de 10,child,1-2-05-12-000,paquete,20,Estante 3,5\n"
+            "1-2-05-00-000,Caja de Electronica,Electronica,Contenedor principal de componentes,master,,unidad,0,Estante 3,0\n"
+            "1-2-05-12-000,Resistencias 220 ohm,Electronica,Paquete de 10,child,1-2-05-00-000,paquete,20,Estante 3,5\n"
             "M1-E1,Multimetro digital,Instrumentacion,Fluke 115,standalone,,unidad,4,Mesa 1,1\n"
         )
         st.download_button(
