@@ -16,6 +16,8 @@ class FakeStorage:
         self.users = {}
         self.whitelist = set()
         self.loans = {}
+        self.reservations = {}
+        self.service_requests = {}
 
     # --- items ---
     def add_item(self, item_id, **kwargs):
@@ -75,6 +77,10 @@ class FakeStorage:
 
     def update_user(self, user_id, changes):
         self.users[user_id].update(changes)
+        return dict(self.users[user_id])
+
+    def get_all_users(self):
+        return [dict(user) for user in self.users.values()]
 
     def count_masters(self):
         return len([u for u in self.users.values() if u["role"] == "maestro"])
@@ -121,6 +127,83 @@ class FakeStorage:
         if status:
             loans = [l for l in loans if l["status"] == status]
         return [dict(l) for l in loans]
+
+
+    # --- reservations ---
+    def create_reservation(self, data, user):
+        row = {
+            **data, "id": uuid.uuid4().hex[:10], "requester_id": user["id"],
+            "requester_name": user.get("full_name", ""),
+            "requester_email": user.get("institutional_email", ""),
+            "status": "pending", "reviewed_by": "", "review_notes": "",
+            "email_notified": False, "email_error": "",
+        }
+        self.reservations[row["id"]] = row
+        return dict(row)
+
+    def get_reservation(self, reservation_id):
+        row = self.reservations.get(reservation_id)
+        return dict(row) if row else None
+
+    def get_reservations(self, status=None, user_id=None):
+        rows = list(self.reservations.values())
+        if status:
+            rows = [row for row in rows if row.get("status") == status]
+        if user_id:
+            rows = [row for row in rows if row.get("requester_id") == user_id]
+        return [dict(row) for row in rows]
+
+    def update_reservation_status(self, reservation_id, status, reviewer_email, notes=""):
+        row = self.reservations.get(reservation_id)
+        if not row:
+            return False
+        row.update(status=status, reviewed_by=reviewer_email, review_notes=notes)
+        return True
+
+    def update_reservation_notification(self, reservation_id, sent, error=""):
+        row = self.reservations.get(reservation_id)
+        if not row:
+            return False
+        row.update(email_notified=bool(sent), email_error=error)
+        return True
+
+    # --- service requests ---
+    def create_service_request(self, data, user):
+        row = {
+            **data, "id": uuid.uuid4().hex[:10], "requester_id": user["id"],
+            "requester_name": user.get("full_name", ""),
+            "requester_email": user.get("institutional_email", ""),
+            "status": "pending", "reviewed_by": "", "review_notes": "",
+            "email_notified": False, "email_error": "",
+        }
+        self.service_requests[row["id"]] = row
+        return dict(row)
+
+    def get_service_request(self, request_id):
+        row = self.service_requests.get(request_id)
+        return dict(row) if row else None
+
+    def get_service_requests(self, status=None, user_id=None):
+        rows = list(self.service_requests.values())
+        if status:
+            rows = [row for row in rows if row.get("status") == status]
+        if user_id:
+            rows = [row for row in rows if row.get("requester_id") == user_id]
+        return [dict(row) for row in rows]
+
+    def update_service_request_status(self, request_id, status, reviewer_email, notes=""):
+        row = self.service_requests.get(request_id)
+        if not row:
+            return False
+        row.update(status=status, reviewed_by=reviewer_email, review_notes=notes)
+        return True
+
+    def update_service_request_notification(self, request_id, sent, error=""):
+        row = self.service_requests.get(request_id)
+        if not row:
+            return False
+        row.update(email_notified=bool(sent), email_error=error)
+        return True
 
 
 @pytest.fixture
