@@ -101,6 +101,31 @@ def register_user(storage, full_name: str, email: str, password: str, program: s
     return user, None
 
 
+def validate_profile_update(storage, user_id: str, full_name: str, email: str,
+                            program: str, student_id: str):
+    """Valida correcciones administrativas sin alterar rol, estado o clave."""
+    full_name = " ".join((full_name or "").strip().split())
+    email = (email or "").strip().lower()
+    program = " ".join((program or "").strip().split())
+    student_id = (student_id or "").strip()
+    if len(full_name.split()) < 2:
+        return None, "Ingresa nombre y apellido."
+    if not is_institutional_email(email):
+        return None, "El correo debe ser institucional y terminar en .edu o .edu.co."
+    if not student_id:
+        return None, "El ID de estudiante es obligatorio."
+    if not program:
+        return None, "El programa académico o departamento es obligatorio."
+    duplicate = storage.get_user_by_email(email)
+    if duplicate and duplicate.get("id") != user_id:
+        return None, "Ya existe otra cuenta con ese correo institucional."
+    return {
+        "full_name": full_name,
+        "institutional_email": email,
+        "program_or_department": program,
+        "student_id": student_id,
+    }, None
+
 def login_user(storage, email: str, password: str):
     email = (email or "").strip().lower()
     user = storage.get_user_by_email(email)
