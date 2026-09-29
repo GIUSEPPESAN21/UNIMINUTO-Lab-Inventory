@@ -72,10 +72,10 @@ def render():
             attendees = st.number_input("Número de asistentes", min_value=1, max_value=500, value=10, step=1)
             c1, c2 = st.columns(2)
             start_date = c1.date_input("Fecha de inicio", value=default_start.date())
-            start_time = c2.time_input("Hora de inicio", value=default_start.time())
+            start_time = c2.time_input("Hora de inicio", value=default_start.time().replace(tzinfo=None))
             c3, c4 = st.columns(2)
             end_date = c3.date_input("Fecha de finalización", value=default_end.date())
-            end_time = c4.time_input("Hora de finalización", value=default_end.time())
+            end_time = c4.time_input("Hora de finalización", value=default_end.time().replace(tzinfo=None))
             submitted = st.form_submit_button("Enviar solicitud de reserva", type="primary", use_container_width=True)
 
             if submitted:
