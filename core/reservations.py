@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Reglas de negocio para reservar actividades o el laboratorio completo."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from core import notifications
@@ -65,7 +65,7 @@ def validate_reservation(scope_type: str, activity: str, purpose: str, attendees
         raise ValueError("La reserva debe comenzar en el futuro.")
     if end <= start:
         raise ValueError("La finalización debe ser posterior al inicio.")
-    if end - start > __import__("datetime").timedelta(days=7):
+    if end - start > timedelta(days=7):
         raise ValueError("Una reserva no puede durar más de 7 días.")
 
     return {
