@@ -3,6 +3,7 @@
 Contenedor de Caracteristica o Item Individual; dar salida (checkout) y
 registrar reingreso (checkin)."""
 
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 import streamlit as st
@@ -10,6 +11,7 @@ import streamlit as st
 from core import barcode, labels, loans as loans_core, notifications
 from core.labels import ITEM_TYPE_BY_CHOICE, ITEM_TYPE_CHOICES, ITEM_TYPE_HELP, ITEM_TYPE_NAMES
 from core.ui import page_header
+from views.code_input import render_code_input
 
 
 def _render_label_download(item: dict):
@@ -17,12 +19,9 @@ def _render_label_download(item: dict):
     if not label_png:
         return
     st.download_button(
-        "🏷️ Descargar etiqueta",
-        data=label_png,
-        file_name=f"etiqueta_{item['id']}.png",
-        mime="image/png",
-        help="Etiqueta 50x25mm lista para la SAT TT 460",
-        key=f"label_scan_{item['id']}",
+        "🏷️ Descargar etiqueta", data=label_png,
+        file_name=f"etiqueta_{item['id']}.png", mime="image/png",
+        help="Etiqueta 50x25mm lista para la SAT TT 460", key=f"label_scan_{item['id']}",
     )
 
 
@@ -104,7 +103,15 @@ def _render_new_item_wizard(scanned_code: str):
         return
 
     item_kind = st.radio("¿Qué quieres registrar?", ITEM_TYPE_CHOICES, horizontal=True)
-    st.caption(ITEM_TYPE_HELP[ITEM_TYPE_BY_CHOICE[item_kind]])
+    item_type = ITEM_TYPE_BY_CHOICE[item_kind]
+    st.caption(ITEM_TYPE_HELP[item_type])
+
+    # El hash solo forma una clave de widget estable: evita conservar valores de
+    # un codigo escaneado anterior cuando cambia el resultado de busqueda.
+    code_token = hashlib.sha1(scanned_code.encode("utf-8")).hexdigest()[:10]
+    code_to_save = render_code_input(
+        storage, item_type, key_prefix=f"scan_new_code_{code_token}", initial_code=scanned_code
+    )
 
     with st.form("new_item_form"):
         name_label = "Nombre / Característica" if item_kind == ITEM_TYPE_NAMES["child"] else "Nombre"
@@ -132,22 +139,37 @@ def _render_new_item_wizard(scanned_code: str):
         submitted = st.form_submit_button("💾 Registrar item", type="primary", use_container_width=True)
 
         if submitted:
-            if not name:
+            code_to_save = (code_to_save or "").strip()
+            code_error = None
+            if code_to_save:
+                try:
+                    barcode.validate_code_format(code_to_save)
+                except ValueError as exc:
+                    code_error = str(exc)
+
+            if not code_to_save:
+                st.error("El código es obligatorio.")
+            elif code_error:
+                st.error(code_error)
+            elif storage.get_item(code_to_save):
+                st.error("Ya existe un item con ese código.")
+            elif not name:
                 st.error("El nombre es obligatorio.")
             elif item_kind == ITEM_TYPE_NAMES["child"] and not parent_id:
                 st.error(f"Debes seleccionar un {ITEM_TYPE_NAMES['master']}.")
             else:
                 data = {
                     "name": name, "category": category, "description": description,
-                    "item_type": ITEM_TYPE_BY_CHOICE[item_kind], "parent_id": parent_id, "unit": "unidad",
+                    "item_type": item_type, "parent_id": parent_id, "unit": "unidad",
                     "quantity": int(quantity), "location": location,
                     "min_stock_alert": int(min_alert), "status": "active",
                     "created_by": user["institutional_email"],
                 }
                 try:
-                    storage.save_item(data, scanned_code, is_new=True, actor_email=user["institutional_email"])
-                    st.success(f"¡'{name}' registrado correctamente!")
-                    st.session_state.scan_result = barcode.scan(storage, scanned_code)
+                    storage.save_item(data, code_to_save, is_new=True,
+                                      actor_email=user["institutional_email"])
+                    st.success(f"¡'{name}' registrado correctamente con el código {code_to_save}!")
+                    st.session_state.scan_result = barcode.scan(storage, code_to_save)
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error al registrar: {e}")

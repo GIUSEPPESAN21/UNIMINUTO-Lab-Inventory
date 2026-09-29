@@ -253,6 +253,14 @@ def test_generate_item_label_png_bytes_uses_the_item_and_skips_unprintable_ids()
     assert labels.generate_item_label_png_bytes({"id": "", "name": "Sin codigo"}) is None
 
 
+def test_container_level_code_with_na_zeros_generates_and_scans_exactly():
+    """El codigo que originaba el error tambien debe producir una etiqueta
+    Code 128 cuyo contenido recuperado sea exactamente el mismo."""
+    code = "2-1-01-00-000"
+    img = labels.generate_label_image(code, description="Contenedor 1")
+    assert _scan_label(img)["text"] == code
+
+
 def test_label_canvas_matches_sat_tt460_spec():
     # 50x25mm @ 203dpi (aprox, redondeado a multiplos de 32px)
     assert labels.LABEL_DPI == 203

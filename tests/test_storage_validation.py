@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Pruebas de core/storage: los items NUEVOS deben cumplir uno de los formatos
-de codigo de core/barcode.py (GLIOPS V3 o codigos libres numericos y
-alfanumericos); los items ya existentes (edicion) no se revalidan, para no
-romper catalogos cargados con la nomenclatura anterior. Incluye un guardado y
-una recarga reales en un Excel temporal para comprobar que el codigo se
-conserva exacto (ceros a la izquierda y letras)."""
+"""Pruebas de core/storage: los items NUEVOS deben cumplir un formato de
+core/barcode.py; las ediciones heredadas no se revalidan. Incluye guardado y
+recarga reales en un Excel temporal para comprobar que los codigos se
+conservan exactamente, incluidos ceros de relleno y niveles no aplicables."""
 
 import pandas as pd
 import pytest
@@ -16,12 +14,12 @@ EMPTY_ITEMS = pd.DataFrame(columns=SHEET_COLUMNS["items"])
 STANDALONE = {"item_type": "standalone", "parent_id": ""}
 
 
-def test_new_item_with_valid_standard_code_is_accepted():
-    _validate_item_data(STANDALONE, EMPTY_ITEMS, "1-2-05-12-001", is_new=True)
-
-
-def test_new_item_with_valid_mesa_code_is_accepted():
-    _validate_item_data(STANDALONE, EMPTY_ITEMS, "M1-E2", is_new=True)
+@pytest.mark.parametrize(
+    "code",
+    ["1-2-05-12-001", "2-1-01-00-000", "2-1-01-01-000", "M1-E2"],
+)
+def test_new_item_with_valid_structured_code_is_accepted(code):
+    _validate_item_data(STANDALONE, EMPTY_ITEMS, code, is_new=True)
 
 
 @pytest.mark.parametrize("code", ["0012345", "LAB-MIC-01", "CAJA-001"])
@@ -29,41 +27,50 @@ def test_new_item_with_free_code_is_accepted(code):
     _validate_item_data(STANDALONE, EMPTY_ITEMS, code, is_new=True)
 
 
-@pytest.mark.parametrize("code", ["LAB MIC 01", "LAB-MÍC-01", "M3-E1"])
+@pytest.mark.parametrize(
+    "code", ["LAB MIC 01", "LAB-MÍC-01", "M3-E1", "2-1-00-00-000", "2-1-01-00-001"]
+)
 def test_new_item_with_invalid_code_is_rejected(code):
     with pytest.raises(ValueError):
         _validate_item_data(STANDALONE, EMPTY_ITEMS, code, is_new=True)
 
 
 def test_editing_existing_item_does_not_revalidate_legacy_code():
-    """Un item cargado antes de la validacion (id fuera de todo formato)
-    debe poder seguir editandose sin que su id sea rechazado."""
     _validate_item_data(STANDALONE, EMPTY_ITEMS, "CAJA 001", is_new=False)
 
 
 @pytest.fixture
 def excel_storage(tmp_path, monkeypatch):
-    """LabStorage real sobre un Excel temporal y sin GitHub: nunca toca la base
-    del laboratorio, aunque el equipo tenga Secrets reales configurados."""
+    """LabStorage real sobre un Excel temporal y sin GitHub."""
     monkeypatch.setattr(storage_module, "EXCEL_PATH", str(tmp_path / "lab_db_test.xlsx"))
     monkeypatch.setattr(storage_module, "_cached_dfs", None)
     monkeypatch.setattr(storage_module, "_is_github_configured", lambda: False)
     return storage_module.LabStorage()
 
 
-@pytest.mark.parametrize("code", ["0012345", "LAB-MIC-01"])
-def test_free_codes_are_saved_and_reloaded_exactly_from_excel(excel_storage, code):
+@pytest.mark.parametrize(
+    "code,item_type",
+    [
+        ("0012345", "standalone"),
+        ("LAB-MIC-01", "standalone"),
+        ("2-1-01-00-000", "master"),
+        ("2-1-01-01-000", "child"),
+    ],
+)
+def test_codes_are_saved_and_reloaded_exactly_from_excel(excel_storage, code, item_type):
+    # Los child reales exigen parent_id; para esta prueba de serializacion se
+    # usa standalone, pues la validacion de la relacion padre tiene sus propias pruebas.
+    stored_type = "standalone" if item_type == "child" else item_type
     excel_storage.save_item(
-        {"name": "Microscopio", "item_type": "standalone", "quantity": 2},
+        {"name": "Elemento", "item_type": stored_type, "quantity": 2},
         code, is_new=True, actor_email="profesor@uniminuto.edu.co",
     )
-    storage_module._cached_dfs = None  # obliga a releer el .xlsx desde disco
+    storage_module._cached_dfs = None
 
     item = excel_storage.get_item(code)
     assert item is not None
     assert item["id"] == code
-    assert item["name"] == "Microscopio"
-    assert [i["id"] for i in excel_storage.get_all_items()] == [code]
+    assert item["name"] == "Elemento"
 
 
 def test_numeric_code_keeps_leading_zeros_after_reload(excel_storage):

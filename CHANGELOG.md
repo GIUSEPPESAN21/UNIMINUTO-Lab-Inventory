@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.7.0 — Generador asistido y niveles `no aplica` en códigos GLIOPS
+
+- El estándar de cinco niveles acepta ceros finales como marcadores de
+  estructura: `2-1-01-00-000` (contenedor), `2-1-01-01-000` (caja o
+  subcontenedor) y `2-1-01-01-001` (ítem). Contenedor sigue siendo positivo
+  y se rechaza un ítem positivo cuando Caja es `00`.
+- `core/barcode.py` incorpora constructores puros y tipados para estándar,
+  mesa, Lego, numérico libre y prefijo alfanumérico. La salida estándar usa
+  relleno canónico 2/2/3; los prefijos generados se normalizan a mayúsculas.
+- Nuevo componente compartido `views/code_input.py`: generación asistida por
+  defecto, modo manual/escaneado, vista previa en vivo, validación inmediata,
+  aviso de duplicados y vista previa opcional de la etiqueta.
+- Inventario y Escanear reutilizan el mismo componente. El almacenamiento
+  conserva su validación final y el modo manual sigue disponible para códigos
+  externos o ya impresos.
+- Pruebas añadidas para el caso original `2-1-01-00-000`, niveles válidos e
+  inválidos, constructores, relleno, persistencia en Excel y lectura exacta de
+  la etiqueta Code 128.
+
 ## v1.6.0 — Códigos numéricos y alfanuméricos libres + etiqueta con descripción
 
 - **Códigos libres** (`core/barcode.py`): además de los 3 formatos GLIOPS
