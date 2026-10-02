@@ -61,15 +61,14 @@ def type_name(item_type: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Generacion visual de etiquetas imprimibles (codigo de barras + texto)
+# Generacion visual de etiquetas imprimibles (marca + producto + Code 128)
 # ---------------------------------------------------------------------------
 # Etiqueta de 50x25mm pensada para imprimirse tal cual en una termica
-# SAT TT 460 (u otra compatible) a 203 dpi. De arriba hacia abajo:
-#   1. mensaje institucional / advertencia (opcional, LABEL_NOTICE_TEXT)
-#   2. descripcion corta del item (opcional, una linea: si no cabe se reduce
-#      la fuente y al final se recorta con "...")
-#   3. codigo de barras Code 128
-#   4. el codigo completo en texto legible (nunca se recorta)
+# SAT TT 460 (u otra compatible) a 203 dpi. La composicion profesional es:
+# 1. logotipo institucional + laboratorio, tipo de activo y advertencia
+# 2. nombre del producto y metadatos compactos (categoria / ubicacion)
+# 3. codigo de barras Code 128
+# 4. codigo completo en texto legible (nunca se recorta)
 #
 # Code 128 codifica todo el ASCII imprimible, asi que sirve tal cual para los
 # codigos numericos y alfanumericos (ver core/barcode.py) y lo leen los
@@ -81,11 +80,13 @@ def type_name(item_type: str) -> str:
 import functools
 import io
 import re
+from pathlib import Path
 
 from barcode.charsets import code128 as _code128_tables
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from core.barcode import is_valid_code, validate_code_format
+
 
 LABEL_DPI = 203  # resolucion nativa de la SAT TT 460
 LABEL_WIDTH_MM = 50
@@ -93,25 +94,33 @@ LABEL_HEIGHT_MM = 25
 # Aproximacion en pixeles de 50x25mm a 203dpi (399x200 exacto), redondeada a
 # multiplos de 32px como espera el firmware de impresoras termicas tipo SAT.
 LABEL_CANVAS_SIZE = (384, 192)
-
-# Mensaje institucional / advertencia de la linea superior. Para omitirlo,
-# pasa notice=None (o "") a generate_label_image / generate_label_png_bytes.
-LABEL_NOTICE_TEXT = "Propiedad de UNIMINUTO · No retirar sin préstamo"
+LABEL_LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "uniminuto-logo.png"
+LABEL_INSTITUTION_TEXT = "LABORATORIO DE INGENIERÍA"
+# Para omitir todo el encabezado institucional, pasa notice=None (o "").
+LABEL_NOTICE_TEXT = "ACTIVO INSTITUCIONAL · NO RETIRAR SIN PRÉSTAMO"
 
 # Geometria para el lienzo por defecto, en puntos de impresora (= pixeles);
 # textos y margenes escalan si se pide otro canvas_size.
-_MIN_QUIET_MODULES = 6    # zona de silencio minima a cada lado de las barras
-_MAX_MODULE_DOTS = 4      # modulo mas ancho: 4 puntos = 0,5 mm
+_MIN_QUIET_MODULES = 6
+_MAX_MODULE_DOTS = 4
+_MIN_BAR_HEIGHT_MM = 9.0
 _MAX_BAR_HEIGHT_MM = 12.0
-_MIN_BAR_HEIGHT_PX = 24   # por debajo se omiten el aviso y luego la descripcion
-_MARGIN_X_PX = 8          # ~1 mm a cada lado de los textos
+_MARGIN_X_PX = 8
 _MARGIN_Y_PX = 4
-_GAP_PX = 4
-_NOTICE_FONT_PX = 14
-_DESC_FONT_PX = 18
-_DESC_MIN_FONT_PX = 14
-_CODE_FONT_PX = 26
-_MIN_FONT_PX = 9
+_GAP_PX = 3
+_HEADER_HEIGHT_PX = 40
+_DIVIDER_PX = 1
+_LOGO_MAX_WIDTH_PX = 68
+_LOGO_MAX_HEIGHT_PX = 36
+_HEADER_TEXT_GAP_PX = 6
+_INSTITUTION_FONT_PX = 12
+_TYPE_FONT_PX = 10
+_NOTICE_FONT_PX = 8
+_NAME_FONT_PX = 17
+_NAME_MIN_FONT_PX = 13
+_META_FONT_PX = 10
+_CODE_FONT_PX = 22
+_MIN_FONT_PX = 8
 
 _FONT_CANDIDATES_BOLD = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -124,10 +133,9 @@ _FONT_CANDIDATES_REGULAR = [
     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
 ]
 
-# Valores de simbolo Code 128 (ISO/IEC 15417) que usa el codificador.
 _START_B, _START_C = 104, 105
 _TO_B_FROM_C, _TO_C_FROM_B = 100, 99
-_STOP_PATTERN = _code128_tables.STOP + "11"  # parada completa: 13 modulos
+_STOP_PATTERN = _code128_tables.STOP + "11"
 
 
 @functools.lru_cache(maxsize=64)
@@ -144,23 +152,26 @@ def _load_font(size: int, bold: bool = True):
         return ImageFont.load_default()
 
 
+@functools.lru_cache(maxsize=1)
+def _load_brand_logo():
+    """Logo versionado, monocromatico y recortado; None activa fallback."""
+    try:
+        with Image.open(LABEL_LOGO_PATH) as source:
+            rgba = source.convert("RGBA")
+            white = Image.new("RGBA", rgba.size, "white")
+            white.alpha_composite(rgba)
+            gray = ImageOps.grayscale(white.convert("RGB"))
+            mono = gray.point(lambda value: 0 if value < 248 else 255)
+            bbox = ImageOps.invert(mono).getbbox()
+            return mono.crop(bbox).copy() if bbox else None
+    except (OSError, ValueError):
+        return None
+
+
 def _code128_values(code: str) -> list:
-    """Valores de simbolo Code 128 de `code`: inicio, datos y checksum.
-
-    Usa el subconjunto B (todo el ASCII imprimible) y el C (2 digitos por
-    simbolo) en tramos de 4 o mas digitos, o si el codigo son exactamente 2
-    digitos; en un tramo impar el primer digito va en B. Asi los simbolos de
-    datos nunca superan la longitud del codigo, que es en lo que se apoyan
-    los limites de longitud de core/barcode.py.
-
-    Se implementa aqui, en vez de usar el codificador de python-barcode
-    0.16.1, porque ese pierde un "99" inicial (su optimizacion del simbolo de
-    inicio confunde el par de digitos 99 con el cambio al subconjunto C) y la
-    etiqueta debe devolver EXACTAMENTE el codigo registrado. De python-barcode
-    solo se usa la tabla estandar de patrones de barras."""
+    """Valores Code 128: inicio, datos y checksum, preservando el texto."""
     if not code or any(not (32 <= ord(ch) <= 126) for ch in code):
         raise ValueError(f"Code 128 solo admite texto ASCII imprimible: {code!r}")
-
     values = []
     charset = None
 
@@ -193,21 +204,15 @@ def _code128_values(code: str) -> list:
             use("B")
             values.append(ord(code[i]) - 32)
             i += 1
-
     checksum = values[0] + sum(pos * value for pos, value in enumerate(values[1:], start=1))
     return values + [checksum % 103]
 
 
 def _code128_modules(code: str) -> str:
-    """Patron de modulos ('1' barra, '0' espacio) del Code 128 de `code`, de la
-    barra de inicio a la de parada, sin zonas de silencio."""
     return "".join(_code128_tables.CODES[v] for v in _code128_values(code)) + _STOP_PATTERN
 
 
 def _module_dots(n_modules: int, width_px: int) -> int:
-    """Mayor numero entero de puntos por modulo (hasta _MAX_MODULE_DOTS) con el
-    que las barras y sus zonas de silencio minimas caben en `width_px`; 0 si
-    no caben ni con 1 punto."""
     for dots in range(_MAX_MODULE_DOTS, 0, -1):
         if (n_modules + 2 * _MIN_QUIET_MODULES) * dots <= width_px:
             return dots
@@ -215,13 +220,10 @@ def _module_dots(n_modules: int, width_px: int) -> int:
 
 
 def _clean_text(value) -> str:
-    """Texto en una sola linea; lo que no sea str (None, NaN de pandas) queda vacio."""
     return " ".join(value.split()) if isinstance(value, str) else ""
 
 
 def _fit_font(text: str, max_width: int, size: int, min_size: int, bold: bool):
-    """Fuente mas grande, de `size` hacia abajo hasta `min_size`, con la que
-    `text` cabe en `max_width` (si ni asi cabe, la de `min_size`)."""
     size = max(size, min_size)
     font = _load_font(size, bold)
     while size > min_size and font.getlength(text) > max_width:
@@ -231,7 +233,6 @@ def _fit_font(text: str, max_width: int, size: int, min_size: int, bold: bool):
 
 
 def _ellipsize(text: str, font, max_width: int) -> str:
-    """Recorta `text` con "..." al final hasta que quepa en `max_width`."""
     if font.getlength(text) <= max_width:
         return text
     while text and font.getlength(text.rstrip() + "...") > max_width:
@@ -239,20 +240,44 @@ def _ellipsize(text: str, font, max_width: int) -> str:
     return text.rstrip() + "..." if text else ""
 
 
-def generate_label_image(code: str, canvas_size: tuple = LABEL_CANVAS_SIZE, *,
-                         description: str = None, notice: str = LABEL_NOTICE_TEXT) -> Image.Image:
-    """Genera la etiqueta imprimible completa sobre un lienzo en blanco y negro
-    de `canvas_size` px (por defecto 50x25mm @ 203dpi): el mensaje
-    institucional `notice` y la descripcion corta `description` arriba (ambos
-    opcionales), el codigo de barras Code 128 de `code` centrado y el codigo
-    completo en texto legible debajo.
+def _ink_height(text: str, font) -> int:
+    _, top, _, bottom = font.getbbox(text)
+    return max(1, bottom - top)
 
-    Lanza ValueError si `code` no cumple ninguno de los formatos validos (ver
-    core/barcode.validate_code_format) o si sus barras no caben en el ancho
-    del lienzo."""
+
+def _metadata_line(category=None, location=None) -> str:
+    fields = []
+    category = _clean_text(category)
+    location = _clean_text(location)
+    if category:
+        fields.append(f"CATEGORÍA: {category}")
+    if location:
+        fields.append(f"UBICACIÓN: {location}")
+    return "  ·  ".join(fields)
+
+
+def _item_label_fields(item: dict) -> dict:
+    item = item or {}
+    return {
+        "code": str(item.get("id") or "").strip(),
+        "description": _clean_text(item.get("name")),
+        "category": _clean_text(item.get("category")),
+        "location": _clean_text(item.get("location")),
+        "item_type": _clean_text(item.get("item_type")),
+    }
+
+
+def generate_label_image(code: str, canvas_size: tuple = LABEL_CANVAS_SIZE, *,
+                         description: str = None, notice: str = LABEL_NOTICE_TEXT,
+                         category: str = None, location: str = None,
+                         item_type: str = None) -> Image.Image:
+    """Etiqueta profesional 50x25mm: marca, producto, Code 128 y texto exacto.
+
+    `description` conserva su nombre historico por compatibilidad y representa
+    el nombre corto. `notice=None` mantiene la variante minima sin encabezado.
+    """
     code = (code or "").strip()
     validate_code_format(code)
-
     width, height = canvas_size
     modules = _code128_modules(code)
     dots = _module_dots(len(modules), width)
@@ -261,91 +286,142 @@ def generate_label_image(code: str, canvas_size: tuple = LABEL_CANVAS_SIZE, *,
             f"El codigo '{code}' es demasiado largo: su codigo de barras no cabe en "
             f"una etiqueta de {width}px de ancho."
         )
-
     scale = min(width / LABEL_CANVAS_SIZE[0], height / LABEL_CANVAS_SIZE[1])
 
     def px(value: float) -> int:
         return max(1, round(value * scale))
 
-    text_width = max(1, width - 2 * px(_MARGIN_X_PX))
-    margin_y, gap = px(_MARGIN_Y_PX), px(_GAP_PX)
-
-    # Filas sobre las barras, en orden: aviso institucional y descripcion.
-    top_rows = []
-    notice = _clean_text(notice)
-    if notice:
-        font = _fit_font(notice, text_width, px(_NOTICE_FONT_PX), _MIN_FONT_PX, bold=False)
-        top_rows.append((_ellipsize(notice, font, text_width), font))
+    margin_x, margin_y, gap = px(_MARGIN_X_PX), px(_MARGIN_Y_PX), px(_GAP_PX)
+    text_width = max(1, width - 2 * margin_x)
     description = _clean_text(description)
+    notice = _clean_text(notice)
+    metadata = _metadata_line(category, location)
+    friendly_type = type_name(_clean_text(item_type)) or "Activo de laboratorio"
+    rows = []
     if description:
-        min_size = max(_MIN_FONT_PX, px(_DESC_MIN_FONT_PX))
-        font = _fit_font(description, text_width, px(_DESC_FONT_PX), min_size, bold=True)
-        top_rows.append((_ellipsize(description, font, text_width), font))
-    top_rows = [(text, font) for text, font in top_rows if text]
-
-    # El codigo legible nunca se recorta: solo se reduce la fuente.
+        name_font = _fit_font(
+            description, text_width, px(_NAME_FONT_PX),
+            max(_MIN_FONT_PX, px(_NAME_MIN_FONT_PX)), bold=True,
+        )
+        rows.append(("name", _ellipsize(description, name_font, text_width), name_font))
+    if metadata:
+        meta_font = _fit_font(metadata, text_width, px(_META_FONT_PX), _MIN_FONT_PX, bold=False)
+        rows.append(("metadata", _ellipsize(metadata, meta_font, text_width), meta_font))
     code_font = _fit_font(code, text_width, px(_CODE_FONT_PX), _MIN_FONT_PX, bold=True)
+    code_height = _ink_height(code, code_font)
+    branded = bool(notice)
+    header_height = px(_HEADER_HEIGHT_PX)
+    divider = px(_DIVIDER_PX)
+    min_bar_height = px(_MIN_BAR_HEIGHT_MM * LABEL_DPI / 25.4)
+    max_bar_height = px(_MAX_BAR_HEIGHT_MM * LABEL_DPI / 25.4)
 
-    def ink_height(text: str, font) -> int:
-        _, top, _, bottom = font.getbbox(text)
-        return bottom - top
+    def body_y(current_rows, with_branding: bool) -> int:
+        y_value = margin_y
+        if with_branding:
+            y_value += header_height + divider + gap
+        for _, text, font in current_rows:
+            y_value += _ink_height(text, font) + gap
+        return y_value
 
-    def room_for_bars(rows) -> int:
-        used = sum(ink_height(text, font) for text, font in rows) + ink_height(code, code_font)
-        return height - 2 * margin_y - used - (len(rows) + 1) * gap
+    def bar_room(current_rows, with_branding: bool) -> int:
+        return height - margin_y - code_height - gap - body_y(current_rows, with_branding)
 
-    # En lienzos muy bajos se sacrifican las lineas opcionales (primero el aviso).
-    while top_rows and room_for_bars(top_rows) < px(_MIN_BAR_HEIGHT_PX):
-        top_rows.pop(0)
-    room = room_for_bars(top_rows)
-    bar_h = max(1, min(px(_MAX_BAR_HEIGHT_MM * LABEL_DPI / 25.4), room))
+    while rows and bar_room(rows, branded) < min_bar_height:
+        metadata_index = next((i for i, row in enumerate(rows) if row[0] == "metadata"), None)
+        rows.pop(metadata_index if metadata_index is not None else -1)
+    if branded and bar_room(rows, branded) < min_bar_height:
+        branded = False
+    room = bar_room(rows, branded)
+    if room < 1:
+        raise ValueError("El lienzo es demasiado bajo para una etiqueta legible.")
+    bar_height = min(max_bar_height, room)
 
     canvas = Image.new("L", (width, height), color=255)
     draw = ImageDraw.Draw(canvas)
+
+    def draw_left(text: str, font, x: int, top_y: int) -> int:
+        left, top, _, bottom = font.getbbox(text)
+        draw.text((x - left, top_y - top), text, font=font, fill=0)
+        return bottom - top
 
     def draw_centered(text: str, font, top_y: int) -> int:
         left, top, right, bottom = font.getbbox(text)
         draw.text(((width - (right - left)) // 2 - left, top_y - top), text, font=font, fill=0)
         return bottom - top
 
-    # Todo el bloque (textos + barras) se centra verticalmente.
-    y = margin_y + max(0, room - bar_h) // 2
-    for text, font in top_rows:
-        y += draw_centered(text, font, y) + gap
+    y = margin_y
+    if branded:
+        logo_width = px(_LOGO_MAX_WIDTH_PX)
+        logo_height = min(header_height, px(_LOGO_MAX_HEIGHT_PX))
+        logo = _load_brand_logo()
+        if logo is not None:
+            logo = logo.copy()
+            logo.thumbnail((logo_width, logo_height), Image.Resampling.LANCZOS)
+            logo = logo.point(lambda value: 0 if value < 192 else 255)
+            logo_x = margin_x + max(0, (logo_width - logo.width) // 2)
+            logo_y = y + max(0, (header_height - logo.height) // 2)
+            canvas.paste(logo, (logo_x, logo_y))
+        else:
+            fallback = _fit_font("UNIMINUTO", logo_width, px(12), _MIN_FONT_PX, bold=True)
+            draw_left("UNIMINUTO", fallback, margin_x, y + (header_height - _ink_height("UNIMINUTO", fallback)) // 2)
 
+        header_x = margin_x + logo_width + px(_HEADER_TEXT_GAP_PX)
+        header_width = max(1, width - margin_x - header_x)
+        institution_font = _fit_font(
+            LABEL_INSTITUTION_TEXT, header_width, px(_INSTITUTION_FONT_PX),
+            _MIN_FONT_PX, bold=True,
+        )
+        type_font = _fit_font(friendly_type, header_width, px(_TYPE_FONT_PX), _MIN_FONT_PX, bold=False)
+        type_text = _ellipsize(friendly_type, type_font, header_width)
+        notice_font = _fit_font(notice, header_width, px(_NOTICE_FONT_PX), _MIN_FONT_PX, bold=False)
+        notice_text = _ellipsize(notice, notice_font, header_width)
+        header_rows = [(LABEL_INSTITUTION_TEXT, institution_font), (type_text, type_font), (notice_text, notice_font)]
+        header_rows = [(text, font) for text, font in header_rows if text]
+        header_gap = px(1)
+        header_ink = sum(_ink_height(text, font) for text, font in header_rows)
+        header_ink += max(0, len(header_rows) - 1) * header_gap
+        header_y = y + max(0, (header_height - header_ink) // 2)
+        for text, font in header_rows:
+            header_y += draw_left(text, font, header_x, header_y) + header_gap
+        divider_y = y + header_height
+        draw.line((margin_x, divider_y, width - margin_x - 1, divider_y), fill=0, width=divider)
+        y += header_height + divider + gap
+
+    for _, text, font in rows:
+        y += draw_left(text, font, margin_x, y) + gap
+    room = height - margin_y - code_height - gap - y
+    y += max(0, (room - bar_height) // 2)
     bar_x = (width - len(modules) * dots) // 2
     for run in re.finditer("1+", modules):
         draw.rectangle(
-            [bar_x + run.start() * dots, y, bar_x + run.end() * dots - 1, y + bar_h - 1], fill=0
+            [bar_x + run.start() * dots, y, bar_x + run.end() * dots - 1, y + bar_height - 1],
+            fill=0,
         )
-    y += bar_h + gap
-
+    y += bar_height + gap
     draw_centered(code, code_font, y)
     return canvas.convert("1", dither=Image.Dither.NONE)
 
 
 def generate_label_png_bytes(code: str, canvas_size: tuple = LABEL_CANVAS_SIZE, *,
-                             description: str = None, notice: str = LABEL_NOTICE_TEXT) -> bytes:
-    """Como generate_label_image pero devuelve bytes PNG listos para
-    st.download_button o para enviar directo a la impresora. El PNG declara
-    203 dpi: impreso a tamano real (100 %, sin "ajustar a la pagina") cada
-    pixel cae en un punto de la SAT TT 460 y las barras salen exactas."""
-    img = generate_label_image(code, canvas_size=canvas_size, description=description, notice=notice)
+                             description: str = None, notice: str = LABEL_NOTICE_TEXT,
+                             category: str = None, location: str = None,
+                             item_type: str = None) -> bytes:
+    """Devuelve el PNG a 203dpi listo para imprimir al 100 %."""
+    img = generate_label_image(
+        code, canvas_size=canvas_size, description=description, notice=notice,
+        category=category, location=location, item_type=item_type,
+    )
     buf = io.BytesIO()
     img.save(buf, format="PNG", dpi=(LABEL_DPI, LABEL_DPI))
     return buf.getvalue()
 
 
 def generate_item_label_png_bytes(item: dict):
-    """Etiqueta de un item del inventario: su id como codigo de barras y su
-    nombre como descripcion corta. Devuelve None si el id no es un codigo
-    imprimible (ej. un id heredado fuera de todo formato), para que la vista
-    simplemente no muestre el boton de descarga."""
-    item = item or {}
-    code = str(item.get("id") or "").strip()
-    if not is_valid_code(code):
+    """Etiqueta completa de inventario; None para ids no imprimibles."""
+    fields = _item_label_fields(item)
+    if not is_valid_code(fields["code"]):
         return None
     try:
-        return generate_label_png_bytes(code, description=item.get("name"))
+        return generate_label_png_bytes(**fields)
     except ValueError:
         return None

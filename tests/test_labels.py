@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Pruebas de core/labels.py: etiqueta de 50x25mm para una termica SAT TT 460
-(aviso institucional + descripcion corta + codigo de barras Code 128 + codigo
-legible). El codigo de barras se lee desde los pixeles de la imagen generada,
-como lo haria un lector, para comprobar que devuelve EXACTAMENTE el texto
-registrado (letras, minusculas y ceros a la izquierda incluidos)."""
+"""Pruebas de core/labels.py: etiqueta profesional de 50x25mm para una
+termica SAT TT 460 (logo, identificacion del producto, Code 128 y codigo
+legible). El codigo de barras se lee desde los pixeles, como lo haria un
+lector, para comprobar que devuelve EXACTAMENTE el texto registrado.
+"""
 
 import io
 import itertools
@@ -20,6 +20,13 @@ STOP_PATTERN = "1100011101011"  # parada completa segun ISO/IEC 15417 (anchos 23
 PATTERN_TO_VALUE = {pattern: value for value, pattern in enumerate(c128.CODES)}
 
 LONG_DESCRIPTION = "Microscopio óptico binocular Olympus CX23 con cámara y 4 objetivos"
+PRODUCT = {
+    "id": "LAB-MIC-01",
+    "name": "Microscopio óptico binocular",
+    "category": "Óptica",
+    "location": "Estantería 2 · Piso 1",
+    "item_type": "standalone",
+}
 
 DECODE_CASES = [
     "1-2-05-12-001", "M1-E2", "E3-LM07", "3-6-999-999-9999",            # GLIOPS V3
@@ -130,6 +137,9 @@ def _ink_x_bounds(rows, y0, y1):
     return min(xs), max(xs)
 
 
+def _region_ink(rows, x0, y0, x1, y1):
+    return sum(rows[y][x] for y in range(y0, y1) for x in range(x0, x1))
+
 # --- Pruebas -------------------------------------------------------------------
 
 def test_code128_table_matches_iso_standard():
@@ -209,18 +219,36 @@ def test_random_free_codes_encode_exactly_and_fit_with_wide_bars():
         assert labels._module_dots(len(modules), width) >= 2, code
 
 
-def test_label_layout_notice_and_description_above_code_below_the_bars():
-    img = labels.generate_label_image("LAB-MIC-01", description=LONG_DESCRIPTION)
+def test_professional_item_label_has_logo_header_product_metadata_and_divider():
+    data = labels.generate_item_label_png_bytes(PRODUCT)
+    img = Image.open(io.BytesIO(data))
     scan = _scan_label(img)
-    width, height = img.size
+    width, _ = img.size
+    rows = scan["rows"]
     bars_top = scan["band_top"]
-    bars_bottom = scan["band_top"] + scan["band_height"]
+    header_top = labels._MARGIN_Y_PX
+    header_bottom = header_top + labels._HEADER_HEIGHT_PX
+    logo_right = labels._MARGIN_X_PX + labels._LOGO_MAX_WIDTH_PX
+    text_left = logo_right + labels._HEADER_TEXT_GAP_PX
 
-    assert _text_lines(scan["rows"], 0, bars_top) == 2          # aviso + descripcion
-    assert _text_lines(scan["rows"], bars_bottom, height) == 1  # codigo legible
-    for y0, y1 in ((0, bars_top), (bars_bottom, height)):
-        x_min, x_max = _ink_x_bounds(scan["rows"], y0, y1)
-        assert x_min >= 4 and x_max <= width - 5  # el texto cabe completo, con margen
+    assert scan["text"] == PRODUCT["id"]
+    assert labels._load_brand_logo() is not None
+    assert _region_ink(rows, labels._MARGIN_X_PX, header_top, logo_right, header_bottom) > 50
+    assert _region_ink(rows, text_left, header_top, width - labels._MARGIN_X_PX, header_bottom) > 50
+    assert sum(rows[header_bottom]) >= width - 2 * labels._MARGIN_X_PX - 2
+    assert _region_ink(
+        rows, labels._MARGIN_X_PX, header_bottom + labels._DIVIDER_PX,
+        width - labels._MARGIN_X_PX, bars_top,
+    ) > 50
+
+
+def test_brand_logo_asset_is_versioned_and_converts_to_monochrome():
+    assert labels.LABEL_LOGO_PATH.is_file()
+    logo = labels._load_brand_logo()
+    assert logo is not None
+    assert logo.mode == "L"
+    assert set(logo.getdata()) <= {0, 255}
+    assert 0 in logo.getdata()
 
 
 def test_label_without_notice_or_description_only_has_bars_and_code():
@@ -252,6 +280,23 @@ def test_generate_item_label_png_bytes_uses_the_item_and_skips_unprintable_ids()
     assert labels.generate_item_label_png_bytes({"id": "CAJA 001", "name": "Caja vieja"}) is None
     assert labels.generate_item_label_png_bytes({"id": "", "name": "Sin codigo"}) is None
 
+
+def test_generate_item_label_forwards_professional_metadata(monkeypatch):
+    captured = {}
+
+    def fake_generate(**kwargs):
+        captured.update(kwargs)
+        return b"png"
+
+    monkeypatch.setattr(labels, "generate_label_png_bytes", fake_generate)
+    assert labels.generate_item_label_png_bytes(PRODUCT) == b"png"
+    assert captured == {
+        "code": "LAB-MIC-01",
+        "description": "Microscopio óptico binocular",
+        "category": "Óptica",
+        "location": "Estantería 2 · Piso 1",
+        "item_type": "standalone",
+    }
 
 def test_container_level_code_with_na_zeros_generates_and_scans_exactly():
     """El codigo que originaba el error tambien debe producir una etiqueta

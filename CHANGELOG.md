@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.9.0 — Etiquetas profesionales con identidad institucional
+
+- Nuevo encabezado monocromático con el logotipo oficial de UNIMINUTO, Laboratorio de Ingeniería, tipo de activo y advertencia institucional.
+- El cuerpo organiza nombre, categoría y ubicación del producto; los campos opcionales ausentes se omiten de forma segura.
+- El logo queda versionado dentro del repositorio y dispone de un wordmark de respaldo si el recurso no puede abrirse.
+- Se conservan 50×25 mm, 384×192 px, 203 dpi, impresión al 100 %, Code 128 exacto, módulos enteros, zonas de silencio y barras de al menos 9 mm.
+- Pruebas ampliadas para recurso de marca, estructura visual, separador, propagación de metadatos, DPI y decodificación exacta desde los píxeles.
+
 ## v1.8.0 — Reservas, solicitudes, correo y guía móvil
 
 - Reservas de actividad o laboratorio completo con zona `America/Bogota`,

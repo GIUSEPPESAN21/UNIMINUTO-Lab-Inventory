@@ -84,14 +84,16 @@ Excel + GitHub.
 
 ### Etiquetas imprimibles
 
-Desde el catálogo de Inventario o desde Escanear, el botón
-**🏷️ Descargar etiqueta** genera un PNG de 384×192px (≈ 50×25mm a 203dpi, resolución guardada en el
-archivo) listo para una impresora térmica **SAT TT 460**, con el aviso
-institucional, el nombre del item, el código de barras Code128 y el código
-en texto legible debajo. Las barras se dibujan con un número entero de
-puntos de impresora por módulo: para que salgan exactas, imprime al 100 %
-(tamaño real), sin "ajustar a la página".
+Desde el catálogo de Inventario o desde Escanear, el botón **🏷️ Descargar etiqueta** genera un PNG profesional y monocromático listo para una impresora térmica **SAT TT 460**. La composición, de arriba hacia abajo, es:
 
+1. logotipo oficial de UNIMINUTO, nombre del Laboratorio de Ingeniería, tipo de activo y aviso institucional;
+2. nombre destacado del producto;
+3. categoría y ubicación física, cuando esos datos están disponibles;
+4. código de barras Code 128 y el código exacto en texto legible.
+
+Los datos opcionales vacíos se omiten sin bloquear la impresión. El logo está versionado en `assets/uniminuto-logo.png`, por lo que generar la etiqueta no depende de Internet; si el recurso faltara o estuviera dañado, se usa el texto `UNIMINUTO` como respaldo.
+
+Se conservan las medidas validadas: **384×192 px**, aproximadamente **50×25 mm a 203 dpi**, con la resolución declarada dentro del PNG. Las barras mantienen zonas de silencio, una altura mínima de 9 mm y un ancho entero de puntos por módulo. Imprime siempre al **100 % (tamaño real)**, sin “ajustar a la página”, para no deformar el Code 128.
 ## Operación del laboratorio
 
 ### Reservas
