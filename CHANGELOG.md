@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.9.1 — Tipografía térmica y PDF a tamaño real
+
+- Tipografía reforzada para 203 dpi: encabezado, tipo, aviso, nombre, metadatos y código humano con tamaños mínimos mayores; textos secundarios en negrita y título institucional con espaciado adicional.
+- Logo más visible y distribución vertical reajustada sin reducir las barras por debajo de 9 mm.
+- La vista previa deja de ampliar el PNG al ancho del navegador y elimina el texto ficticio “Vista previa”.
+- Nuevo PDF de una página exacta 50×25 mm, con el raster 384×192 centrado a 203 dpi, para evitar la reducción observada al imprimir el PNG desde el visor.
+- Inventario y Escanear conservan el PNG y ofrecen el PDF como opción recomendada.
+- Pruebas de tamaños tipográficos, estructura PDF, MediaBox, centrado, resolución efectiva y validez de la tabla xref.
+
 ## v1.9.0 — Etiquetas profesionales con identidad institucional
 
 - Nuevo encabezado monocromático con el logotipo oficial de UNIMINUTO, Laboratorio de Ingeniería, tipo de activo y advertencia institucional.
