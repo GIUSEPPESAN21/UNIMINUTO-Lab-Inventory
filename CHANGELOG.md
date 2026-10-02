@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.9.2 — Títulos legibles y guía física en la etiqueta
+
+- Mayor separación entre letras y palabras en el título institucional, tipo de activo y aviso, con medición previa para evitar recortes.
+- Nombre del producto destacado en una banda negra con texto blanco y espaciado propio, sin crear una fila adicional.
+- Ruta compacta derivada del código (`E`, `P`, `C`, `CJ`, `I`), omitiendo niveles `00/000` que no aplican; también cubre Mesa y Lego.
+- La guía es solo visual: el Code 128 y su texto humano continúan representando exactamente el identificador original.
+- Vista previa actualizada para mostrar la banda y la ruta antes de registrar.
+- Se mantienen barras de al menos 9 mm y el código humano debajo del Code 128.
+
 ## v1.9.1 — Tipografía térmica y PDF a tamaño real
 
 - Tipografía reforzada para 203 dpi: encabezado, tipo, aviso, nombre, metadatos y código humano con tamaños mínimos mayores; textos secundarios en negrita y título institucional con espaciado adicional.
