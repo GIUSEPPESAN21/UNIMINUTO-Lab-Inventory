@@ -262,7 +262,60 @@ def test_thermal_typography_uses_legible_sizes_weight_and_tracking():
     assert labels._META_FONT_PX >= 11
     assert labels._CODE_FONT_PX >= 26
     assert labels._MIN_FONT_PX >= 9
-    assert labels._HEADER_TRACKING_PX >= 1
+    assert labels._HEADER_TRACKING_PX >= 2
+    assert labels._HEADER_WORD_SPACING_PX >= 2
+    assert labels._SECONDARY_TRACKING_PX >= 1
+    assert labels._SECONDARY_WORD_SPACING_PX >= 1
+
+@pytest.mark.parametrize(
+    "code, expected",
+    [
+        ("2-1-01-00-000", "RUTA: E2 › P1 › C01"),
+        ("2-1-01-02-000", "RUTA: E2 › P1 › C01 › CJ02"),
+        ("2-1-01-02-003", "RUTA: E2 › P1 › C01 › CJ02 › I003"),
+        ("M1-E2", "RUTA: MESA 1 › EQ2"),
+        ("E3-LM07", "RUTA: E3 › LEGO 07"),
+        ("LAB-MIC-01", ""),
+    ],
+)
+def test_location_guide_is_compact_and_omits_non_applicable_levels(code, expected):
+    assert labels._location_guide(code) == expected
+
+
+def test_title_spacing_accounts_for_letters_and_words():
+    font = labels._load_font(14, bold=True)
+    base = labels._text_width("LAB TEST", font)
+    spaced = labels._text_width("LAB TEST", font, tracking=2, word_spacing=3)
+    assert spaced == pytest.approx(base + (len("LAB TEST") - 1) * 2 + 3)
+
+
+def test_product_title_band_and_location_line_preserve_full_barcode():
+    item = {
+        **PRODUCT,
+        "id": "2-1-01-02-003",
+        "name": "Microscopio binocular",
+    }
+    img = Image.open(io.BytesIO(labels.generate_item_label_png_bytes(item)))
+    scan = _scan_label(img)
+    rows = scan["rows"]
+    width, _ = img.size
+    body_top = (
+        labels._MARGIN_Y_PX + labels._HEADER_HEIGHT_PX
+        + labels._DIVIDER_PX + labels._GAP_PX
+    )
+    body_rows = range(body_top, scan["band_top"])
+    solid_rows = [
+        y for y in body_rows
+        if sum(rows[y]) >= width - 2 * labels._MARGIN_X_PX - 2
+    ]
+
+    assert solid_rows  # banda negra del nombre
+    assert _region_ink(
+        rows, labels._MARGIN_X_PX, max(solid_rows) + 1,
+        width - labels._MARGIN_X_PX, scan["band_top"],
+    ) > 20  # linea de ruta/metadatos debajo de la banda
+    assert scan["band_height"] >= 72
+    assert scan["text"] == item["id"]
 
 def test_label_without_notice_or_description_only_has_bars_and_code():
     img = labels.generate_label_image("LAB-MIC-01", notice=None)
