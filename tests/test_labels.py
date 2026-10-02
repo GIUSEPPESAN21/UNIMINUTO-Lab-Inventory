@@ -233,6 +233,8 @@ def test_professional_item_label_has_logo_header_product_metadata_and_divider():
     text_left = logo_right + labels._HEADER_TEXT_GAP_PX
 
     assert scan["text"] == PRODUCT["id"]
+    assert scan["band_height"] >= 72  # 9 mm a 203 dpi aun con todos los metadatos
+    assert _text_lines(rows, scan["band_top"] + scan["band_height"], img.size[1]) == 1
     assert labels._load_brand_logo() is not None
     assert _region_ink(rows, labels._MARGIN_X_PX, header_top, logo_right, header_bottom) > 50
     assert _region_ink(rows, text_left, header_top, width - labels._MARGIN_X_PX, header_bottom) > 50
