@@ -86,6 +86,7 @@ from pathlib import Path
 from barcode.charsets import code128 as _code128_tables
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
+from core import barcode as barcode_rules
 from core.barcode import is_valid_code, validate_code_format
 
 
@@ -114,7 +115,14 @@ _DIVIDER_PX = 1
 _LOGO_MAX_WIDTH_PX = 78
 _LOGO_MAX_HEIGHT_PX = 42
 _HEADER_TEXT_GAP_PX = 8
-_HEADER_TRACKING_PX = 1
+_HEADER_TRACKING_PX = 2
+_HEADER_WORD_SPACING_PX = 2
+_SECONDARY_TRACKING_PX = 1
+_SECONDARY_WORD_SPACING_PX = 1
+_TITLE_TRACKING_PX = 1
+_TITLE_WORD_SPACING_PX = 1
+_TITLE_PADDING_X_PX = 5
+_TITLE_PADDING_Y_PX = 1
 _INSTITUTION_FONT_PX = 14
 _TYPE_FONT_PX = 12
 _NOTICE_FONT_PX = 10
@@ -225,25 +233,32 @@ def _clean_text(value) -> str:
     return " ".join(value.split()) if isinstance(value, str) else ""
 
 
-def _text_width(text: str, font, tracking: int = 0) -> float:
-    """Ancho visual incluyendo espaciado adicional entre caracteres."""
-    return font.getlength(text) + max(0, len(text) - 1) * tracking
+def _text_width(text: str, font, tracking: int = 0, word_spacing: int = 0) -> float:
+    """Ancho visual con espaciado independiente de letras y palabras."""
+    return (
+        font.getlength(text)
+        + max(0, len(text) - 1) * tracking
+        + text.count(" ") * word_spacing
+    )
 
 
 def _fit_font(text: str, max_width: int, size: int, min_size: int,
-              bold: bool, tracking: int = 0):
+              bold: bool, tracking: int = 0, word_spacing: int = 0):
     size = max(size, min_size)
     font = _load_font(size, bold)
-    while size > min_size and _text_width(text, font, tracking) > max_width:
+    while size > min_size and _text_width(text, font, tracking, word_spacing) > max_width:
         size -= 1
         font = _load_font(size, bold)
     return font
 
 
-def _ellipsize(text: str, font, max_width: int, tracking: int = 0) -> str:
-    if _text_width(text, font, tracking) <= max_width:
+def _ellipsize(text: str, font, max_width: int, tracking: int = 0,
+               word_spacing: int = 0) -> str:
+    if _text_width(text, font, tracking, word_spacing) <= max_width:
         return text
-    while text and _text_width(text.rstrip() + "...", font, tracking) > max_width:
+    while text and _text_width(
+        text.rstrip() + "...", font, tracking, word_spacing,
+    ) > max_width:
         text = text[:-1]
     return text.rstrip() + "..." if text else ""
 
@@ -253,14 +268,43 @@ def _ink_height(text: str, font) -> int:
     return max(1, bottom - top)
 
 
-def _metadata_line(category=None, location=None) -> str:
+def _location_guide(code: str) -> str:
+    """Ruta fisica compacta derivada del codigo, sin cambiar el Code 128."""
+    try:
+        parsed = barcode_rules.parse_code(code)
+    except ValueError:
+        return ""
+    fmt = parsed.get("format")
+    if fmt == barcode_rules.FORMAT_STANDARD:
+        parts = [
+            f"E{parsed['estanteria']}",
+            f"P{parsed['piso']}",
+            f"C{parsed['contenedor']:02d}",
+        ]
+        if parsed["caja"]:
+            parts.append(f"CJ{parsed['caja']:02d}")
+        if parsed["item"]:
+            parts.append(f"I{parsed['item']:03d}")
+        return "RUTA: " + " › ".join(parts)
+    if fmt == barcode_rules.FORMAT_MESA:
+        return f"RUTA: MESA {parsed['mesa']} › EQ{parsed['equipo']}"
+    if fmt == barcode_rules.FORMAT_LEGO:
+        return f"RUTA: E3 › LEGO {parsed['modelo']:02d}"
+    return ""
+
+
+def _metadata_line(category=None, location=None, guide=None) -> str:
+    """Prioriza la ruta codificada y conserva los metadatos existentes."""
     fields = []
+    guide = _clean_text(guide)
     category = _clean_text(category)
     location = _clean_text(location)
-    if category:
-        fields.append(f"CATEGORÍA: {category}")
+    if guide:
+        fields.append(guide)
     if location:
-        fields.append(f"UBICACIÓN: {location}")
+        fields.append(f"UBIC: {location}")
+    if category:
+        fields.append(f"CAT: {category}")
     return "  ·  ".join(fields)
 
 
@@ -301,17 +345,26 @@ def generate_label_image(code: str, canvas_size: tuple = LABEL_CANVAS_SIZE, *,
 
     margin_x, margin_y, gap = px(_MARGIN_X_PX), px(_MARGIN_Y_PX), px(_GAP_PX)
     text_width = max(1, width - 2 * margin_x)
+    title_padding_x, title_padding_y = px(_TITLE_PADDING_X_PX), px(_TITLE_PADDING_Y_PX)
+    title_tracking = px(_TITLE_TRACKING_PX)
+    title_word_spacing = px(_TITLE_WORD_SPACING_PX)
     description = _clean_text(description)
     notice = _clean_text(notice)
-    metadata = _metadata_line(category, location)
+    metadata = _metadata_line(category, location, _location_guide(code))
     friendly_type = type_name(_clean_text(item_type)) or "Activo de laboratorio"
     rows = []
     if description:
+        name_width = max(1, text_width - 2 * title_padding_x)
         name_font = _fit_font(
-            description, text_width, px(_NAME_FONT_PX),
+            description, name_width, px(_NAME_FONT_PX),
             max(_MIN_FONT_PX, px(_NAME_MIN_FONT_PX)), bold=True,
+            tracking=title_tracking, word_spacing=title_word_spacing,
         )
-        rows.append(("name", _ellipsize(description, name_font, text_width), name_font))
+        name_text = _ellipsize(
+            description, name_font, name_width,
+            tracking=title_tracking, word_spacing=title_word_spacing,
+        )
+        rows.append(("name", name_text, name_font))
     if metadata:
         meta_font = _fit_font(metadata, text_width, px(_META_FONT_PX), _MIN_FONT_PX, bold=True)
         rows.append(("metadata", _ellipsize(metadata, meta_font, text_width), meta_font))
@@ -323,12 +376,17 @@ def generate_label_image(code: str, canvas_size: tuple = LABEL_CANVAS_SIZE, *,
     min_bar_height = px(_MIN_BAR_HEIGHT_MM * LABEL_DPI / 25.4)
     max_bar_height = px(_MAX_BAR_HEIGHT_MM * LABEL_DPI / 25.4)
 
+    def row_height(row) -> int:
+        kind, text, font = row
+        padding = 2 * title_padding_y if kind == "name" else 0
+        return _ink_height(text, font) + padding
+
     def body_y(current_rows, with_branding: bool) -> int:
         y_value = margin_y
         if with_branding:
             y_value += header_height + divider + gap
-        for _, text, font in current_rows:
-            y_value += _ink_height(text, font) + gap
+        for row in current_rows:
+            y_value += row_height(row) + gap
         return y_value
 
     def bar_room(current_rows, with_branding: bool) -> int:
@@ -347,16 +405,19 @@ def generate_label_image(code: str, canvas_size: tuple = LABEL_CANVAS_SIZE, *,
     canvas = Image.new("L", (width, height), color=255)
     draw = ImageDraw.Draw(canvas)
 
-    def draw_left(text: str, font, x: int, top_y: int, tracking: int = 0) -> int:
+    def draw_left(text: str, font, x: int, top_y: int, tracking: int = 0,
+                  word_spacing: int = 0, fill: int = 0) -> int:
         left, top, _, bottom = font.getbbox(text)
-        if not tracking:
-            draw.text((x - left, top_y - top), text, font=font, fill=0)
+        if not tracking and not word_spacing:
+            draw.text((x - left, top_y - top), text, font=font, fill=fill)
         else:
             cursor = float(x)
             for char in text:
                 char_left, _, _, _ = font.getbbox(char)
-                draw.text((round(cursor) - char_left, top_y - top), char, font=font, fill=0)
+                draw.text((round(cursor) - char_left, top_y - top), char, font=font, fill=fill)
                 cursor += font.getlength(char) + tracking
+                if char == " ":
+                    cursor += word_spacing
         return bottom - top
 
     def draw_centered(text: str, font, top_y: int) -> int:
@@ -383,31 +444,62 @@ def generate_label_image(code: str, canvas_size: tuple = LABEL_CANVAS_SIZE, *,
         header_x = margin_x + logo_width + px(_HEADER_TEXT_GAP_PX)
         header_width = max(1, width - margin_x - header_x)
         tracking = px(_HEADER_TRACKING_PX)
+        word_spacing = px(_HEADER_WORD_SPACING_PX)
+        secondary_tracking = px(_SECONDARY_TRACKING_PX)
+        secondary_word_spacing = px(_SECONDARY_WORD_SPACING_PX)
         institution_font = _fit_font(
             LABEL_INSTITUTION_TEXT, header_width, px(_INSTITUTION_FONT_PX),
-            _MIN_FONT_PX, bold=True, tracking=tracking,
+            _MIN_FONT_PX, bold=True, tracking=tracking, word_spacing=word_spacing,
         )
         institution_text = _ellipsize(
-            LABEL_INSTITUTION_TEXT, institution_font, header_width, tracking=tracking,
+            LABEL_INSTITUTION_TEXT, institution_font, header_width,
+            tracking=tracking, word_spacing=word_spacing,
         )
-        type_font = _fit_font(friendly_type, header_width, px(_TYPE_FONT_PX), _MIN_FONT_PX, bold=True)
-        type_text = _ellipsize(friendly_type, type_font, header_width)
-        notice_font = _fit_font(notice, header_width, px(_NOTICE_FONT_PX), _MIN_FONT_PX, bold=True)
-        notice_text = _ellipsize(notice, notice_font, header_width)
-        header_rows = [(institution_text, institution_font, tracking), (type_text, type_font, 0), (notice_text, notice_font, 0)]
-        header_rows = [(text, font, spacing) for text, font, spacing in header_rows if text]
+        type_font = _fit_font(
+            friendly_type, header_width, px(_TYPE_FONT_PX), _MIN_FONT_PX,
+            bold=True, tracking=secondary_tracking, word_spacing=secondary_word_spacing,
+        )
+        type_text = _ellipsize(
+            friendly_type, type_font, header_width,
+            tracking=secondary_tracking, word_spacing=secondary_word_spacing,
+        )
+        notice_font = _fit_font(
+            notice, header_width, px(_NOTICE_FONT_PX), _MIN_FONT_PX,
+            bold=True, tracking=secondary_tracking, word_spacing=secondary_word_spacing,
+        )
+        notice_text = _ellipsize(
+            notice, notice_font, header_width,
+            tracking=secondary_tracking, word_spacing=secondary_word_spacing,
+        )
+        header_rows = [
+            (institution_text, institution_font, tracking, word_spacing),
+            (type_text, type_font, secondary_tracking, secondary_word_spacing),
+            (notice_text, notice_font, secondary_tracking, secondary_word_spacing),
+        ]
+        header_rows = [row for row in header_rows if row[0]]
         header_gap = px(1)
-        header_ink = sum(_ink_height(text, font) for text, font, _ in header_rows)
+        header_ink = sum(_ink_height(value, font) for value, font, _, _ in header_rows)
         header_ink += max(0, len(header_rows) - 1) * header_gap
         header_y = y + max(0, (header_height - header_ink) // 2)
-        for text, font, spacing in header_rows:
-            header_y += draw_left(text, font, header_x, header_y, spacing) + header_gap
+        for value, font, spacing, words in header_rows:
+            header_y += draw_left(value, font, header_x, header_y, spacing, words) + header_gap
         divider_y = y + header_height
         draw.line((margin_x, divider_y, width - margin_x - 1, divider_y), fill=0, width=divider)
         y += header_height + divider + gap
 
-    for _, text, font in rows:
-        y += draw_left(text, font, margin_x, y) + gap
+    for kind, text, font in rows:
+        if kind == "name":
+            height_px = row_height((kind, text, font))
+            draw.rectangle(
+                (margin_x, y, width - margin_x - 1, y + height_px - 1), fill=0,
+            )
+            draw_left(
+                text, font, margin_x + title_padding_x, y + title_padding_y,
+                tracking=title_tracking, word_spacing=title_word_spacing, fill=255,
+            )
+            y += height_px + gap
+        else:
+            y += draw_left(text, font, margin_x, y) + gap
     room = height - margin_y - code_height - gap - y
     y += max(0, (room - bar_height) // 2)
     bar_x = (width - len(modules) * dots) // 2
