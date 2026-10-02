@@ -128,12 +128,20 @@ def render():
                     st.rerun()
                 label_png = labels.generate_item_label_png_bytes(item)
                 if label_png:
-                    c5.download_button(
-                        "🏷️", data=label_png, file_name=f"etiqueta_{item['id']}.png",
-                        mime="image/png", key=f"label_{item['id']}",
-                        help="Descargar etiqueta (50x25mm, lista para la SAT TT 460)",
-                        use_container_width=True,
-                    )
+                    label_pdf = labels.generate_item_label_pdf_bytes(item)
+                    with c5.popover("🏷️", help="Descargar etiqueta profesional", use_container_width=True):
+                        if label_pdf:
+                            st.download_button(
+                                "PDF · imprimir", data=label_pdf,
+                                file_name=f"etiqueta_{item['id']}.pdf", mime="application/pdf",
+                                key=f"label_pdf_{item['id']}", type="primary", use_container_width=True,
+                            )
+                        st.download_button(
+                            "PNG · respaldo", data=label_png,
+                            file_name=f"etiqueta_{item['id']}.png", mime="image/png",
+                            key=f"label_png_{item['id']}", use_container_width=True,
+                        )
+                        st.caption("PDF recomendado: papel 50×25 mm, horizontal, escala 100 % y sin márgenes.")
                 else:
                     c5.write("")
 

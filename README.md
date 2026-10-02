@@ -84,16 +84,14 @@ Excel + GitHub.
 
 ### Etiquetas imprimibles
 
-Desde el catálogo de Inventario o desde Escanear, el botón **🏷️ Descargar etiqueta** genera un PNG profesional y monocromático listo para una impresora térmica **SAT TT 460**. La composición, de arriba hacia abajo, es:
+Desde Inventario o Escanear, el menú **🏷️ Etiqueta** ofrece dos formatos:
 
-1. logotipo oficial de UNIMINUTO, nombre del Laboratorio de Ingeniería, tipo de activo y aviso institucional;
-2. nombre destacado del producto;
-3. categoría y ubicación física, cuando esos datos están disponibles;
-4. código de barras Code 128 y el código exacto en texto legible.
+- **PDF · imprimir (recomendado):** página física exacta de **50×25 mm**, sin márgenes internos del documento. El raster monocromático de 384×192 px se centra manteniendo un punto de imagen por punto de la SAT TT 460 a 203 dpi; así el navegador o visor no lo reduce como ocurrió al imprimir el PNG anterior.
+- **PNG · respaldo:** imagen original de **384×192 px a 203 dpi** para archivo, integración o control manual del driver.
 
-Los datos opcionales vacíos se omiten sin bloquear la impresión. El logo está versionado en `assets/uniminuto-logo.png`, por lo que generar la etiqueta no depende de Internet; si el recurso faltara o estuviera dañado, se usa el texto `UNIMINUTO` como respaldo.
+La etiqueta incluye logotipo oficial de UNIMINUTO, Laboratorio de Ingeniería, tipo de activo, aviso institucional, nombre, categoría, ubicación, Code 128 y código legible. La tipografía está optimizada para impresión térmica: encabezados y datos secundarios en negrita, tamaños mínimos mayores, espaciado adicional en el título y código humano reforzado. Los datos opcionales vacíos se omiten sin bloquear la impresión.
 
-Se conservan las medidas validadas: **384×192 px**, aproximadamente **50×25 mm a 203 dpi**, con la resolución declarada dentro del PNG. Las barras mantienen zonas de silencio, una altura mínima de 9 mm y un ancho entero de puntos por módulo. Imprime siempre al **100 % (tamaño real)**, sin “ajustar a la página”, para no deformar el Code 128.
+Para imprimir el PDF en la SAT TT 460 selecciona **papel 50×25 mm**, orientación **horizontal**, escala **100 % / tamaño real** y **sin márgenes**. No uses “Ajustar”, “Encoger” ni “Varias páginas por hoja”. Las barras conservan zonas de silencio, ancho entero por módulo y altura mínima de 9 mm.
 ## Operación del laboratorio
 
 ### Reservas

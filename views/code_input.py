@@ -183,8 +183,9 @@ def render_code_input(storage, item_type: str, key_prefix: str, initial_code: st
 
     if st.checkbox("Mostrar vista previa de la etiqueta", key=f"{key_prefix}_preview"):
         try:
-            data = labels.generate_label_png_bytes(code, description="Vista previa")
-            st.image(data, caption=f"Vista previa — {code}", use_container_width=True)
+            data = labels.generate_label_png_bytes(code, item_type=item_type)
+            st.image(data, caption=f"Vista previa a resolución nativa — {code}", width=labels.LABEL_CANVAS_SIZE[0])
+            st.caption("La etiqueta final agregará nombre, categoría y ubicación. Para imprimir usa el PDF 50×25 mm.")
         except ValueError as exc:
             st.error(f"No se pudo generar la etiqueta: {exc}")
 

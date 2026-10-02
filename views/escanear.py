@@ -19,12 +19,22 @@ def _render_label_download(item: dict):
     label_png = labels.generate_item_label_png_bytes(item)
     if not label_png:
         return
-    st.download_button(
-        "🏷️ Descargar etiqueta", data=label_png,
+    label_pdf = labels.generate_item_label_pdf_bytes(item)
+    pdf_col, png_col = st.columns(2)
+    if label_pdf:
+        pdf_col.download_button(
+            "🏷️ PDF 50×25 mm", data=label_pdf,
+            file_name=f"etiqueta_{item['id']}.pdf", mime="application/pdf",
+            help="Formato recomendado para imprimir sin reducción",
+            key=f"label_scan_pdf_{item['id']}", type="primary", use_container_width=True,
+        )
+    png_col.download_button(
+        "PNG · respaldo", data=label_png,
         file_name=f"etiqueta_{item['id']}.png", mime="image/png",
-        help="Etiqueta 50x25mm lista para la SAT TT 460", key=f"label_scan_{item['id']}",
+        help="Imagen a 203 dpi", key=f"label_scan_png_{item['id']}",
+        use_container_width=True,
     )
-
+    st.caption("Para la SAT TT 460: papel 50×25 mm, horizontal, escala 100 % y sin márgenes.")
 
 def _render_item_actions(item: dict, parent: dict = None):
     storage = st.session_state.storage

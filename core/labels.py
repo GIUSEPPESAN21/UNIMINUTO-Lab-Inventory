@@ -80,6 +80,7 @@ def type_name(item_type: str) -> str:
 import functools
 import io
 import re
+import zlib
 from pathlib import Path
 
 from barcode.charsets import code128 as _code128_tables
@@ -104,23 +105,24 @@ LABEL_NOTICE_TEXT = "ACTIVO INSTITUCIONAL · NO RETIRAR SIN PRÉSTAMO"
 _MIN_QUIET_MODULES = 6
 _MAX_MODULE_DOTS = 4
 _MIN_BAR_HEIGHT_MM = 9.0
-_MAX_BAR_HEIGHT_MM = 12.0
+_MAX_BAR_HEIGHT_MM = 10.0
 _MARGIN_X_PX = 8
 _MARGIN_Y_PX = 4
-_GAP_PX = 3
-_HEADER_HEIGHT_PX = 40
+_GAP_PX = 2
+_HEADER_HEIGHT_PX = 46
 _DIVIDER_PX = 1
-_LOGO_MAX_WIDTH_PX = 68
-_LOGO_MAX_HEIGHT_PX = 36
-_HEADER_TEXT_GAP_PX = 6
-_INSTITUTION_FONT_PX = 12
-_TYPE_FONT_PX = 10
-_NOTICE_FONT_PX = 8
-_NAME_FONT_PX = 17
-_NAME_MIN_FONT_PX = 13
-_META_FONT_PX = 10
-_CODE_FONT_PX = 22
-_MIN_FONT_PX = 8
+_LOGO_MAX_WIDTH_PX = 78
+_LOGO_MAX_HEIGHT_PX = 42
+_HEADER_TEXT_GAP_PX = 8
+_HEADER_TRACKING_PX = 1
+_INSTITUTION_FONT_PX = 14
+_TYPE_FONT_PX = 12
+_NOTICE_FONT_PX = 10
+_NAME_FONT_PX = 18
+_NAME_MIN_FONT_PX = 15
+_META_FONT_PX = 11
+_CODE_FONT_PX = 26
+_MIN_FONT_PX = 9
 
 _FONT_CANDIDATES_BOLD = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -223,19 +225,25 @@ def _clean_text(value) -> str:
     return " ".join(value.split()) if isinstance(value, str) else ""
 
 
-def _fit_font(text: str, max_width: int, size: int, min_size: int, bold: bool):
+def _text_width(text: str, font, tracking: int = 0) -> float:
+    """Ancho visual incluyendo espaciado adicional entre caracteres."""
+    return font.getlength(text) + max(0, len(text) - 1) * tracking
+
+
+def _fit_font(text: str, max_width: int, size: int, min_size: int,
+              bold: bool, tracking: int = 0):
     size = max(size, min_size)
     font = _load_font(size, bold)
-    while size > min_size and font.getlength(text) > max_width:
+    while size > min_size and _text_width(text, font, tracking) > max_width:
         size -= 1
         font = _load_font(size, bold)
     return font
 
 
-def _ellipsize(text: str, font, max_width: int) -> str:
-    if font.getlength(text) <= max_width:
+def _ellipsize(text: str, font, max_width: int, tracking: int = 0) -> str:
+    if _text_width(text, font, tracking) <= max_width:
         return text
-    while text and font.getlength(text.rstrip() + "...") > max_width:
+    while text and _text_width(text.rstrip() + "...", font, tracking) > max_width:
         text = text[:-1]
     return text.rstrip() + "..." if text else ""
 
@@ -305,7 +313,7 @@ def generate_label_image(code: str, canvas_size: tuple = LABEL_CANVAS_SIZE, *,
         )
         rows.append(("name", _ellipsize(description, name_font, text_width), name_font))
     if metadata:
-        meta_font = _fit_font(metadata, text_width, px(_META_FONT_PX), _MIN_FONT_PX, bold=False)
+        meta_font = _fit_font(metadata, text_width, px(_META_FONT_PX), _MIN_FONT_PX, bold=True)
         rows.append(("metadata", _ellipsize(metadata, meta_font, text_width), meta_font))
     code_font = _fit_font(code, text_width, px(_CODE_FONT_PX), _MIN_FONT_PX, bold=True)
     code_height = _ink_height(code, code_font)
@@ -339,9 +347,16 @@ def generate_label_image(code: str, canvas_size: tuple = LABEL_CANVAS_SIZE, *,
     canvas = Image.new("L", (width, height), color=255)
     draw = ImageDraw.Draw(canvas)
 
-    def draw_left(text: str, font, x: int, top_y: int) -> int:
+    def draw_left(text: str, font, x: int, top_y: int, tracking: int = 0) -> int:
         left, top, _, bottom = font.getbbox(text)
-        draw.text((x - left, top_y - top), text, font=font, fill=0)
+        if not tracking:
+            draw.text((x - left, top_y - top), text, font=font, fill=0)
+        else:
+            cursor = float(x)
+            for char in text:
+                char_left, _, _, _ = font.getbbox(char)
+                draw.text((round(cursor) - char_left, top_y - top), char, font=font, fill=0)
+                cursor += font.getlength(char) + tracking
         return bottom - top
 
     def draw_centered(text: str, font, top_y: int) -> int:
@@ -367,22 +382,26 @@ def generate_label_image(code: str, canvas_size: tuple = LABEL_CANVAS_SIZE, *,
 
         header_x = margin_x + logo_width + px(_HEADER_TEXT_GAP_PX)
         header_width = max(1, width - margin_x - header_x)
+        tracking = px(_HEADER_TRACKING_PX)
         institution_font = _fit_font(
             LABEL_INSTITUTION_TEXT, header_width, px(_INSTITUTION_FONT_PX),
-            _MIN_FONT_PX, bold=True,
+            _MIN_FONT_PX, bold=True, tracking=tracking,
         )
-        type_font = _fit_font(friendly_type, header_width, px(_TYPE_FONT_PX), _MIN_FONT_PX, bold=False)
+        institution_text = _ellipsize(
+            LABEL_INSTITUTION_TEXT, institution_font, header_width, tracking=tracking,
+        )
+        type_font = _fit_font(friendly_type, header_width, px(_TYPE_FONT_PX), _MIN_FONT_PX, bold=True)
         type_text = _ellipsize(friendly_type, type_font, header_width)
-        notice_font = _fit_font(notice, header_width, px(_NOTICE_FONT_PX), _MIN_FONT_PX, bold=False)
+        notice_font = _fit_font(notice, header_width, px(_NOTICE_FONT_PX), _MIN_FONT_PX, bold=True)
         notice_text = _ellipsize(notice, notice_font, header_width)
-        header_rows = [(LABEL_INSTITUTION_TEXT, institution_font), (type_text, type_font), (notice_text, notice_font)]
-        header_rows = [(text, font) for text, font in header_rows if text]
+        header_rows = [(institution_text, institution_font, tracking), (type_text, type_font, 0), (notice_text, notice_font, 0)]
+        header_rows = [(text, font, spacing) for text, font, spacing in header_rows if text]
         header_gap = px(1)
-        header_ink = sum(_ink_height(text, font) for text, font in header_rows)
+        header_ink = sum(_ink_height(text, font) for text, font, _ in header_rows)
         header_ink += max(0, len(header_rows) - 1) * header_gap
         header_y = y + max(0, (header_height - header_ink) // 2)
-        for text, font in header_rows:
-            header_y += draw_left(text, font, header_x, header_y) + header_gap
+        for text, font, spacing in header_rows:
+            header_y += draw_left(text, font, header_x, header_y, spacing) + header_gap
         divider_y = y + header_height
         draw.line((margin_x, divider_y, width - margin_x - 1, divider_y), fill=0, width=divider)
         y += header_height + divider + gap
@@ -416,12 +435,92 @@ def generate_label_png_bytes(code: str, canvas_size: tuple = LABEL_CANVAS_SIZE, 
     return buf.getvalue()
 
 
+def _assemble_pdf(objects: list[bytes]) -> bytes:
+    """Construye un PDF minimo y valido sin dependencias adicionales."""
+    document = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for number, payload in enumerate(objects, start=1):
+        offsets.append(len(document))
+        document.extend(f"{number} 0 obj\n".encode("ascii"))
+        document.extend(payload)
+        document.extend(b"\nendobj\n")
+    xref = len(document)
+    document.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    document.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        document.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    document.extend(
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+        f"startxref\n{xref}\n%%EOF\n".encode("ascii")
+    )
+    return bytes(document)
+
+
+def _label_image_to_pdf(image: Image.Image) -> bytes:
+    """Página exacta 50x25mm; cada pixel mantiene un punto a 203dpi."""
+    image = image.convert("1", dither=Image.Dither.NONE)
+    page_width = LABEL_WIDTH_MM * 72 / 25.4
+    page_height = LABEL_HEIGHT_MM * 72 / 25.4
+    image_width = image.width * 72 / LABEL_DPI
+    image_height = image.height * 72 / LABEL_DPI
+    offset_x = (page_width - image_width) / 2
+    offset_y = (page_height - image_height) / 2
+    pixels = zlib.compress(image.tobytes())
+    commands = (
+        f"q\n{image_width:.4f} 0 0 {image_height:.4f} "
+        f"{offset_x:.4f} {offset_y:.4f} cm\n/Label Do\nQ\n"
+    ).encode("ascii")
+    image_object = (
+        f"<< /Type /XObject /Subtype /Image /Width {image.width} "
+        f"/Height {image.height} /ColorSpace /DeviceGray /BitsPerComponent 1 "
+        f"/Filter /FlateDecode /Length {len(pixels)} >>\nstream\n"
+    ).encode("ascii") + pixels + b"\nendstream"
+    content_object = (
+        f"<< /Length {len(commands)} >>\nstream\n".encode("ascii")
+        + commands + b"endstream"
+    )
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width:.4f} {page_height:.4f}] "
+            f"/Resources << /XObject << /Label 4 0 R >> >> /Contents 5 0 R >>"
+        ).encode("ascii"),
+        image_object,
+        content_object,
+    ]
+    return _assemble_pdf(objects)
+
+
+def generate_label_pdf_bytes(code: str, canvas_size: tuple = LABEL_CANVAS_SIZE, *,
+                             description: str = None, notice: str = LABEL_NOTICE_TEXT,
+                             category: str = None, location: str = None,
+                             item_type: str = None) -> bytes:
+    """PDF de una página 50x25mm recomendado para impresión sin escalado."""
+    image = generate_label_image(
+        code, canvas_size=canvas_size, description=description, notice=notice,
+        category=category, location=location, item_type=item_type,
+    )
+    return _label_image_to_pdf(image)
+
+
 def generate_item_label_png_bytes(item: dict):
-    """Etiqueta completa de inventario; None para ids no imprimibles."""
+    """Etiqueta PNG de inventario; None para ids no imprimibles."""
     fields = _item_label_fields(item)
     if not is_valid_code(fields["code"]):
         return None
     try:
         return generate_label_png_bytes(**fields)
+    except ValueError:
+        return None
+
+
+def generate_item_label_pdf_bytes(item: dict):
+    """Etiqueta PDF 50x25mm de inventario; None para ids no imprimibles."""
+    fields = _item_label_fields(item)
+    if not is_valid_code(fields["code"]):
+        return None
+    try:
+        return generate_label_pdf_bytes(**fields)
     except ValueError:
         return None

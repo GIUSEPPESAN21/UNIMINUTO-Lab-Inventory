@@ -8,6 +8,7 @@ lector, para comprobar que devuelve EXACTAMENTE el texto registrado.
 import io
 import itertools
 import random
+import re
 import string
 
 import pytest
@@ -232,6 +233,8 @@ def test_professional_item_label_has_logo_header_product_metadata_and_divider():
     text_left = logo_right + labels._HEADER_TEXT_GAP_PX
 
     assert scan["text"] == PRODUCT["id"]
+    assert scan["band_height"] >= 72  # 9 mm a 203 dpi aun con todos los metadatos
+    assert _text_lines(rows, scan["band_top"] + scan["band_height"], img.size[1]) == 1
     assert labels._load_brand_logo() is not None
     assert _region_ink(rows, labels._MARGIN_X_PX, header_top, logo_right, header_bottom) > 50
     assert _region_ink(rows, text_left, header_top, width - labels._MARGIN_X_PX, header_bottom) > 50
@@ -250,6 +253,16 @@ def test_brand_logo_asset_is_versioned_and_converts_to_monochrome():
     assert set(logo.getdata()) <= {0, 255}
     assert 0 in logo.getdata()
 
+
+def test_thermal_typography_uses_legible_sizes_weight_and_tracking():
+    assert labels._INSTITUTION_FONT_PX >= 14
+    assert labels._TYPE_FONT_PX >= 12
+    assert labels._NOTICE_FONT_PX >= 10
+    assert labels._NAME_FONT_PX >= 18
+    assert labels._META_FONT_PX >= 11
+    assert labels._CODE_FONT_PX >= 26
+    assert labels._MIN_FONT_PX >= 9
+    assert labels._HEADER_TRACKING_PX >= 1
 
 def test_label_without_notice_or_description_only_has_bars_and_code():
     img = labels.generate_label_image("LAB-MIC-01", notice=None)
@@ -273,6 +286,39 @@ def test_label_png_for_lab_mic_01_declares_printer_dpi_and_scans_back():
     assert img.info["dpi"] == pytest.approx((203, 203), abs=0.5)
     assert _scan_label(img)["text"] == "LAB-MIC-01"
 
+
+def test_print_ready_pdf_has_exact_50x25mm_page_and_native_203dpi_raster():
+    data = labels.generate_label_pdf_bytes(
+        PRODUCT["id"], description=PRODUCT["name"], category=PRODUCT["category"],
+        location=PRODUCT["location"], item_type=PRODUCT["item_type"],
+    )
+    assert data.startswith(b"%PDF-1.4")
+    assert data.endswith(b"%%EOF\n")
+    assert b"/Width 384 /Height 192" in data
+    assert b"/BitsPerComponent 1" in data
+
+    media_box = re.search(rb"/MediaBox \[0 0 ([0-9.]+) ([0-9.]+)\]", data)
+    assert media_box
+    assert float(media_box.group(1)) * 25.4 / 72 == pytest.approx(50, abs=0.01)
+    assert float(media_box.group(2)) * 25.4 / 72 == pytest.approx(25, abs=0.01)
+
+    matrix = re.search(
+        rb"q\n([0-9.]+) 0 0 ([0-9.]+) ([0-9.]+) ([0-9.]+) cm", data,
+    )
+    assert matrix
+    assert float(matrix.group(1)) * labels.LABEL_DPI / 72 == pytest.approx(384, abs=0.02)
+    assert float(matrix.group(2)) * labels.LABEL_DPI / 72 == pytest.approx(192, abs=0.02)
+    assert float(matrix.group(3)) > 0
+    assert float(matrix.group(4)) > 0
+
+    startxref = int(re.search(rb"startxref\n(\d+)", data).group(1))
+    assert data[startxref:].startswith(b"xref\n")
+
+
+def test_generate_item_label_pdf_uses_item_and_skips_unprintable_ids():
+    assert labels.generate_item_label_pdf_bytes(PRODUCT).startswith(b"%PDF-1.4")
+    assert labels.generate_item_label_pdf_bytes({"id": "CAJA 001"}) is None
+    assert labels.generate_item_label_pdf_bytes({"id": ""}) is None
 
 def test_generate_item_label_png_bytes_uses_the_item_and_skips_unprintable_ids():
     data = labels.generate_item_label_png_bytes({"id": "0012345", "name": "Osciloscopio"})
