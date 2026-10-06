@@ -5,3 +5,4 @@ __pycache__/
 venv/
 UNIMINUTO_LAB_DB.xlsx
 .streamlit/secrets.toml
+*.tmp
