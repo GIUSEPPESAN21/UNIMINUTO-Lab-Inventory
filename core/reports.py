@@ -4,7 +4,6 @@ core/reports.py - Analitica de uso del laboratorio y exportacion de la base de d
 """
 
 import io
-from datetime import datetime, timezone
 
 import pandas as pd
 

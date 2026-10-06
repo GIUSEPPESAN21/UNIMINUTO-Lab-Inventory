@@ -9,7 +9,7 @@ def _make_user(storage, role="estudiante"):
 
 
 def test_checkout_reduces_availability(storage):
-    item = storage.add_item("MULT-01", name="Multimetro", quantity=3)
+    storage.add_item("MULT-01", name="Multimetro", quantity=3)
     user = _make_user(storage)
 
     ok, msg, loan = loans_core.checkout(storage, "MULT-01", 2, user)

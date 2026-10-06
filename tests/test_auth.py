@@ -33,13 +33,25 @@ def test_register_user_defaults_to_estudiante(storage):
     assert user["student_id"] == "TI2024001"
 
 
-def test_register_user_whitelisted_email_becomes_profesor(storage):
+def test_register_user_whitelisted_email_becomes_profesor_only_when_verified(storage):
+    storage.add_to_whitelist("prof@uniminuto.edu.co")
+    user, error = auth.register_user(
+        storage, "Prof. Gomez", "prof@uniminuto.edu.co", "password123", "Ing. Industrial", "DOC2024001",
+        email_verified=True,
+    )
+    assert error is None
+    assert user["role"] == "profesor"
+
+
+def test_register_user_whitelisted_email_without_verification_stays_estudiante(storage):
+    # Sin probar que el solicitante es dueño del correo, la lista blanca no basta:
+    # si no, cualquiera podria registrarse con el correo de un profesor.
     storage.add_to_whitelist("prof@uniminuto.edu.co")
     user, error = auth.register_user(
         storage, "Prof. Gomez", "prof@uniminuto.edu.co", "password123", "Ing. Industrial", "DOC2024001"
     )
     assert error is None
-    assert user["role"] == "profesor"
+    assert user["role"] == "estudiante"
 
 
 def test_register_user_rejects_non_institutional_email(storage):

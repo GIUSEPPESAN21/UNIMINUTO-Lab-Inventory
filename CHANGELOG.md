@@ -1,5 +1,59 @@
 # Changelog
 
+## v1.10.0 — Eliminación definitiva, integridad de datos y seguridad
+
+### Corregido
+- **Un código eliminado no se podía volver a crear** ("ya existe un item con ese
+  código"): "eliminar" solo marcaba el ítem como `retired` y su fila seguía en el
+  Excel. Ahora **Eliminar definitivamente** borra el ítem, su historial y sus
+  préstamos devueltos; los contenidos de un Contenedor Principal se eliminan en
+  cascada, las solicitudes abiertas se cancelan y se bloquea si hay préstamos
+  abiertos. Los códigos de ítems ya dados de baja también quedan libres.
+- **Editar un ítem tras reiniciar la app fallaba** (`'float' object has no attribute
+  'strip'`): al releer el Excel las celdas vacías llegaban como `NaN`. Ahora se leen
+  como cadenas vacías, y textos como `NA`/`None` ya no se convierten en nulos.
+- **Un arranque sin red podía publicar una base vacía sobre la real** en GitHub: ya
+  no se sobrescribe una versión remota que la app no haya descargado.
+- Una fecha límite de devolución vencía a las 7 p. m. del día anterior (medianoche
+  UTC); ahora vence al terminar ese día en Colombia.
+- Escanear un código dado de baja ofrece registrarlo de nuevo en vez de un callejón
+  sin salida.
+
+### Integridad de datos
+- Escritura **atómica** del Excel (archivo temporal + `os.replace`).
+- Publicación en GitHub **síncrona y serializada**: el cambio ya está publicado
+  cuando termina la operación; varias escrituras simultáneas se agrupan y siempre
+  gana la última versión (antes, hilos sin orden podían subir una versión vieja o un
+  archivo a medias). Reintentos ante 429/5xx y fallos de red.
+- **Detección de conflictos:** se recuerda el SHA de la última sincronización; si
+  GitHub tiene otra versión se rechaza el push y el maestro elige qué conservar.
+  Botón de reintento de sincronización.
+- Stock y cruces de reservas se **re-verifican dentro del lock** (no se puede sacar
+  la misma última unidad ni aprobar dos reservas que se cruzan).
+- Lecturas por hoja y disponibilidad en lote (`get_availability_map`): menos copias y
+  sin una consulta por ítem al listar el catálogo o el tablero de inicio.
+- `firestore_retry` pasa a llamarse `with_retry` (alias conservado) y ya no reintenta
+  errores de programación.
+
+### Seguridad
+- **Rol profesor verificado:** estar en la lista blanca ya no basta; hay que escribir
+  un código enviado al correo. Sin SMTP la cuenta nace estudiante.
+- Mensaje de login genérico, bloqueo temporal por intentos y comparación en tiempo
+  constante contra cuentas inexistentes.
+- Sesión revalidada en cada recarga (rol/estado al instante), con expiración y sin
+  `password_hash` en `session_state`.
+- Guardas de rol dentro de Inventario, Reportes y Usuarios; escape de HTML en nombres
+  y encabezados.
+- Alerta de WhatsApp en segundo plano (no retrasa la interfaz).
+
+### Calidad
+- **Pruebas herméticas:** aislamiento automático del disco, de GitHub y de los
+  Secrets; ya no dejan archivos ni fallan en la segunda corrida.
+- De 229 a más de 330 pruebas (cobertura 53 % → 70 %): sincronización con GitHub
+  simulado, concurrencia, eliminación, seguridad, `AppTest` de extremo a extremo y
+  reportes.
+- CI con matriz Python 3.11/3.12, lint (`ruff`) y umbral de cobertura; Dependabot.
+
 ## v1.9.2 — Títulos legibles y guía física en la etiqueta
 
 - Mayor separación entre letras y palabras en el título institucional, tipo de activo y aviso, con medición previa para evitar recortes.

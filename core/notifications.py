@@ -10,6 +10,7 @@ import logging
 import re
 import smtplib
 import ssl
+import threading
 from email.message import EmailMessage
 
 from core.config import safe_secret
@@ -130,3 +131,9 @@ def send_whatsapp_alert(message: str) -> bool:
     except Exception as exc:
         logger.error(f"Error al enviar alerta de WhatsApp: {exc}")
         return False
+
+
+def send_whatsapp_alert_async(message: str) -> None:
+    """Envia la alerta en segundo plano: la respuesta de Twilio no debe retrasar
+    la interfaz y su resultado nunca altera la operacion que la origino."""
+    threading.Thread(target=send_whatsapp_alert, args=(message,), daemon=True).start()

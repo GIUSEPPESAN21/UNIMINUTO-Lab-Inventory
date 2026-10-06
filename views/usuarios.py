@@ -3,8 +3,8 @@
 
 import streamlit as st
 
-from core import auth
-from core.ui import page_header
+from core import auth, permissions
+from core.ui import guard_role, page_header
 
 ROLES = ["estudiante", "profesor", "maestro"]
 
@@ -59,7 +59,7 @@ def _user_card(storage, user: dict, current_user: dict) -> None:
                         try:
                             updated = storage.update_user(user["id"], changes)
                             if user["id"] == current_user["id"] and updated:
-                                st.session_state.user = {**current_user, **updated}
+                                st.session_state.user = auth.public_user({**current_user, **updated})
                             st.success("Datos del usuario actualizados.")
                             st.rerun()
                         except ValueError as exc:
@@ -69,6 +69,9 @@ def _user_card(storage, user: dict, current_user: dict) -> None:
 def render():
     storage = st.session_state.storage
     current_user = st.session_state.user
+
+    if not guard_role(current_user, permissions.ADMIN_ROLES, "la gestión de usuarios"):
+        return
 
     page_header(
         "Usuarios", icon="👥",

@@ -178,7 +178,7 @@ def render_code_input(storage, item_type: str, key_prefix: str, initial_code: st
         existing = storage.get_item(code) if storage else None
     except Exception:
         existing = None  # el guardado volvera a comprobarlo y mostrara el error real
-    if existing:
+    if existing and existing.get("status") != "retired":  # un código dado de baja queda libre
         st.warning(f"El código ya pertenece a: {existing.get('name') or 'un item existente'}.")
 
     if st.checkbox("Mostrar vista previa de la etiqueta", key=f"{key_prefix}_preview"):

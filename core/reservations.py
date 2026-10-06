@@ -147,9 +147,14 @@ def review_reservation(storage, reservation_id: str, decision: str,
         )
         if conflict:
             return False, f"Conflicto con la reserva aprobada: {conflict.get('activity')}."
-    storage.update_reservation_status(
-        reservation_id, decision, reviewer.get("institutional_email", ""), notes
-    )
+    try:
+        storage.update_reservation_status(
+            reservation_id, decision, reviewer.get("institutional_email", ""), notes
+        )
+    except ValueError as exc:
+        # La capa de datos re-verifica el cruce dentro de su lock (otra aprobacion
+        # simultanea pudo ocupar el horario despues de la comprobacion anterior).
+        return False, str(exc)
     return True, "Reserva aprobada." if decision == STATUS_APPROVED else "Reserva rechazada."
 
 

@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # Las dependencias estan fijadas (==): Dependabot propone las actualizaciones
+  # como PR y el CI valida que nada se rompa antes de aceptarlas.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
