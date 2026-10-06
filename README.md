@@ -119,6 +119,25 @@ piso, contenedor, caja e ítem). Mesa y Lego tienen rutas especiales; códigos
 libres/heredados usan `location`. No se dibuja un mapa porque los documentos no
 incluyen plano, coordenadas ni punto de entrada.
 
+### Eliminar ítems
+
+En **Inventario → ✏️ Editar → 🗑️ Eliminar definitivamente** el ítem se borra
+**para siempre**: desaparecen su fila, su historial y sus préstamos ya devueltos, y
+el código queda libre para volver a registrarse (antes "eliminar" solo lo marcaba
+como dado de baja y el código seguía bloqueado: *"ya existe un item con ese
+código"*). Al eliminar un Contenedor Principal también se eliminan los ítems que
+contiene. Se pide confirmación y se muestra qué se perderá; se bloquea si hay
+préstamos abiertos (hay que registrar antes el reingreso) y las solicitudes de
+producto pendientes o aprobadas se cancelan. Los códigos de ítems que ya estaban
+dados de baja también se pueden registrar de nuevo. Cada cambio se guarda y se
+publica en el momento (ver *Integridad de datos*).
+
+### Fechas de devolución
+
+La fecha límite de un préstamo vence al **terminar ese día en Colombia**
+(`America/Bogota`), no a las 7 p. m. del día anterior. Una fecha con hora concreta
+se respeta tal cual.
+
 ### Corrección de usuarios
 
 El maestro puede corregir nombre, ID, correo institucional y programa. El
@@ -133,8 +152,12 @@ rol, estado y contraseña conservan sus controles independientes.
 | Maestro | Todo lo anterior + corregir usuarios, roles/estados, lista blanca y exportación |
 
 **Seguridad del registro:** nadie elige su rol al registrarse. Toda cuenta nace
-`estudiante`; solo nace `profesor` si su correo ya está en la lista blanca
-(gestionada por un `maestro`). El rol `maestro` nunca se auto-asigna: la
+`estudiante`; solo nace `profesor` si su correo está en la lista blanca
+(gestionada por un `maestro`) **y** el solicitante demuestra ser dueño del correo
+con un código de 6 dígitos enviado a esa dirección (vence en 15 minutos, 5
+intentos). Sin esa prueba cualquiera podría registrarse con el correo de un
+profesor. Si el correo no puede verificarse (SMTP sin configurar) la cuenta nace
+`estudiante` y el `maestro` puede activar el rol en **Usuarios**. El rol `maestro` nunca se auto-asigna: la
 primera cuenta maestra se siembra desde los Secrets de Streamlit
 (`MASTER_EMAIL` / `MASTER_INITIAL_PASSWORD`) la primera vez que arranca la app.
 Se acepta cualquier correo institucional (dominio terminado en `.edu` o
@@ -142,6 +165,18 @@ Se acepta cualquier correo institucional (dominio terminado en `.edu` o
 registro exige, sin excepción: nombre completo (nombre y apellido), **ID
 Estudiante**, correo institucional, programa académico o departamento, y
 contraseña — todos obligatorios.
+
+**Inicio de sesión y sesión:**
+
+- El error es el mismo si la cuenta no existe o la contraseña es incorrecta (no
+  revela qué correos están registrados) y hay bloqueo temporal tras 5 intentos
+  fallidos por correo (`LOGIN_MAX_ATTEMPTS`, `LOGIN_LOCKOUT_MINUTES`).
+- La sesión se **revalida contra la base en cada recarga**: un cambio de rol o una
+  cuenta deshabilitada surten efecto de inmediato, y la sesión expira a las 12 h
+  (`SESSION_TIMEOUT_MINUTES`). La sesión nunca guarda el hash de la contraseña.
+- Las vistas de Inventario, Reportes y Usuarios vuelven a comprobar el rol (ocultar
+  una página no es autorizar) y el texto escrito por usuarios se escapa antes de
+  mostrarse como HTML.
 
 ## Arquitectura
 
@@ -151,14 +186,16 @@ contraseña — todos obligatorios.
 - **Base de datos**: un archivo Excel (`UNIMINUTO_LAB_DB.xlsx`) que vive en el
   repositorio **privado** `GIUSEPPESAN21/UNIMINUTO-Lab-Database`. Cada
   escritura se guarda localmente y se sincroniza a GitHub vía API en un hilo
-  de fondo.
-- **Autenticación**: contraseñas con `bcrypt`, sesión con `st.session_state`.
+  síncrono y serializado (ver *Integridad de datos*).
+- **Autenticación**: contraseñas con `bcrypt`, sesión con `st.session_state`
+  revalidada en cada recarga.
 
 ```
 app.py                  Punto de entrada: config, CSS, sesión, navegación agrupada por rol
 core/
   config.py              Acceso seguro a st.secrets (nunca lanza si faltan)
-  storage.py             Capa de datos: Excel local + sync a GitHub
+  permissions.py         Roles y comprobaciones de permiso centralizados
+  storage.py             Capa de datos: Excel local (escritura atómica) + sync a GitHub
   auth.py                 Registro, login, reglas de rol
   labels.py                Nomenclatura de tipos de item (UI) y generación de etiquetas imprimibles
   ui.py                    Componentes visuales compartidos (logo, encabezados)
@@ -177,6 +214,39 @@ tests/                  Pruebas unitarias de core/* (pytest, sin tocar Excel/Git
 .github/workflows/ci.yml Integración continua: sintaxis + pruebas en cada push/PR
 ```
 
+## Integridad de datos
+
+Cómo se protege la base (Excel + GitHub):
+
+- **Escritura atómica:** el Excel se escribe a un archivo temporal y se reemplaza de
+  una vez (`os.replace`): nunca queda un archivo a medias, ni siquiera si el proceso
+  se interrumpe.
+- **Guardado en el momento:** cada operación (alta, edición, eliminación, préstamo…)
+  se publica en GitHub **antes de terminar**, de forma síncrona y serializada. Varias
+  personas escribiendo a la vez no se pisan: se publica siempre la última versión.
+  Ante un fallo transitorio de red o un 5xx se reintenta; si aun así falla, el
+  cambio queda guardado localmente, se avisa con un banner y hay un botón
+  **🔄 Reintentar sincronización**.
+- **Nunca se pisa lo que la app no conoce:** la app recuerda la versión (SHA) que
+  descargó/subió por última vez. Si GitHub tiene otra (alguien editó el archivo, hay
+  otra instancia escribiendo, o no se pudo descargar al arrancar) el push se
+  **rechaza** y aparece un *conflicto*: el perfil maestro elige entre
+  **⬇️ conservar la versión de GitHub** o **⬆️ conservar la de la app**. La versión
+  que se reemplace sigue en el historial de commits del repositorio de datos.
+  Esto evita, por ejemplo, que un arranque sin red publique una base vacía sobre la
+  real.
+- **Stock y reservas bajo concurrencia:** la disponibilidad y los cruces de horario
+  se **re-verifican dentro del lock** de la base; dos personas no pueden sacar la
+  misma última unidad ni aprobar dos reservas que se cruzan.
+- **Recarga fiel:** al releer el Excel las celdas vacías son cadenas vacías (no
+  `NaN`) y textos como `NA` o `None` se conservan.
+
+> **Importante al limpiar o restaurar la base a mano:** si cambias
+> `UNIMINUTO_LAB_DB.xlsx` en el repositorio de datos mientras la app está corriendo,
+> la app lo detectará como conflicto en su siguiente escritura. Lo más simple es
+> reiniciar la app (Reboot) después de cambiar el archivo, para que descargue la
+> versión nueva.
+
 ## Importación masiva de inventario
 
 En **Inventario → Importar CSV masivo** puedes subir un CSV con columnas
@@ -193,13 +263,19 @@ Contenedores de Característica (`item_type=child`) en el CSV.
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest -q
+ruff check .
+python -m pytest -q --cov=core --cov=views --cov=app --cov-report=term-missing:skip-covered
 ```
 
-Las pruebas usan un `FakeStorage` en memoria (`tests/conftest.py`) que
-cumple el mismo contrato público que `LabStorage`, por lo que corren en
-segundos y no requieren Excel, GitHub ni Secrets configurados. Se ejecutan
-automáticamente en cada push/PR vía GitHub Actions.
+Las pruebas son **herméticas**: un fixture automático (`tests/conftest.py`) envía el
+Excel a una carpeta temporal, desactiva GitHub/SMTP aunque exista un
+`.streamlit/secrets.toml` real y reinicia la caché, de modo que ninguna prueba
+escribe en el repositorio ni en la base real, y se pueden repetir sin límite. Hay un
+`FakeStorage` en memoria que cumple el mismo contrato público que `LabStorage`, un
+GitHub simulado (SHA, 404, 409) para probar la sincronización y pruebas de extremo a
+extremo con `AppTest` (sesión, registro con verificación, permisos, eliminación). El
+CI ejecuta lint, sintaxis y pruebas con cobertura mínima del 60 % en Python 3.11 y
+3.12 en cada push/PR; Dependabot propone las actualizaciones de dependencias.
 
 ## Configuración (Secrets de Streamlit)
 
@@ -217,7 +293,11 @@ Para correo automático configura `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`,
 `SMTP_PASSWORD`, `SMTP_FROM_EMAIL` y TLS/SSL en Secrets. Define
 `ADMIN_NOTIFICATION_EMAILS` como lista; si queda vacía, se usan profesores y
 maestros activos. Nunca subas credenciales al repositorio. SMTP es opcional:
-su ausencia no impide guardar una solicitud o reserva.
+su ausencia no impide guardar una solicitud o reserva (pero sin SMTP no se puede
+verificar el correo de un profesor: ver *Seguridad del registro*).
+
+Opcionales de seguridad (valores por defecto entre paréntesis):
+`LOGIN_MAX_ATTEMPTS` (5), `LOGIN_LOCKOUT_MINUTES` (5) y `SESSION_TIMEOUT_MINUTES` (720).
 
 ## Ejecutar en local
 
