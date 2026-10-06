@@ -8,9 +8,35 @@ de forma que siempre queda una auditoria completa de quien tiene que en 'loans'.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
+
+BOGOTA_TZ = ZoneInfo("America/Bogota")
+
+
+def deadline_from_date(day: date) -> datetime:
+    """Fecha limite de devolucion elegida en la interfaz (solo dia, sin hora).
+
+    Se guarda como medianoche UTC de ese dia: ese valor exacto es la marca de
+    "fecha sin hora" que `due_instant` interpreta (y que ya usan los prestamos
+    registrados antes de esta version)."""
+    return datetime.combine(day, time.min, tzinfo=timezone.utc)
+
+
+def due_instant(expected: datetime) -> datetime:
+    """Instante a partir del cual un prestamo se considera vencido.
+
+    Una fecha limite sin hora (medianoche UTC exacta) vence al TERMINAR ese dia
+    en Colombia, no a las 7 p. m. del dia anterior (medianoche UTC). Una fecha
+    con hora concreta se respeta tal cual."""
+    if expected.tzinfo is None:
+        expected = expected.replace(tzinfo=timezone.utc)
+    expected = expected.astimezone(timezone.utc)
+    if expected.timetz().replace(tzinfo=None) == time.min:
+        return datetime.combine(expected.date() + timedelta(days=1), time.min, tzinfo=BOGOTA_TZ)
+    return expected
 
 
 def checkout(storage, item_id: str, quantity: int, user: dict, expected_return_at=None, notes: str = ""):
@@ -27,7 +53,12 @@ def checkout(storage, item_id: str, quantity: int, user: dict, expected_return_a
     if quantity > available:
         return False, f"Stock insuficiente. Disponible: {available}.", None
 
-    loan = storage.create_loan(item, quantity, user, expected_return_at=expected_return_at, notes=notes)
+    try:
+        loan = storage.create_loan(item, quantity, user, expected_return_at=expected_return_at, notes=notes)
+    except ValueError as exc:
+        # La capa de datos re-verifica el stock dentro de su lock: otra persona
+        # pudo sacar unidades entre la comprobacion anterior y este punto.
+        return False, str(exc), None
     return True, f"Salida registrada: '{item.get('name')}' x{quantity} para {user.get('full_name')}.", loan
 
 
@@ -36,13 +67,13 @@ def checkin(storage, loan_id: str, actor_user: dict):
     return ok, msg
 
 
-def is_overdue(loan: dict) -> bool:
+def is_overdue(loan: dict, now: datetime = None) -> bool:
     if loan.get("status") != "out":
         return False
     expected = loan.get("expected_return_at")
     if not expected:
         return False
-    return expected < datetime.now(timezone.utc)
+    return due_instant(expected) < (now or datetime.now(timezone.utc))
 
 
 def get_overdue_loans(storage) -> list:

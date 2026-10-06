@@ -10,6 +10,34 @@ from datetime import datetime, timezone
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolated_environment(tmp_path, monkeypatch):
+    """Aísla TODA prueba del disco y de la red reales.
+
+    - El Excel de trabajo vive en `tmp_path`: ninguna prueba escribe en la raíz
+      del repositorio ni depende de lo que dejó otra corrida.
+    - `safe_secret` devuelve siempre el valor por defecto: un
+      `.streamlit/secrets.toml` real en la máquina del desarrollador nunca
+      activa la sincronización con GitHub ni el envío de correos.
+    - Se reinician la caché en memoria y el estado de sincronización/sesión.
+    """
+    from core import auth, notifications
+    from core import storage as storage_module
+
+    monkeypatch.setattr(storage_module, "EXCEL_PATH", str(tmp_path / "isolated_db.xlsx"))
+    monkeypatch.setattr(storage_module, "_cached_dfs", None)
+
+    def no_secret(key, default=None):
+        return default
+
+    for module in (storage_module, auth, notifications):
+        monkeypatch.setattr(module, "safe_secret", no_secret)
+    storage_module._reset_sync_state()
+    auth.reset_login_throttle()
+    yield
+    storage_module._cached_dfs = None
+
+
 class FakeStorage:
     def __init__(self):
         self.items = {}
@@ -92,8 +120,14 @@ class FakeStorage:
     def add_to_whitelist(self, email):
         self.whitelist.add(email.lower().strip())
 
+    def get_availability_map(self):
+        return {item_id: self.get_available_quantity(item_id) for item_id in self.items}
+
     # --- loans ---
     def create_loan(self, item, quantity, user, expected_return_at=None, notes=""):
+        available = self.get_available_quantity(item["id"]) if item["id"] in self.items else None
+        if available is not None and quantity > available:
+            raise ValueError(f"Stock insuficiente. Disponible: {available}.")
         loan_id = uuid.uuid4().hex[:10]
         loan = {
             "id": loan_id, "item_id": item["id"], "item_name": item.get("name", ""),

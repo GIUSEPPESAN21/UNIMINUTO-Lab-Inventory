@@ -89,18 +89,19 @@ def render():
 
     with col2:
         st.subheader("⚠️ Alertas")
+        availability = storage.get_availability_map()
         low_stock = [
             i for i in items
             if i.get("item_type") != "master"
             and i.get("min_stock_alert") is not None
-            and storage.get_available_quantity(i["id"]) <= i.get("min_stock_alert", 0)
+            and availability.get(i["id"], 0) <= i.get("min_stock_alert", 0)
         ]
         if not low_stock and not overdue:
             st.success("Sin alertas por el momento.")
         else:
             with st.container(height=220):
                 for i in low_stock:
-                    st.warning(f"**{i.get('name')}**: disponibilidad baja ({storage.get_available_quantity(i['id'])} u.)")
+                    st.warning(f"**{i.get('name')}**: disponibilidad baja ({availability.get(i['id'], 0)} u.)")
                 if user["role"] != "estudiante":
                     for l in overdue:
                         st.error(f"**Vencido:** '{l.get('item_name')}' con {l.get('user_name')}")

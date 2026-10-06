@@ -7,11 +7,13 @@ maestro + items hijos) y login por roles (estudiante / profesor / maestro)
 via correo institucional.
 """
 
+from datetime import datetime, timezone
+
 import streamlit as st
 
 from core.storage import LabStorage
-from core import auth
-from core.ui import centered_logo, sync_status_banner
+from core import auth, permissions
+from core.ui import centered_logo, esc, sync_status_banner
 
 st.set_page_config(
     page_title="Inventario de Laboratorio UNIMINUTO",
@@ -56,7 +58,20 @@ if not st.session_state.user:
     login.render()
     st.stop()
 
-user = st.session_state.user
+# La sesion se revalida contra la base en CADA recarga: un cambio de rol o una
+# cuenta deshabilitada surten efecto de inmediato, y la sesion expira sola.
+session_user, session_problem = auth.validate_session(
+    storage, st.session_state.user, st.session_state.get("login_at")
+)
+if session_user is None:
+    st.session_state.user = None
+    st.session_state.login_at = None
+    st.session_state.session_notice = session_problem
+    st.rerun()
+st.session_state.user = session_user
+if st.session_state.get("login_at") is None:
+    st.session_state.login_at = datetime.now(timezone.utc)
+user = session_user
 
 from views import inicio, escanear, inventario, prestamos, reservas, solicitudes, usuarios, reportes, acerca_de, perfil
 
@@ -68,11 +83,11 @@ pages = {
     "prestamos": st.Page(prestamos.render, title="Prestamos", icon="📋", url_path="prestamos"),
 }
 
-if user["role"] in ("profesor", "maestro"):
+if user["role"] in permissions.MANAGER_ROLES:
     pages["inventario"] = st.Page(inventario.render, title="Inventario", icon="📦", url_path="inventario")
     pages["reportes"] = st.Page(reportes.render, title="Reportes", icon="📊", url_path="reportes")
 
-if user["role"] == "maestro":
+if user["role"] in permissions.ADMIN_ROLES:
     pages["usuarios"] = st.Page(usuarios.render, title="Usuarios", icon="👥", url_path="usuarios")
 
 pages["perfil"] = st.Page(perfil.render, title="Mi perfil", icon="👤", url_path="perfil")
@@ -82,9 +97,9 @@ st.session_state.pages = pages
 
 # Navegacion agrupada por secciones para que el sidebar sea facil de leer.
 nav_sections = {"🧭 Principal": [pages["inicio"], pages["escanear"], pages["solicitudes"], pages["reservas"], pages["prestamos"]]}
-if user["role"] in ("profesor", "maestro"):
+if user["role"] in permissions.MANAGER_ROLES:
     nav_sections["🗂️ Gestion del laboratorio"] = [pages["inventario"], pages["reportes"]]
-if user["role"] == "maestro":
+if user["role"] in permissions.ADMIN_ROLES:
     nav_sections["🔐 Administracion"] = [pages["usuarios"]]
 nav_sections["👤 Mi cuenta"] = [pages["perfil"], pages["acerca_de"]]
 
@@ -104,10 +119,10 @@ with st.sidebar:
     st.markdown(
         f"""
         <div class="user-chip">
-            <div class="user-avatar">{user['full_name'][:1].upper()}</div>
+            <div class="user-avatar">{esc(user['full_name'][:1].upper())}</div>
             <div>
-                <div class="user-name">{user['full_name']}</div>
-                <div class="user-role role-{user['role']}">{ROLE_LABELS.get(user['role'], user['role'])}</div>
+                <div class="user-name">{esc(user['full_name'])}</div>
+                <div class="user-role role-{esc(user['role'])}">{esc(ROLE_LABELS.get(user['role'], user['role']))}</div>
             </div>
         </div>
         """,
@@ -116,6 +131,7 @@ with st.sidebar:
     st.markdown("---")
     if st.button("🚪 Cerrar sesion", use_container_width=True):
         st.session_state.user = None
+        st.session_state.login_at = None
         st.rerun()
     st.markdown("---")
     st.caption("© 2026 UNIMINUTO · Laboratorio de Ingeniería.")

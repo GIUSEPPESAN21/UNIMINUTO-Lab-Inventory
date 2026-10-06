@@ -7,12 +7,15 @@ from datetime import datetime
 import streamlit as st
 
 from core import loans as loans_core
-from core import reports
-from core.ui import page_header
+from core import permissions, reports
+from core.ui import guard_role, page_header
 
 
 def render():
     storage = st.session_state.storage
+
+    if not guard_role(st.session_state.user, permissions.MANAGER_ROLES, "los Reportes"):
+        return
 
     page_header("Reportes", icon="📊", subtitle="Analítica de uso del laboratorio")
 

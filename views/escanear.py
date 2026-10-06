@@ -4,7 +4,7 @@ Contenedor de Caracteristica o Item Individual; dar salida (checkout) y
 registrar reingreso (checkin)."""
 
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import streamlit as st
 
@@ -70,11 +70,11 @@ def _render_item_actions(item: dict, parent: dict = None):
             if submitted:
                 expected_dt = None
                 if with_date:
-                    expected_dt = datetime.combine(expected_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+                    expected_dt = loans_core.deadline_from_date(expected_date)
                 ok, msg, loan = loans_core.checkout(storage, item["id"], int(qty), user, expected_dt, notes)
                 if ok:
                     st.success(msg)
-                    notifications.send_whatsapp_alert(f"📤 Salida: {msg}")
+                    notifications.send_whatsapp_alert_async(f"📤 Salida: {msg}")
                     st.session_state.scan_result = barcode.scan(storage, item["id"])
                     st.rerun()
                 else:
@@ -164,7 +164,7 @@ def _render_new_item_wizard(scanned_code: str):
                 st.error("El código es obligatorio.")
             elif code_error:
                 st.error(code_error)
-            elif storage.get_item(code_to_save):
+            elif storage.item_code_in_use(code_to_save):
                 st.error("Ya existe un item con ese código.")
             elif not name:
                 st.error("El nombre es obligatorio.")
@@ -211,6 +211,9 @@ def render():
 
     if result["status"] == "error":
         st.error(result["message"])
+        if result.get("retired"):
+            st.caption("Su código quedó libre: puedes registrarlo de nuevo como un item nuevo.")
+            _render_new_item_wizard(result["barcode"])
     elif result["status"] == "not_found":
         _render_new_item_wizard(result["barcode"])
     elif result["status"] == "found_master":

@@ -362,7 +362,12 @@ def scan(storage, code: str) -> dict:
             return {"status": "not_found", "barcode": code, "parsed": parsed}
 
         if item.get("status") == "retired":
-            return {"status": "error", "message": f"El item '{item.get('name')}' fue dado de baja."}
+            # El codigo de un item dado de baja queda libre: `retired` permite a la
+            # interfaz ofrecer registrarlo de nuevo en vez de dejar un callejon sin salida.
+            return {
+                "status": "error", "retired": True, "barcode": code, "parsed": parsed,
+                "message": f"El item '{item.get('name')}' fue dado de baja.",
+            }
 
         if item.get("item_type") == "master":
             children = storage.get_children(code)
