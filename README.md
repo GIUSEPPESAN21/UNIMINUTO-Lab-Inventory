@@ -84,14 +84,67 @@ Excel + GitHub.
 
 ### Etiquetas imprimibles
 
-Desde Inventario o Escanear, el menú **🏷️ Etiqueta** ofrece dos formatos:
+Desde Inventario o Escanear, el menú **🏷️ Etiqueta** ofrece el **PDF (recomendado)**,
+con una página que mide exactamente lo mismo que la etiqueta, y un **PNG de respaldo**.
 
-- **PDF · imprimir (recomendado):** página física exacta de **50×25 mm**, sin márgenes internos del documento. El raster monocromático de 384×192 px se centra manteniendo un punto de imagen por punto de la SAT TT 460 a 203 dpi; así el navegador o visor no lo reduce como ocurrió al imprimir el PNG anterior.
-- **PNG · respaldo:** imagen original de **384×192 px a 203 dpi** para archivo, integración o control manual del driver.
+**Tamaño real configurable.** En **Inventario → 🖨️ Etiquetas** el laboratorio elige
+el tamaño de su rollo (50 × 25, 50 × 30, 60 × 40, 100 × 50, 100 × 100, 100 × 150 mm o
+uno personalizado de 20–104 × 15–150 mm) y la resolución de la impresora (203 dpi
+para la SAT TT460, o 300 dpi). La configuración se guarda en la base de datos y la
+usan todas las etiquetas de la app. Cada pixel del raster es un punto del cabezal y
+el PDF le pide al visor imprimir sin escalar (`/PrintScaling /None`) y elegir el papel
+por el tamaño del documento (`/PickTrayByPDFSize`). El raster se ancla arriba a la
+izquierda, con los bordes alineados a puntos enteros de la impresora, así que al
+imprimir a tamaño real se copia punto por punto, sin remuestrear las barras. Las
+pruebas lo verifican con el motor PDF de Chrome y Edge (PDFium), siguiendo su ruta de
+impresión en Windows, y con poppler.
 
-La etiqueta incluye logotipo oficial de UNIMINUTO, Laboratorio de Ingeniería, tipo de activo, aviso institucional, nombre en una banda negra de alto contraste, categoría, ubicación, Code 128 y código legible. Los títulos usan espaciado independiente entre letras y palabras. Además, los códigos estructurados muestran una ruta física compacta —por ejemplo, `RUTA: E2 › P1 › C01 › CJ02 › I003`— donde `E`, `P`, `C`, `CJ` e `I` significan estantería, piso, contenedor, caja e ítem. Los niveles `00/000` que no aplican se omiten de la ruta, pero el valor codificado permanece intacto. Los códigos Mesa y Lego generan su guía equivalente; los códigos libres conservan la ubicación textual. Los datos opcionales vacíos se omiten sin bloquear la impresión.
+**Diseño adaptable y legible.** La composición se ajusta al tamaño elegido:
 
-Para imprimir el PDF en la SAT TT 460 selecciona **papel 50×25 mm**, orientación **horizontal**, escala **100 % / tamaño real** y **sin márgenes**. No uses “Ajustar”, “Encoger” ni “Varias páginas por hoja”. Las barras conservan zonas de silencio, ancho entero por módulo y altura mínima de 9 mm.
+- Ningún texto se imprime por debajo de ~5 pt (antes había textos de 3,5 pt) y hay
+  espacio visible entre todos los bloques (antes, 1 punto entre líneas).
+- Las letras se rasterizan en monocromo con *hinting* y con espaciado entre letras
+  proporcional a su tamaño: trazos uniformes, sin el "empaste" del suavizado.
+- Si todo no cabe a tamaño legible, se omite primero lo menos importante (categoría,
+  tipo, aviso…) en vez de encoger y apretar las letras. La pestaña Etiquetas muestra
+  la vista previa y dice exactamente qué se omitió; cada contenido se puede activar o
+  desactivar. El nombre, el Code 128 y el código legible siempre se imprimen; el
+  código y la ruta nunca se recortan, y el aviso usa su versión corta («NO RETIRAR SIN
+  PRÉSTAMO») antes que cortarse.
+- En las etiquetas grandes el espacio extra se usa para mostrar **más** datos y
+  barras más altas, no solo letras más grandes. Un nombre largo pasa a dos líneas
+  cuando hay espacio.
+
+La etiqueta puede incluir el logotipo de UNIMINUTO, Laboratorio de Ingeniería, el aviso
+institucional, el nombre en una banda negra de alto contraste, la ruta física, la
+ubicación, el tipo, la categoría, el Code 128 y el código legible. La ruta compacta se
+deriva del código —por ejemplo, `RUTA: E2 › P1 › C01 › CJ02 › I003`, donde `E`, `P`,
+`C`, `CJ` e `I` significan estantería, piso, contenedor, caja e ítem— y omite los
+niveles `00/000` que no aplican sin alterar el valor codificado. En etiquetas pequeñas
+sube junto al logo para ahorrar una fila. Mesa y Lego generan su ruta equivalente; los
+códigos libres usan la ubicación textual.
+
+Las barras usan un número entero de puntos por módulo (0,25–0,5 mm), zona de silencio
+de 10 módulos cuando cabe (nunca menos de 6) y al menos 7 mm de alto, por encima de la
+recomendación general para Code 128 (≥ 6,35 mm o el 15 % del ancho del símbolo). En las
+etiquetas más altas crecen hasta el 36 % del alto.
+
+**Si la etiqueta sale pequeña.** Casi siempre es que el tamaño configurado, o el papel
+del driver, no coincide con el rollo real, o que el visor está escalando la página. En
+**🖨️ Etiquetas → Hoja de prueba de impresión** se descarga un PDF con un marco a 1 mm
+del borde y una regla milimetrada. Imprímela como las etiquetas y mídela:
+
+- **La regla mide menos de lo indicado:** el programa está reduciendo la página.
+  En Chrome o Edge usa la escala **Predeterminado** (o **Tamaño real**), nunca *Ajustar
+  al área de impresión* ni *Ajustar al papel*; en Acrobat Reader, **Tamaño real**.
+- **La regla mide bien pero la prueba ocupa solo una parte de la etiqueta:** el rollo
+  es más grande. Elige su tamaño real en la pestaña.
+- **El marco sale cortado:** el papel del driver no coincide con el rollo, o hay que
+  calibrar el sensor de etiquetas.
+
+La guía completa está en la misma pestaña. El PNG es solo respaldo: los navegadores
+ignoran su resolución.
+
 ## Operación del laboratorio
 
 ### Reservas
@@ -197,7 +250,7 @@ core/
   permissions.py         Roles y comprobaciones de permiso centralizados
   storage.py             Capa de datos: Excel local (escritura atómica) + sync a GitHub
   auth.py                 Registro, login, reglas de rol
-  labels.py                Nomenclatura de tipos de item (UI) y generación de etiquetas imprimibles
+  labels.py                Nomenclatura de tipos de item (UI) y etiquetas adaptables a su tamaño real (PNG/PDF/prueba)
   ui.py                    Componentes visuales compartidos (logo, encabezados)
   barcode.py              Validación/lectura de codigos (GLIOPS V3) y resolución de escaneo
   loans.py                Checkout / checkin / vencidos
@@ -208,7 +261,7 @@ core/
   reports.py              Analítica y exportación a Excel
 views/
   login.py, inicio.py, escanear.py, inventario.py, solicitudes.py,
-  reservas.py, location_guide.py, perfil.py, prestamos.py, usuarios.py,
+  reservas.py, location_guide.py, label_settings.py, perfil.py, prestamos.py, usuarios.py,
   reportes.py, acerca_de.py
 tests/                  Pruebas unitarias de core/* (pytest, sin tocar Excel/GitHub)
 .github/workflows/ci.yml Integración continua: sintaxis + pruebas en cada push/PR

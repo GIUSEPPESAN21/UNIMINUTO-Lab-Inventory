@@ -1,5 +1,79 @@
 # Changelog
 
+## v1.11.0 — Etiquetas legibles, a tamaño real y sin letras apretadas
+
+### Corregido
+- **Letras diminutas y pegadas en la etiqueta:** había textos de 3,5–4,3 pt, 1 punto
+  (0,12 mm) entre líneas y el aviso siempre salía truncado («NO RETIRAR SIN P…»). La
+  causa era un diseño fijo de 384 × 192 puntos que forzaba barras de 9 mm en 25 mm de
+  alto y encogía todo lo demás. Ahora ningún texto baja de ~5 pt (nombre ≥ 7 pt), hay
+  espacio visible entre todos los bloques y las letras llevan espaciado proporcional.
+- **Etiqueta que se imprimía pequeña:** el PDF medía siempre 50 × 25 mm, así que en un
+  rollo o papel de driver más grande (la SAT TT460 acepta etiquetas de 20 a 112 mm de
+  ancho) salía reducida en una esquina. Ahora el tamaño se configura y el PDF mide
+  exactamente eso, ocupando toda la página (antes quedaba ~1 mm sin usar).
+- **Barras y letras remuestreadas al imprimir el PDF:** el raster iba centrado en la
+  página, a una fracción de punto de los puntos del cabezal. Chrome y Edge, con la
+  escala Predeterminado, reescalaban la etiqueta de 50 × 25 mm y perdían una fila de
+  puntos, y los visores basados en poppler deformaban las barras en todos los
+  tamaños. Ahora el raster se ancla arriba a la izquierda, como alinea Chrome al
+  imprimir, y sus bordes caen apenas dentro de puntos enteros, de modo que todos esos
+  visores lo copian punto por punto.
+- Las métricas de la pestaña usan coma decimal, y los botones deshabilitados se ven
+  deshabilitados en toda la app (antes un botón primario deshabilitado seguía azul).
+
+### Nuevo
+- **Inventario → 🖨️ Etiquetas** (profesor y maestro):
+  - Tamaño del rollo: 50 × 25, 50 × 30, 60 × 40, 100 × 50, 100 × 100, 100 × 150 mm o
+    personalizado (20–104 × 15–150 mm).
+  - Resolución: 203 dpi (SAT TT460) o 300 dpi.
+  - Contenido opcional: logo y laboratorio, aviso, ruta, ubicación, tipo y categoría.
+  - Vista previa en vivo con cualquier ítem del inventario, métricas de legibilidad
+    y aviso de lo que no cabe.
+  - Guía de impresión paso a paso.
+  - La configuración se guarda en la nueva hoja `settings` de la base y la usan
+    Inventario, Escanear y la vista previa del registro.
+- **Hoja de prueba de impresión:** PDF del tamaño configurado con un marco a 1 mm del
+  borde y una regla milimetrada. Medirla indica si el visor reduce la página (regla
+  más corta), si el rollo es más grande (la prueba ocupa solo una parte) o si el papel
+  del driver no coincide (marco cortado).
+- **PDF listo para imprimir a tamaño real:** `/PrintScaling /None`,
+  `/PickTrayByPDFSize`, versión 1.7 y título con el tamaño.
+
+### Diseño adaptable de la etiqueta
+- Composición por prioridades: si todo no cabe a tamaño legible, se omite lo menos
+  importante (categoría → tipo → aviso → ubicación…) en vez de apretar. La marca
+  institucional, el nombre, el Code 128 y el código siempre se conservan.
+- En etiquetas pequeñas la ruta sube junto al logo y ahorra una fila; el aviso usa su
+  versión corta antes que recortarse; un nombre largo pasa a dos líneas cuando hay
+  espacio. El código y la ruta nunca se recortan.
+- En etiquetas grandes el espacio extra se usa para mostrar más datos y barras más
+  altas (hasta el 36 % del alto, máximo 18 mm). Antes solo crecía el tamaño de letra.
+- Rasterizado monocromo con *hinting*: trazos uniformes y letras separadas, sin el
+  empaste que producía suavizar y luego umbralizar a 1 bit.
+- Barras con módulo entero de 0,25–0,5 mm, zona de silencio de 10 módulos cuando cabe
+  y un mínimo de 7 mm de alto (antes 9 mm fijos), por encima de la recomendación
+  general para Code 128.
+- Separador «|» entre datos: la ubicación libre ya puede contener «·».
+- Etiquetas cacheadas por ítem y tamaño: unos 15 ms por etiqueta y el catálogo no las
+  regenera en cada recarga.
+
+### Calidad
+- De 332 a 499 pruebas (cobertura 70 % → 75 %; `labels.py` 95 %), en verde con
+  Python 3.11, 3.12 y 3.13:
+  - Decodificación exacta del Code 128 desde los píxeles en todos los tamaños, a 203 y
+    a 300 dpi.
+  - Bloques que nunca se tocan, con filas en blanco comprobadas en la imagen.
+  - Piso de legibilidad, textos institucionales completos y omisión priorizada.
+  - PDF a tamaño exacto y regla de calibración que mide lo que dice (±0,4 mm).
+  - Impresión punto por punto con el motor PDF de Chrome y Edge (PDFium), siguiendo
+    su ruta de impresión en Windows, y con poppler; además, un barrido de todos los
+    tamaños permitidos contra el redondeo de cada visor (`pypdfium2` se suma a las
+    dependencias de desarrollo).
+  - Persistencia de la configuración, migración de bases sin la hoja `settings` y
+    la pestaña Etiquetas con la app real.
+- Las protecciones clave se verificaron rompiéndolas a propósito (mutación).
+
 ## v1.10.0 — Eliminación definitiva, integridad de datos y seguridad
 
 ### Corregido
