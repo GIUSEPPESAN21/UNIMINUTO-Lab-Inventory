@@ -177,13 +177,16 @@ def render():
                             key=f"label_pdf_{item['id']}", type="primary", use_container_width=True,
                         )
                         st.download_button(
-                            "PNG · respaldo", data=label_png,
+                            "PNG · solo archivo", data=label_png,
                             file_name=f"etiqueta_{item['id']}.png", mime="image/png",
+                            help="Para guardar o integrar. No lo imprimas desde la app Fotos: "
+                                 "la recorta y la agranda. Para imprimir usa el PDF.",
                             key=f"label_png_{item['id']}", use_container_width=True,
                         )
                         st.caption(
-                            f"Imprime el PDF al 100 % (tamaño real), sin márgenes, en papel de "
-                            f"{label_spec.size_text}. ¿Sale pequeña? Revisa la pestaña 🖨️ Etiquetas."
+                            f"Abre el PDF con Edge o Chrome (Ctrl + P): papel USER de "
+                            f"{label_spec.size_text}, escala Predeterminado, sin márgenes. "
+                            "¿Sale mal? Revisa la pestaña 🖨️ Etiquetas."
                         )
                 else:
                     c5.write("")

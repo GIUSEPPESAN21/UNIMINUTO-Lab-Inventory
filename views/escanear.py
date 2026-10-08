@@ -28,14 +28,15 @@ def _render_label_download(item: dict):
         key=f"label_scan_pdf_{item['id']}", type="primary", use_container_width=True,
     )
     png_col.download_button(
-        "PNG · respaldo", data=label_png,
+        "PNG · solo archivo", data=label_png,
         file_name=f"etiqueta_{item['id']}.png", mime="image/png",
-        help=f"Imagen a {spec.dpi} dpi", key=f"label_scan_png_{item['id']}",
-        use_container_width=True,
+        help="Para guardar o integrar. No lo imprimas desde la app Fotos: la recorta y la "
+             "agranda. Para imprimir usa el PDF.",
+        key=f"label_scan_png_{item['id']}", use_container_width=True,
     )
     st.caption(
-        f"Etiqueta de {spec.describe()}: imprime el PDF al 100 % (tamaño real), sin márgenes "
-        "ni «Ajustar»."
+        f"Etiqueta de {spec.describe()}: abre el PDF con Edge o Chrome (Ctrl + P), papel USER de "
+        f"{spec.size_text}, escala Predeterminado, sin márgenes."
     )
 
 def _render_item_actions(item: dict, parent: dict = None):

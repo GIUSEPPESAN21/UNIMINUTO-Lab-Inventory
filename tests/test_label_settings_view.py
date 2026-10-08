@@ -44,6 +44,32 @@ def test_label_tab_shows_saved_size_preview_and_what_was_omitted():
     assert at.button(key="label_cfg_save").disabled  # nada que guardar todavia
 
 
+def _markdown(at) -> str:
+    return " ".join(element.value for element in at.markdown)
+
+
+def test_tab_tells_which_paper_to_define_in_the_driver():
+    at = _open()
+    text = _markdown(at)
+    assert "Papel al imprimir: 50 × 25 mm (1,97 × 0,98 in)" in text
+    assert "USER (50,8 × 50,8 mm)" in text  # el valor de fábrica que recortaba la etiqueta
+
+    at.selectbox(key="label_cfg_preset").select("100x75").run()
+    assert "Papel al imprimir: 100 × 75 mm (3,94 × 2,95 in)" in _markdown(at)
+
+
+def test_tab_explains_the_photos_trap_and_each_symptom():
+    at = _open()
+    expanders = {expander.label: expander for expander in at.expander}
+    steps = next(e for label, e in expanders.items() if "paso a paso" in label)
+    assert steps.proto.expanded  # sin configurar todavía: la guía se muestra abierta
+    assert any("sale mal" in label for label in expanders)
+    text = _markdown(at)
+    assert "No imprimas el PNG ni abras la etiqueta con la app Fotos" in text
+    assert "Dithering" in text and "Predeterminado" in text and "Tamaño real" in text
+    assert "Recortada y ampliada" in text and "Girada 90°" in text and "Borrosa" in text
+
+
 def test_saving_a_new_size_is_persisted_for_every_label():
     at = _open()
     at.selectbox(key="label_cfg_preset").select("100x50").run()
@@ -105,4 +131,6 @@ def test_scan_page_offers_labels_in_the_configured_size():
     downloads = at.get("download_button")
     assert len(downloads) == 2
     assert downloads[0].proto.label == "🏷️ PDF 100 × 50 mm"
+    assert downloads[1].proto.label == "PNG · solo archivo"
+    assert "No lo imprimas desde la app Fotos" in downloads[1].proto.help
     assert any("100 × 50 mm · 203 dpi" in c.value for c in at.caption)

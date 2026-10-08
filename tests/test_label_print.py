@@ -32,8 +32,9 @@ ITEM = {
 # Presets y, a 203 dpi, las medidas en las que el redondeo de Chrome es mas
 # exigente (el papel en puntos PDF enteros queda a menos de 1/72 de un pixel).
 PRINT_SPECS = [
-    (50, 25, 203), (50, 30, 203), (60, 40, 203), (100, 50, 203), (100, 100, 203),
-    (100, 150, 203), (47, 47, 203), (72.5, 72.5, 203), (98, 98, 203), (104, 21.7, 203),
+    (50, 25, 203), (50, 30, 203), (60, 40, 203), (100, 50, 203), (100, 75, 203),
+    (101.6, 76.2, 203), (100, 100, 203), (100, 150, 203), (47, 47, 203), (72.5, 72.5, 203),
+    (98, 98, 203), (104, 21.7, 203), (101.6, 152.4, 203),
     (50, 25, 300), (60, 40, 300), (100, 50, 300), (101.6, 150, 300),
 ]
 
@@ -98,11 +99,11 @@ def _sweep_sizes() -> list:
     mas exigente a 203 dpi: papeles de 61, 133, 205, 277, 349 o 421 pt enteros
     (61 * 203 / 72 = 171,99: al truncar se pierden 71/72 de pixel)."""
     widths = {half / 2 for half in range(40, 209)}
-    heights = {half / 2 for half in range(30, 301)}
+    heights = {half / 2 for half in range(30, 321)}
     for points in (61, 133, 205, 277, 349, 421):
         tight = {round(points * 25.4 / 72 + tenth / 10, 1) for tenth in range(4)}
         widths |= {mm for mm in tight if 20 <= mm <= 104}
-        heights |= {mm for mm in tight if 15 <= mm <= 150}
+        heights |= {mm for mm in tight if 15 <= mm <= 160}
     return [(width, 25) for width in sorted(widths)] + [(50, height) for height in sorted(heights)]
 
 
@@ -213,7 +214,9 @@ def test_chrome_and_edge_print_the_label_dot_for_dot(pdfium, size, scaling):
     assert _scan_label(printed)["text"] == ITEM["id"]
 
 
-@pytest.mark.parametrize("size", [(50, 25, 203), (100, 50, 203), (50, 25, 300)], ids=_spec_id)
+@pytest.mark.parametrize(
+    "size", [(50, 25, 203), (100, 50, 203), (101.6, 76.2, 203), (50, 25, 300)], ids=_spec_id,
+)
 def test_chrome_prints_the_calibration_page_dot_for_dot(pdfium, size):
     spec = labels.LabelSpec(*size)
     printed = _chrome_print(pdfium, labels.generate_calibration_pdf_bytes(spec), spec.dpi,

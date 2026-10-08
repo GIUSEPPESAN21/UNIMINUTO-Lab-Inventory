@@ -84,12 +84,14 @@ Excel + GitHub.
 
 ### Etiquetas imprimibles
 
-Desde Inventario o Escanear, el menú **🏷️ Etiqueta** ofrece el **PDF (recomendado)**,
-con una página que mide exactamente lo mismo que la etiqueta, y un **PNG de respaldo**.
+Desde Inventario o Escanear, el menú **🏷️ Etiqueta** ofrece el **PDF**, con una página
+que mide exactamente lo mismo que la etiqueta, y un **PNG solo para guardar o integrar**:
+**no se imprime** (ver «Cómo imprimir bien»).
 
 **Tamaño real configurable.** En **Inventario → 🖨️ Etiquetas** el laboratorio elige
-el tamaño de su rollo (50 × 25, 50 × 30, 60 × 40, 100 × 50, 100 × 100, 100 × 150 mm o
-uno personalizado de 20–104 × 15–150 mm) y la resolución de la impresora (203 dpi
+el tamaño de su rollo (50 × 25, 50 × 30, 60 × 40, 100 × 50, 100 × 75, 100 × 100,
+100 × 150 mm o uno personalizado de 20–104 × 15–160 mm; también 4 × 3 o 4 × 6 pulgadas
+con 101,6 × 76,2 o 101,6 × 152,4) y la resolución de la impresora (203 dpi
 para la SAT TT460, o 300 dpi). La configuración se guarda en la base de datos y la
 usan todas las etiquetas de la app. Cada pixel del raster es un punto del cabezal y
 el PDF le pide al visor imprimir sin escalar (`/PrintScaling /None`) y elegir el papel
@@ -129,21 +131,43 @@ de 10 módulos cuando cabe (nunca menos de 6) y al menos 7 mm de alto, por encim
 recomendación general para Code 128 (≥ 6,35 mm o el 15 % del ancho del símbolo). En las
 etiquetas más altas crecen hasta el 36 % del alto.
 
-**Si la etiqueta sale pequeña.** Casi siempre es que el tamaño configurado, o el papel
-del driver, no coincide con el rollo real, o que el visor está escalando la página. En
-**🖨️ Etiquetas → Hoja de prueba de impresión** se descarga un PDF con un marco a 1 mm
-del borde y una regla milimetrada. Imprímela como las etiquetas y mídela:
+### Cómo imprimir bien (Windows, SAT TT460 y Edge o Chrome)
 
-- **La regla mide menos de lo indicado:** el programa está reduciendo la página.
-  En Chrome o Edge usa la escala **Predeterminado** (o **Tamaño real**), nunca *Ajustar
-  al área de impresión* ni *Ajustar al papel*; en Acrobat Reader, **Tamaño real**.
-- **La regla mide bien pero la prueba ocupa solo una parte de la etiqueta:** el rollo
-  es más grande. Elige su tamaño real en la pestaña.
-- **El marco sale cortado:** el papel del driver no coincide con el rollo, o hay que
-  calibrar el sensor de etiquetas.
+La etiqueta sale exacta cuando **la medida es la misma en cuatro lugares**: el rollo, la
+pestaña **🖨️ Etiquetas**, el papel del driver y el papel del cuadro de impresión.
 
-La guía completa está en la misma pestaña. El PNG es solo respaldo: los navegadores
-ignoran su resolución.
+1. **Mide el rollo** (ancho × alto, sin el papel de soporte), elígelo en **Inventario →
+   🖨️ Etiquetas** y guarda. La pestaña indica el papel que debe usar el driver.
+2. **Driver de la SAT TT460** (*Preferencias de impresión*, y también *Propiedades de la
+   impresora → Opciones avanzadas → Valores predeterminados de impresión*):
+   - *Configuración de página*: tamaño **definido por el usuario** (en el cuadro de
+     impresión aparece como «USER») con esa medida. Si el cuadro muestra
+     «USER (50,8 × 50,8 mm)», ese es el valor que hay que cambiar.
+   - *Papel / Stock*: etiquetas con separación (no continuo).
+   - *Gráficos*: 203 dpi y tramado (*Dithering*) en **Ninguno**.
+   - *Opciones*: velocidad y oscuridad medias.
+3. **Imprime el PDF desde Edge o Chrome** (*Abrir con → Microsoft Edge*, `Ctrl + P`):
+   papel **USER** con tu medida, escala **Predeterminado** (o **Tamaño real**, si
+   aparece) y, si el cuadro los muestra, sin márgenes ni encabezados. La vista previa
+   debe mostrar la etiqueta completa, derecha y llenando el papel.
+4. **No imprimas el PNG ni abras la etiqueta con la app Fotos.** Fotos usa
+   *Rellenar página*: recorta el centro de la imagen y la agranda con un factor que no es
+   entero, así que el texto sale grueso y las barras irregulares.
+5. **Una etiqueta de prueba antes del lote:** **🖨️ Etiquetas → Hoja de prueba de
+   impresión** descarga un PDF con un marco a 1 mm del borde, una regla milimetrada y tres
+   rejillas de barras. Debe verse el marco completo, la regla debe medir lo indicado y las
+   rejillas deben verse parejas (con una lupa o la cámara del celular).
+
+| Lo que ves | Causa más probable | Qué hacer |
+|---|---|---|
+| Recortada y ampliada | PNG impreso desde Fotos con *Rellenar página*, o papel del driver menor que la imagen | PDF desde Edge o Chrome con el papel USER de la medida real |
+| Pequeña, en el centro o en una esquina | El papel del driver o la medida guardada no es la del rollo | La misma medida en la app y en el driver |
+| Girada 90° | Orientación | Cambiar *Diseño* hasta ver el texto derecho |
+| Borrosa o con barras desiguales | La imagen se reescaló (Fotos, *Ajustar*, escala ≠ 100 %) o el driver aplica tramado | PDF, escala Predeterminado y *Dithering: Ninguno* |
+| Marco cortado en un lado | Papel del driver menor que la etiqueta, o rollo corrido | Revisar el papel y centrar las guías del rollo |
+| Se desfasa de una etiqueta a otra | Sensor sin calibrar o tipo de papel equivocado | Calibrar el sensor y elegir etiquetas con separación |
+
+La misma guía está en la pestaña **🖨️ Etiquetas**.
 
 ## Operación del laboratorio
 

@@ -19,13 +19,20 @@
   tamaños. Ahora el raster se ancla arriba a la izquierda, como alinea Chrome al
   imprimir, y sus bordes caen apenas dentro de puntos enteros, de modo que todos esos
   visores lo copian punto por punto.
+- **Etiqueta recortada, ampliada y borrosa al imprimirla desde la app Fotos de Windows:**
+  el PNG se abría en Fotos, cuyo cuadro de impresión usa el papel «USER (50,8 × 50,8 mm)»
+  del driver y *Rellenar página*: recortaba el centro de la imagen, la agrandaba ×2,1 y
+  las barras de 2 puntos salían de 4 y de 5. Ahora el botón dice «PNG · solo archivo»
+  (con la advertencia), y la pestaña indica el **papel que debe definirse en el driver**
+  (en mm y en pulgadas) y trae una guía paso a paso para Edge/Chrome y una tabla de
+  síntomas (recortada, pequeña, girada, borrosa, marco cortado, desfase).
 - Las métricas de la pestaña usan coma decimal, y los botones deshabilitados se ven
   deshabilitados en toda la app (antes un botón primario deshabilitado seguía azul).
 
 ### Nuevo
 - **Inventario → 🖨️ Etiquetas** (profesor y maestro):
-  - Tamaño del rollo: 50 × 25, 50 × 30, 60 × 40, 100 × 50, 100 × 100, 100 × 150 mm o
-    personalizado (20–104 × 15–150 mm).
+  - Tamaño del rollo: 50 × 25, 50 × 30, 60 × 40, 100 × 50, 100 × 75, 100 × 100,
+    100 × 150 mm o personalizado (20–104 × 15–160 mm, así caben 4 × 3 y 4 × 6 pulgadas).
   - Resolución: 203 dpi (SAT TT460) o 300 dpi.
   - Contenido opcional: logo y laboratorio, aviso, ruta, ubicación, tipo y categoría.
   - Vista previa en vivo con cualquier ítem del inventario, métricas de legibilidad
@@ -34,9 +41,11 @@
   - La configuración se guarda en la nueva hoja `settings` de la base y la usan
     Inventario, Escanear y la vista previa del registro.
 - **Hoja de prueba de impresión:** PDF del tamaño configurado con un marco a 1 mm del
-  borde y una regla milimetrada. Medirla indica si el visor reduce la página (regla
-  más corta), si el rollo es más grande (la prueba ocupa solo una parte) o si el papel
-  del driver no coincide (marco cortado).
+  borde, una regla milimetrada y tres rejillas de barras (0,25, 0,35 y 0,5 mm, los
+  módulos del Code 128). Medirla indica si el visor reduce la página (regla más
+  corta), si el rollo es más grande (la prueba ocupa solo una parte), si el papel del
+  driver no coincide (marco cortado) o si la imagen se remuestrea (rejillas desiguales
+  o grises).
 - **PDF listo para imprimir a tamaño real:** `/PrintScaling /None`,
   `/PickTrayByPDFSize`, versión 1.7 y título con el tamaño.
 
@@ -59,7 +68,7 @@
   regenera en cada recarga.
 
 ### Calidad
-- De 332 a 499 pruebas (cobertura 70 % → 75 %; `labels.py` 95 %), en verde con
+- De 332 a 562 pruebas (cobertura 70 % → 75 %; `labels.py` 94 %), en verde con
   Python 3.11, 3.12 y 3.13:
   - Decodificación exacta del Code 128 desde los píxeles en todos los tamaños, a 203 y
     a 300 dpi.

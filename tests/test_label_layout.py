@@ -17,7 +17,8 @@ from core import labels
 from core import storage as storage_module
 from test_labels import _scan_label
 
-PRESETS = [(50, 25), (50, 30), (60, 40), (100, 50), (100, 100), (100, 150)]
+PRESETS = [(50, 25), (50, 30), (60, 40), (100, 50), (100, 75), (101.6, 76.2), (100, 100), (100, 150),
+           (101.6, 152.4)]
 ITEMS = [
     {"id": "2-1-01-00-000", "name": "Contenedor 1", "item_type": "master"},
     {"id": "2-1-01-01-000", "name": "Resistencias 220 ohm", "item_type": "child",
@@ -231,12 +232,102 @@ def test_calibration_page_has_a_full_frame_and_a_ruler_of_exact_length(size, dpi
         return best
 
     runs = [longest_run(y) for y in range(height)]
+    _assert_clear_margins(img, dpi)
     inset = round(_dots(1.0, dpi))
     frame = width - 2 * inset
     assert runs[inset] >= frame - 2 and runs[height - 1 - inset] >= frame - 2  # marco completo
     ruler = max(run for run in runs if run < frame - 2)
     expected_mm = max(10, int((size[0] - 8) // 10) * 10)
     assert abs(ruler - _dots(expected_mm, dpi)) <= 3  # la regla mide lo que dice (+-0,4 mm)
+
+
+def _assert_clear_margins(img, dpi):
+    """Nada se imprime fuera del marco ni a menos de 1 mm de su lado interior."""
+    width, height = img.size
+    pix = img.load()
+    inset = round(_dots(1.0, dpi))
+    stroke = max(2, round(_dots(0.25, dpi)))
+    inner = (inset + stroke, inset + stroke, width - 1 - inset - stroke, height - 1 - inset - stroke)
+    margin = inset + stroke + round(_dots(1.0, dpi))
+    for y in range(height):
+        for x in range(width):
+            if pix[x, y] >= 128:
+                continue
+            assert inset <= x <= width - 1 - inset and inset <= y <= height - 1 - inset, (
+                f"tinta fuera del marco en ({x}, {y})")
+            if inner[0] <= x <= inner[2] and inner[1] <= y <= inner[3]:
+                assert margin <= x <= width - 1 - margin and margin <= y <= height - 1 - margin, (
+                    f"tinta a menos de 1 mm del marco en ({x}, {y})")
+
+
+def _black_runs(pix, y, width):
+    """Tramos negros (inicio, largo) de una fila."""
+    runs, start = [], None
+    for x in range(width):
+        black = pix[x, y] < 128
+        if black and start is None:
+            start = x
+        elif not black and start is not None:
+            runs.append((start, x - start))
+            start = None
+    if start is not None:
+        runs.append((start, width - start))
+    return runs
+
+
+@pytest.mark.parametrize(
+    "size, dpi, modules",
+    [((60, 40), 203, (2, 3, 4)), ((100, 75), 203, (2, 3, 4)), ((60, 40), 300, (3, 4, 6)),
+     ((50, 25), 203, (2, 3, 4))],
+)
+def test_calibration_gratings_use_the_barcode_module_widths(size, dpi, modules):
+    """Tres rejillas de 8 barras con el ancho de modulo del Code 128 (0,25, 0,35
+    y 0,5 mm), con espacios iguales a las barras: si el visor remuestrea la
+    imagen, esos anchos dejan de ser exactos."""
+    spec = labels.LabelSpec(*size, dpi)
+    img = labels.generate_calibration_image(spec).convert("L")
+    width, height = img.size
+    pix = img.load()
+    inset = round(_dots(1.0, dpi))
+    expected_widths = [module for module in modules for _ in range(8)]
+
+    rows = []
+    for y in range(height):
+        runs = [(x, w) for x, w in _black_runs(pix, y, width) if inset + 8 < x < width - inset - 8]
+        if [w for _, w in runs] == expected_widths:
+            rows.append((y, runs))
+    assert len(rows) >= round(_dots(3.0, dpi)) - 1  # la rejilla mide 3 mm de alto
+    ys = [y for y, _ in rows]
+    assert ys == list(range(ys[0], ys[0] + len(ys)))  # filas contiguas: una sola franja
+    runs = rows[0][1]
+    for index, module in enumerate(modules):
+        bars = runs[index * 8:(index + 1) * 8]
+        assert [bars[i + 1][0] - bars[i][0] for i in range(7)] == [2 * module] * 7  # espacio = barra
+    group_center = (runs[0][0] + runs[-1][0] + runs[-1][1]) / 2
+    assert abs(group_center - width / 2) <= 2  # el conjunto queda centrado en la etiqueta
+
+
+def test_calibration_page_drops_gratings_before_the_ruler_when_space_is_short(monkeypatch):
+    drawn = []
+    original = labels._draw_line
+    monkeypatch.setattr(labels, "_draw_line", lambda draw, line: (drawn.append(line.text), original(draw, line))[1])
+
+    labels.generate_calibration_image(labels.LabelSpec(60, 40))
+    assert "Barras parejas = impresión exacta" in drawn and "PRUEBA DE IMPRESIÓN" in drawn
+
+    drawn.clear()  # 50 x 25: no cabe la leyenda, pero si las rejillas y los textos
+    img = labels.generate_calibration_image(labels.LabelSpec(50, 25)).convert("L")
+    assert "Barras parejas = impresión exacta" not in drawn and "PRUEBA DE IMPRESIÓN" in drawn
+    pix = img.load()
+    assert any(len(_black_runs(pix, y, img.width)) >= 26 for y in range(img.height))  # rejillas
+
+    for size in ((20, 15), (25, 60)):  # sin espacio de alto (20 x 15) o de ancho (25 x 60)
+        img = labels.generate_calibration_image(labels.LabelSpec(*size)).convert("L")
+        _assert_clear_margins(img, 203)
+        pix = img.load()
+        assert all(len(_black_runs(pix, y, img.width)) < 26 for y in range(img.height)), size
+        assert any(0.4 * img.width < w < img.width for y in range(img.height)
+                   for _, w in _black_runs(pix, y, img.width)), size  # la regla se conserva
 
 
 def test_calibration_pdf_is_print_ready():
@@ -249,6 +340,14 @@ def test_calibration_pdf_is_print_ready():
 
 
 # --- Especificacion y configuracion guardada ----------------------------------------------
+
+def test_spec_shows_the_size_in_inches_for_the_driver_paper():
+    assert labels.LabelSpec(50, 25).inches_text == "1,97 × 0,98 in"
+    assert labels.LabelSpec(100, 75).inches_text == "3,94 × 2,95 in"
+    assert labels.LabelSpec(101.6, 76.2).inches_text == "4 × 3 in"
+    assert labels.LabelSpec(101.6, 152.4).inches_text == "4 × 6 in"
+    assert labels.LabelSpec(100, 75).preset_key == "100x75"
+
 
 def test_spec_validates_ranges_with_helpful_messages():
     with pytest.raises(ValueError, match="ancho"):

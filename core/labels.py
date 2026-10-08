@@ -107,9 +107,10 @@ SUPPORTED_DPI = (203, 300)
 LABEL_WIDTH_MM = 50
 LABEL_HEIGHT_MM = 25
 # La SAT TT460 acepta rollos de 20 a 112 mm de ancho; su cabezal de 4 pulgadas
-# imprime hasta ~104 mm. El alto cubre desde etiquetas pequeñas hasta 4 x 6 in.
+# imprime hasta ~104 mm. El alto cubre desde etiquetas pequeñas hasta 4 x 6 in
+# (152,4 mm).
 MIN_LABEL_WIDTH_MM, MAX_LABEL_WIDTH_MM = 20, 104
-MIN_LABEL_HEIGHT_MM, MAX_LABEL_HEIGHT_MM = 15, 150
+MIN_LABEL_HEIGHT_MM, MAX_LABEL_HEIGHT_MM = 15, 160
 LABEL_SPEC_SETTING_KEY = "label_spec"
 
 # Tamaños de rollo habituales (ancho x alto en mm).
@@ -118,6 +119,7 @@ LABEL_SIZE_PRESETS = {
     "50x30": (50, 30),
     "60x40": (60, 40),
     "100x50": (100, 50),
+    "100x75": (100, 75),
     "100x100": (100, 100),
     "100x150": (100, 150),
 }
@@ -221,6 +223,10 @@ def _format_mm(value: float) -> str:
     return f"{value:g}".replace(".", ",")
 
 
+def _format_inches(mm: float) -> str:
+    return f"{round(mm / 25.4, 2):g}".replace(".", ",")
+
+
 # ---------------------------------------------------------------------------
 # Especificacion de la etiqueta (tamaño real, resolucion y contenido)
 # ---------------------------------------------------------------------------
@@ -274,6 +280,11 @@ class LabelSpec:
     @property
     def size_text(self) -> str:
         return f"{_format_mm(self.width_mm)} × {_format_mm(self.height_mm)} mm"
+
+    @property
+    def inches_text(self) -> str:
+        """La misma medida en pulgadas, como la muestran los drivers (4 × 3 in)."""
+        return f"{_format_inches(self.width_mm)} × {_format_inches(self.height_mm)} in"
 
     def describe(self) -> str:
         return f"{self.size_text} · {self.dpi} dpi"
@@ -1191,13 +1202,24 @@ def generate_label_pdf_bytes(code: str, canvas_size: tuple = None, *,
     return _label_image_to_pdf(image, spec, title=f"Etiqueta {(code or '').strip()}")
 
 
+# Rejillas de nitidez de la hoja de prueba: barras alternadas con el ancho de
+# modulo del Code 128 (0,25-0,5 mm). Con la impresion punto por punto todas las
+# barras de una rejilla salen iguales; si el visor o el driver remuestrea la
+# imagen, unas salen mas gruesas que otras o grises.
+_GRATING_MODULES_MM = (0.25, 0.35, 0.5)
+_GRATING_BARS = 8
+_GRATING_CAPTION = "Barras parejas = impresión exacta"
+
+
 def generate_calibration_image(spec: LabelSpec = None) -> Image.Image:
-    """Hoja de prueba del tamaño configurado: marco a 1 mm del borde y una regla
-    milimetrada. Impresa y medida con una regla real revela si el driver
-    reduce la pagina (regla mas corta) o si el papel no coincide (marco cortado)."""
+    """Hoja de prueba del tamaño configurado: marco a 1 mm del borde, una regla
+    milimetrada y tres rejillas de barras. Impresa y revisada revela si el
+    driver reduce la pagina (regla mas corta), si el papel no coincide (marco
+    cortado) o si la imagen se remuestrea (rejillas desiguales o grises)."""
     spec = spec or LabelSpec()
     width, height = spec.canvas_size
     dpi = spec.dpi
+    scale = _type_scale(spec)
 
     def dots(mm: float) -> int:
         return round(_mm_to_dots(mm, dpi))
@@ -1220,7 +1242,7 @@ def generate_calibration_image(spec: LabelSpec = None) -> Image.Image:
         ("meta", f"Regla {ruler_mm} mm · marco {_format_mm(round(frame_w_mm))} × "
                  f"{_format_mm(round(frame_h_mm))} mm"),
     ):
-        preferred, low = _style_sizes(role, dpi, 1.0)
+        preferred, low = _style_sizes(role, dpi, scale)
         line = _fit(role, text, inner_width, preferred, low)
         if line is not None:
             lines.append(line)
@@ -1229,11 +1251,40 @@ def generate_calibration_image(spec: LabelSpec = None) -> Image.Image:
     number_height = _ink_extent("0123456789", number_size)[1] - _ink_extent("0123456789", number_size)[0]
     ruler_block = ruler_height + dots(0.6) + number_height
     gap = dots(1.0)
+
+    grating_modules = [max(1, dots(mm)) for mm in _GRATING_MODULES_MM]
+    grating_widths = [(2 * _GRATING_BARS - 1) * module for module in grating_modules]
+    grating_gap = dots(4.0)
+    grating_width = sum(grating_widths) + grating_gap * (len(grating_widths) - 1)
+    grating_height = dots(3.0)
+    show_gratings = grating_width <= inner_width
+    caption = None
+    if show_gratings:
+        preferred, low = _style_sizes("meta", dpi, scale)
+        caption = _fit("meta", _GRATING_CAPTION, inner_width, preferred, low)
+
     available = height - 2 * (inset + stroke + dots(1.0))
-    while lines and (sum(l.ink_height for l in lines) + gap * len(lines) + ruler_block) > available:
-        lines.pop()  # primero se sacrifica el texto, nunca la regla
-    total = sum(l.ink_height for l in lines) + gap * len(lines) + ruler_block
-    y = (height - total) // 2
+
+    def total_height() -> int:
+        total = ruler_block + sum(l.ink_height for l in lines) + gap * len(lines)
+        if show_gratings:
+            total += grating_height + gap
+        if caption is not None:
+            total += caption.ink_height + gap
+        return total
+
+    # Si no cabe todo, se sacrifica primero lo accesorio (leyenda, rejillas y
+    # luego los textos), nunca la regla.
+    while total_height() > available:
+        if caption is not None:
+            caption = None
+        elif show_gratings:
+            show_gratings = False
+        elif lines:
+            lines.pop()
+        else:
+            break
+    y = (height - total_height()) // 2
     for line in lines[:2]:
         line.x = (width - round(line.width)) // 2
         line.top = y
@@ -1258,6 +1309,18 @@ def generate_calibration_image(spec: LabelSpec = None) -> Image.Image:
         line.top = y
         _draw_line(draw, line)
         y += line.ink_height + gap
+    if show_gratings:
+        x = (width - grating_width) // 2
+        for module, grating in zip(grating_modules, grating_widths):
+            for bar in range(_GRATING_BARS):
+                left = x + 2 * bar * module
+                draw.rectangle((left, y, left + module - 1, y + grating_height - 1), fill=0)
+            x += grating + grating_gap
+        y += grating_height + gap
+    if caption is not None:
+        caption.x = (width - round(caption.width)) // 2
+        caption.top = y
+        _draw_line(draw, caption)
     return canvas.convert("1", dither=Image.Dither.NONE)
 
 

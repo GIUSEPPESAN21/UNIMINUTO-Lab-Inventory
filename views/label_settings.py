@@ -18,28 +18,58 @@ _SAMPLE_ITEM = {
 }
 
 PRINT_GUIDE = """
-1. **Mide tu etiqueta física** (ancho × alto, sin el papel de soporte) y elige ese
-   tamaño arriba. Guarda la configuración.
-2. **En el driver de la SAT TT460** (*Preferencias de impresión → Papel / Stock*)
-   usa un tamaño de papel **igual al de la etiqueta** (por ejemplo, 50 × 25 mm).
-3. **Abre el PDF e imprime sin escalar:**
-   - **Chrome o Edge:** *Más opciones de configuración → Escala:* **Predeterminado**
-     (o **Tamaño real**, si aparece). No uses *Ajustar al área de impresión* ni
-     *Ajustar al papel*. El navegador recuerda la última escala: revísala una vez.
-   - **Adobe Acrobat Reader:** *Tamaño y gestión de páginas →* **Tamaño real**, y marca
-     *Elegir origen del papel por tamaño de página del PDF*.
-   - Orientación: la que muestre la etiqueta **completa y sin girar** en la vista previa.
-4. **Imprime la hoja de prueba y mide la regla con una regla real:**
-   - Mide lo indicado y el marco se ve completo: la impresión es a tamaño real.
-   - **La regla mide menos** (por ejemplo, 20 mm en vez de 40 mm): el programa está
-     reduciendo la página. Revisa la escala (100 %) y el tamaño de papel del driver.
-   - **La regla mide bien, pero la prueba ocupa solo una parte de tu etiqueta:** tu
-     rollo es más grande. Mide la etiqueta y elige ese tamaño aquí.
-   - **El marco sale cortado o corrido:** el papel del driver no coincide con el rollo,
-     o falta calibrar el sensor de etiquetas (consulta el manual; en muchos modelos se
-     hace manteniendo presionado el botón FEED).
-5. El **PNG es solo un respaldo**: los navegadores ignoran su resolución y suelen
-   imprimirlo a otro tamaño. Para imprimir, usa siempre el **PDF**.
+**Antes de empezar:** mide la etiqueta con una regla (ancho × alto, sin el papel de
+soporte), elige esa medida arriba y guarda. Todo lo demás debe usar **la misma medida**.
+
+**1 · Driver de la SAT TT460 (una sola vez)**
+
+*Configuración de Windows → Bluetooth y dispositivos → Impresoras y escáneres → SAT TT460 UE
+→ Preferencias de impresión.* Repite los cambios en *Propiedades de la impresora → Opciones
+avanzadas → Valores predeterminados de impresión*. Los nombres de las pestañas pueden variar
+un poco según la versión del driver.
+
+- **Configuración de página (Page Setup):** tamaño **definido por el usuario** (en el cuadro
+  de impresión aparece como «USER») con el ancho y el alto de tu etiqueta. Si el cuadro de
+  impresión muestra «USER (50,8 × 50,8 mm)», ese es el tamaño que hay que cambiar: con él la
+  etiqueta sale recortada o pequeña.
+- **Papel / Stock:** etiquetas con separación entre ellas (no continuo).
+- **Gráficos (Graphics):** 203 dpi y tramado (**Dithering**) en **Ninguno**.
+- **Opciones:** velocidad y oscuridad medias; sube la oscuridad un nivel si las barras salen
+  claras.
+
+**2 · Imprime siempre el PDF, desde Edge o Chrome**
+
+- Clic derecho en el PDF → *Abrir con* → **Microsoft Edge**, y **Ctrl + P**.
+- Impresora: SAT TT460 UE · Tamaño del papel: **USER** con tu medida · Escala:
+  **Predeterminado** (o **Tamaño real**, si aparece) · Márgenes y encabezados: ninguno, si el
+  cuadro los muestra.
+- La vista previa debe mostrar la etiqueta **completa, derecha y llenando el papel**. Si se
+  ve girada, cambia *Diseño* (vertical u horizontal); si se ve pequeña en una esquina, el
+  papel no es el correcto.
+- **No imprimas el PNG ni abras la etiqueta con la app Fotos:** *Rellenar página* recorta la
+  imagen y la agranda con un factor que no es entero, y las barras salen irregulares.
+
+**3 · Una etiqueta de prueba antes del lote**
+
+Descarga la **hoja de prueba**, imprímela con esos mismos ajustes y revisa:
+
+- que el marco se vea completo, con sus cuatro lados;
+- que la regla mida lo que dice (con una regla real);
+- que las tres rejillas de barras se vean parejas (con una lupa o la cámara del celular).
+
+Si algo falla, busca tu caso en la tabla de abajo.
+"""
+
+SYMPTOMS_GUIDE = """
+| Lo que ves | Causa más probable | Qué hacer |
+|---|---|---|
+| **Recortada y ampliada** (falta un borde) | Se imprimió el PNG desde Fotos con *Rellenar página*, o el papel del driver es más chico que la imagen | Imprime el PDF desde Edge o Chrome con el papel USER de tu medida |
+| **Pequeña**, en el centro o en una esquina | El papel del driver o la medida guardada aquí no es la del rollo | Mide la etiqueta y usa la misma medida aquí y en el driver |
+| **Girada 90°** | Orientación | Cambia *Diseño* (vertical u horizontal) hasta ver el texto derecho |
+| **Borrosa**, letras ásperas o barras desiguales | La imagen se reescaló (Fotos, *Ajustar*, escala distinta de 100 %) o el driver aplica tramado | PDF, escala Predeterminado y *Dithering: Ninguno* |
+| **Marco cortado** en un lado | Papel del driver más pequeño que la etiqueta, o rollo corrido | Revisa el papel y centra las guías del rollo |
+| **Se desfasa** o salta de etiqueta en etiqueta | Sensor sin calibrar o tipo de papel equivocado | Calibra el sensor (botón de calibración de la impresora) y elige etiquetas con separación |
+| **Muy clara o muy oscura** | Oscuridad o velocidad del driver | Ajusta la oscuridad en pasos pequeños |
 """
 
 
@@ -47,11 +77,16 @@ def _decimal(value: float, digits: int) -> str:
     return f"{value:.{digits}f}".replace(".", ",")
 
 
+# Los rollos de 4 pulgadas de ancho suelen venderse como 100 mm y el driver los
+# nombra en pulgadas: se muestran las dos medidas para reconocerlos.
+_INCH_NAMES = {"100x50": "4 × 2 in", "100x75": "4 × 3 in", "100x100": "4 × 4 in", "100x150": "4 × 6 in"}
+
+
 def _preset_name(key: str) -> str:
     if key == _CUSTOM:
         return "Personalizado…"
     width, height = LABEL_SIZE_PRESETS[key]
-    suffix = " (4 × 6 in)" if key == "100x150" else ""
+    suffix = f" (≈ {_INCH_NAMES[key]})" if key in _INCH_NAMES else ""
     return f"{width} × {height} mm{suffix}"
 
 
@@ -144,6 +179,17 @@ def _render_preview(storage, spec: LabelSpec) -> None:
         st.warning(note)
 
 
+def _render_paper_info(spec: LabelSpec) -> None:
+    """La medida que debe tener el papel del driver y del cuadro de impresión."""
+    with st.container(border=True):
+        st.markdown(
+            f"**🧾 Papel al imprimir: {spec.size_text} ({spec.inches_text}).** Define ese mismo "
+            "tamaño («USER», definido por el usuario) en el driver de la impresora y elígelo en "
+            "el cuadro de impresión del PDF. Si el cuadro muestra otra medida (por ejemplo "
+            "«USER (50,8 × 50,8 mm)»), la etiqueta saldrá recortada o pequeña."
+        )
+
+
 def render(storage, user: dict) -> None:
     saved = labels.load_label_spec(storage)
     st.caption(
@@ -156,6 +202,7 @@ def render(storage, user: dict) -> None:
         return
 
     _render_preview(storage, spec)
+    _render_paper_info(spec)
 
     save_col, test_col = st.columns(2)
     changed = spec != saved
@@ -171,12 +218,15 @@ def render(storage, user: dict) -> None:
         data=labels.generate_calibration_pdf_bytes(spec),
         file_name=f"prueba_impresion_{spec.width_mm:g}x{spec.height_mm:g}mm.pdf",
         mime="application/pdf", use_container_width=True, key="label_cfg_test",
-        help="Imprímela con la misma configuración que tus etiquetas y mide la regla.",
+        help="Imprímela con los mismos ajustes que tus etiquetas: revisa el marco, mide la "
+             "regla y mira las rejillas.",
     )
     if changed:
         st.caption(
             "Hay cambios sin guardar: la vista previa y la hoja de prueba ya los usan, pero las "
             f"etiquetas del inventario siguen en {saved.describe()} hasta que guardes."
         )
-    with st.expander("🖨️ Cómo imprimir a tamaño real (y qué hacer si la etiqueta sale pequeña)"):
+    with st.expander("🖨️ Cómo imprimir a tamaño real, paso a paso", expanded=saved == LabelSpec()):
         st.markdown(PRINT_GUIDE)
+    with st.expander("🔎 Mi etiqueta sale mal: qué significa cada caso"):
+        st.markdown(SYMPTOMS_GUIDE)
