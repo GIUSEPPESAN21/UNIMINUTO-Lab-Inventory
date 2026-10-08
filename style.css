@@ -132,6 +132,14 @@ body, .stApp {
     color: var(--text-color);
     border: 1px solid var(--border-color);
 }
+/* Un boton deshabilitado debe verse deshabilitado (antes el primario seguia azul). */
+.stButton > button:disabled,
+.stButton > button:disabled:hover {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
 
 /* --- Chip de usuario en el sidebar --- */
 .user-chip {

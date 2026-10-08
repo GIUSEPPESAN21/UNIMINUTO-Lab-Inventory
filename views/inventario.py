@@ -12,6 +12,7 @@ from core import labels
 from core import permissions
 from core.labels import ITEM_TYPE_BY_CHOICE, ITEM_TYPE_CHOICES, ITEM_TYPE_HELP, ITEM_TYPE_LABELS, ITEM_TYPE_NAMES
 from core.ui import esc, guard_role, page_header
+from views import label_settings
 from views.code_input import render_code_input
 
 
@@ -112,9 +113,10 @@ def render():
             _edit_item_form(storage, item, user)
         return
 
-    tab_catalogo, tab_nuevo, tab_import = st.tabs(
-        ["📋 Catalogo", "➕ Nuevo item", "📥 Importar CSV masivo"]
+    tab_catalogo, tab_nuevo, tab_import, tab_etiquetas = st.tabs(
+        ["📋 Catalogo", "➕ Nuevo item", "📥 Importar CSV masivo", "🖨️ Etiquetas"]
     )
+    label_spec = labels.load_label_spec(storage)
 
     with tab_catalogo:
         try:
@@ -166,22 +168,23 @@ def render():
                 if c4.button("✏️", key=f"edit_{item['id']}", help="Editar"):
                     st.session_state.editing_item_id = item["id"]
                     st.rerun()
-                label_png = labels.generate_item_label_png_bytes(item)
+                label_pdf, label_png = labels.item_label_files(item, label_spec)
                 if label_png:
-                    label_pdf = labels.generate_item_label_pdf_bytes(item)
-                    with c5.popover("🏷️", help="Descargar etiqueta profesional", use_container_width=True):
-                        if label_pdf:
-                            st.download_button(
-                                "PDF · imprimir", data=label_pdf,
-                                file_name=f"etiqueta_{item['id']}.pdf", mime="application/pdf",
-                                key=f"label_pdf_{item['id']}", type="primary", use_container_width=True,
-                            )
+                    with c5.popover("🏷️", help=f"Etiqueta {label_spec.size_text}", use_container_width=True):
+                        st.download_button(
+                            f"PDF {label_spec.size_text} · imprimir", data=label_pdf,
+                            file_name=f"etiqueta_{item['id']}.pdf", mime="application/pdf",
+                            key=f"label_pdf_{item['id']}", type="primary", use_container_width=True,
+                        )
                         st.download_button(
                             "PNG · respaldo", data=label_png,
                             file_name=f"etiqueta_{item['id']}.png", mime="image/png",
                             key=f"label_png_{item['id']}", use_container_width=True,
                         )
-                        st.caption("PDF recomendado: papel 50×25 mm, horizontal, escala 100 % y sin márgenes.")
+                        st.caption(
+                            f"Imprime el PDF al 100 % (tamaño real), sin márgenes, en papel de "
+                            f"{label_spec.size_text}. ¿Sale pequeña? Revisa la pestaña 🖨️ Etiquetas."
+                        )
                 else:
                     c5.write("")
 
@@ -251,6 +254,9 @@ def render():
                         st.rerun()
                     except ValueError as e:
                         st.error(str(e))
+
+    with tab_etiquetas:
+        label_settings.render(storage, user)
 
     with tab_import:
         st.caption(

@@ -60,6 +60,10 @@ SHEET_COLUMNS = {
         "id", "item_id", "timestamp", "type", "quantity_change",
         "actor_user_id", "details",
     ],
+    # Configuracion del laboratorio (clave/valor), p. ej. el tamaño de etiqueta.
+    "settings": [
+        "key", "value", "updated_by", "updated_at",
+    ],
 }
 
 _cached_dfs = None
@@ -1450,3 +1454,31 @@ class LabStorage:
             dfs["service_requests"] = df
             _write_and_sync(dfs)
             return True
+
+    # ------------------------------------------------------------------
+    # CONFIGURACION DEL LABORATORIO (clave / valor)
+    # ------------------------------------------------------------------
+
+    @firestore_retry
+    def get_setting(self, key: str, default=None):
+        df = _read_excel("settings")["settings"]
+        rows = df[df["key"] == key]
+        if rows.empty:
+            return default
+        value = rows.iloc[0]["value"]
+        return default if value in (None, "") else value
+
+    def set_setting(self, key: str, value: str, actor_email: str = "") -> None:
+        """Crea o reemplaza un valor de configuracion y lo publica en el momento."""
+        with _db_write():
+            dfs = _read_excel()
+            df = dfs["settings"]
+            row = {"key": key, "value": value, "updated_by": actor_email, "updated_at": _now_str()}
+            idx = df.index[df["key"] == key].tolist()
+            if idx:
+                for column, cell in row.items():
+                    df.at[idx[0], column] = cell
+            else:
+                df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+            dfs["settings"] = df
+            _write_and_sync(dfs)

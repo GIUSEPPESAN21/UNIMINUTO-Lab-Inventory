@@ -46,6 +46,7 @@ class FakeStorage:
         self.loans = {}
         self.reservations = {}
         self.service_requests = {}
+        self.settings = {}
 
     # --- items ---
     def add_item(self, item_id, **kwargs):
@@ -238,6 +239,13 @@ class FakeStorage:
             return False
         row.update(email_notified=bool(sent), email_error=error)
         return True
+
+    # --- settings ---
+    def get_setting(self, key, default=None):
+        return self.settings.get(key, default)
+
+    def set_setting(self, key, value, actor_email=""):
+        self.settings[key] = value
 
 
 @pytest.fixture

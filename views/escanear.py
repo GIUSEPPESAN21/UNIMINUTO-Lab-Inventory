@@ -16,25 +16,27 @@ from views.location_guide import render_location_guide
 
 
 def _render_label_download(item: dict):
-    label_png = labels.generate_item_label_png_bytes(item)
+    spec = labels.load_label_spec(st.session_state.storage)
+    label_pdf, label_png = labels.item_label_files(item, spec)
     if not label_png:
         return
-    label_pdf = labels.generate_item_label_pdf_bytes(item)
     pdf_col, png_col = st.columns(2)
-    if label_pdf:
-        pdf_col.download_button(
-            "🏷️ PDF 50×25 mm", data=label_pdf,
-            file_name=f"etiqueta_{item['id']}.pdf", mime="application/pdf",
-            help="Formato recomendado para imprimir sin reducción",
-            key=f"label_scan_pdf_{item['id']}", type="primary", use_container_width=True,
-        )
+    pdf_col.download_button(
+        f"🏷️ PDF {spec.size_text}", data=label_pdf,
+        file_name=f"etiqueta_{item['id']}.pdf", mime="application/pdf",
+        help="Formato recomendado: mide exactamente lo mismo que la etiqueta",
+        key=f"label_scan_pdf_{item['id']}", type="primary", use_container_width=True,
+    )
     png_col.download_button(
         "PNG · respaldo", data=label_png,
         file_name=f"etiqueta_{item['id']}.png", mime="image/png",
-        help="Imagen a 203 dpi", key=f"label_scan_png_{item['id']}",
+        help=f"Imagen a {spec.dpi} dpi", key=f"label_scan_png_{item['id']}",
         use_container_width=True,
     )
-    st.caption("Para la SAT TT 460: papel 50×25 mm, horizontal, escala 100 % y sin márgenes.")
+    st.caption(
+        f"Etiqueta de {spec.describe()}: imprime el PDF al 100 % (tamaño real), sin márgenes "
+        "ni «Ajustar»."
+    )
 
 def _render_item_actions(item: dict, parent: dict = None):
     storage = st.session_state.storage

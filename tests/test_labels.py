@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Pruebas de core/labels.py: etiqueta profesional de 50x25mm para una
-termica SAT TT 460 (logo, identificacion del producto, Code 128 y codigo
-legible). El codigo de barras se lee desde los pixeles, como lo haria un
-lector, para comprobar que devuelve EXACTAMENTE el texto registrado.
+"""Pruebas de core/labels.py: etiqueta profesional (por defecto 50x25 mm a
+203 dpi, la SAT TT 460) con logo, identificacion del producto, Code 128 y
+codigo legible. El codigo de barras se lee desde los pixeles, como lo haria un
+lector, para comprobar que devuelve EXACTAMENTE el texto registrado. El diseño
+adaptable y los demas tamaños se prueban en test_label_layout.py.
 """
 
 import io
@@ -188,10 +189,13 @@ def test_label_barcode_scans_back_to_the_exact_code(code):
     ["1-2-05-12-001", "0012345", "LAB-MIC-01", "ABCDEFGHIJKLM", "A1B2C3D4E5F6G",
      "12345678901234567890", "1234567890123456789"],
 )
-def test_label_bars_are_at_least_025mm_wide_and_9mm_tall(code):
+def test_label_bars_are_at_least_025mm_wide_and_7mm_tall(code):
+    """7 mm supera la recomendacion general para Code 128 (>= 6,35 mm o el 15 %
+    del ancho del simbolo). Antes se exigian 9 mm en una etiqueta de 25 mm y el
+    texto quedaba apretado en los 16 mm restantes."""
     scan = _scan_label(labels.generate_label_image(code, description=LONG_DESCRIPTION))
     assert scan["dots"] >= 2          # 2 puntos a 203 dpi = 0,25 mm
-    assert scan["band_height"] >= 72  # 9 mm a 203 dpi
+    assert scan["band_height"] >= 56  # 7 mm a 203 dpi
 
 
 def _random_free_codes(count=400, seed=20260928):
@@ -221,28 +225,26 @@ def test_random_free_codes_encode_exactly_and_fit_with_wide_bars():
 
 
 def test_professional_item_label_has_logo_header_product_metadata_and_divider():
-    data = labels.generate_item_label_png_bytes(PRODUCT)
-    img = Image.open(io.BytesIO(data))
+    layout = labels.layout_item_label(PRODUCT)
+    img = labels.render_label(layout)
     scan = _scan_label(img)
-    width, _ = img.size
     rows = scan["rows"]
-    bars_top = scan["band_top"]
-    header_top = labels._MARGIN_Y_PX
-    header_bottom = header_top + labels._HEADER_HEIGHT_PX
-    logo_right = labels._MARGIN_X_PX + labels._LOGO_MAX_WIDTH_PX
-    text_left = logo_right + labels._HEADER_TEXT_GAP_PX
 
     assert scan["text"] == PRODUCT["id"]
-    assert scan["band_height"] >= 72  # 9 mm a 203 dpi aun con todos los metadatos
+    assert scan["band_height"] >= 56  # 7 mm a 203 dpi aun con encabezado y datos
     assert _text_lines(rows, scan["band_top"] + scan["band_height"], img.size[1]) == 1
     assert labels._load_brand_logo() is not None
-    assert _region_ink(rows, labels._MARGIN_X_PX, header_top, logo_right, header_bottom) > 50
-    assert _region_ink(rows, text_left, header_top, width - labels._MARGIN_X_PX, header_bottom) > 50
-    assert sum(rows[header_bottom]) >= width - 2 * labels._MARGIN_X_PX - 2
-    assert _region_ink(
-        rows, labels._MARGIN_X_PX, header_bottom + labels._DIVIDER_PX,
-        width - labels._MARGIN_X_PX, bars_top,
-    ) > 50
+    assert _region_ink(rows, *layout.logo_box) > 50
+    lab = layout.lines_for("lab")[0]
+    assert lab.text == labels.LABEL_INSTITUTION_TEXT  # completo, nunca recortado
+    x0, y0, x1, y1 = lab.box
+    assert _region_ink(rows, x0, y0, min(x1, img.width), y1) > 50
+    dx0, dy0, dx1, _ = layout.divider_box
+    assert sum(rows[dy0]) >= (dx1 - dx0) - 2  # linea divisoria completa
+    bx0, by0, bx1, _ = layout.band_box
+    assert sum(rows[by0]) >= (bx1 - bx0) - 2  # banda negra del nombre
+    assert layout.lines_for("name")[0].text == PRODUCT["name"]
+    assert "UBIC: Estantería 2 · Piso 1" in [line.text for line in layout.lines_for("meta")]
 
 
 def test_brand_logo_asset_is_versioned_and_converts_to_monochrome():
@@ -255,17 +257,19 @@ def test_brand_logo_asset_is_versioned_and_converts_to_monochrome():
 
 
 def test_thermal_typography_uses_legible_sizes_weight_and_tracking():
-    assert labels._INSTITUTION_FONT_PX >= 14
-    assert labels._TYPE_FONT_PX >= 12
-    assert labels._NOTICE_FONT_PX >= 10
-    assert labels._NAME_FONT_PX >= 18
-    assert labels._META_FONT_PX >= 11
-    assert labels._CODE_FONT_PX >= 26
-    assert labels._MIN_FONT_PX >= 9
-    assert labels._HEADER_TRACKING_PX >= 2
-    assert labels._HEADER_WORD_SPACING_PX >= 2
-    assert labels._SECONDARY_TRACKING_PX >= 1
-    assert labels._SECONDARY_WORD_SPACING_PX >= 1
+    """Antes habia textos de 3,5-4,3 pt y 1 punto entre lineas. Ahora ningun
+    texto baja de ~5 pt y todos llevan espaciado entre letras."""
+    layout = labels.layout_item_label(PRODUCT)
+    dpi = labels.LABEL_DPI
+    assert layout.min_text_pt >= 5.0
+    for line in layout.lines:
+        assert line.pt(dpi) >= labels._STYLES[line.role].floor_pt
+        assert line.tracking > 0 or line.role == "code" and line.tracking >= 0
+    assert layout.lines_for("name")[0].pt(dpi) >= 7.0
+    assert layout.lines_for("code")[0].pt(dpi) >= 6.0
+    for role in ("lab", "notice", "name", "meta"):
+        assert labels._STYLES[role].tracking > 0
+
 
 @pytest.mark.parametrize(
     "code, expected",
@@ -289,33 +293,23 @@ def test_title_spacing_accounts_for_letters_and_words():
     assert spaced == pytest.approx(base + (len("LAB TEST") - 1) * 2 + 3)
 
 
-def test_product_title_band_and_location_line_preserve_full_barcode():
+def test_product_title_band_and_route_line_preserve_full_barcode():
     item = {
         **PRODUCT,
         "id": "2-1-01-02-003",
         "name": "Microscopio binocular",
     }
-    img = Image.open(io.BytesIO(labels.generate_item_label_png_bytes(item)))
+    layout = labels.layout_item_label(item)
+    img = labels.render_label(layout)
     scan = _scan_label(img)
-    rows = scan["rows"]
-    width, _ = img.size
-    body_top = (
-        labels._MARGIN_Y_PX + labels._HEADER_HEIGHT_PX
-        + labels._DIVIDER_PX + labels._GAP_PX
-    )
-    body_rows = range(body_top, scan["band_top"])
-    solid_rows = [
-        y for y in body_rows
-        if sum(rows[y]) >= width - 2 * labels._MARGIN_X_PX - 2
-    ]
 
-    assert solid_rows  # banda negra del nombre
-    assert _region_ink(
-        rows, labels._MARGIN_X_PX, max(solid_rows) + 1,
-        width - labels._MARGIN_X_PX, scan["band_top"],
-    ) > 20  # linea de ruta/metadatos debajo de la banda
-    assert scan["band_height"] >= 72
+    assert layout.band_box  # banda negra del nombre
+    assert layout.lines_for("name")[0].text == "Microscopio binocular"
+    route = [line.text for line in layout.lines if line.text.startswith("RUTA:")]
+    assert route == ["RUTA: E2 › P1 › C01 › CJ02 › I003"]  # completa, nunca recortada
+    assert scan["band_height"] >= 56
     assert scan["text"] == item["id"]
+
 
 def test_label_without_notice_or_description_only_has_bars_and_code():
     img = labels.generate_label_image("LAB-MIC-01", notice=None)
@@ -340,36 +334,45 @@ def test_label_png_for_lab_mic_01_declares_printer_dpi_and_scans_back():
     assert _scan_label(img)["text"] == "LAB-MIC-01"
 
 
-def test_print_ready_pdf_has_exact_50x25mm_page_and_native_203dpi_raster():
+@pytest.mark.parametrize(
+    "width_mm, height_mm, dpi", [(50, 25, 203), (60, 40, 203), (100, 50, 203), (50, 25, 300)],
+)
+def test_print_ready_pdf_matches_the_label_size_and_asks_viewers_not_to_scale(width_mm, height_mm, dpi):
+    spec = labels.LabelSpec(width_mm, height_mm, dpi)
     data = labels.generate_label_pdf_bytes(
         PRODUCT["id"], description=PRODUCT["name"], category=PRODUCT["category"],
-        location=PRODUCT["location"], item_type=PRODUCT["item_type"],
+        location=PRODUCT["location"], item_type=PRODUCT["item_type"], spec=spec,
     )
-    assert data.startswith(b"%PDF-1.4")
+    width_px, height_px = spec.canvas_size
+    assert data.startswith(b"%PDF-1.7")
     assert data.endswith(b"%%EOF\n")
-    assert b"/Width 384 /Height 192" in data
+    assert f"/Width {width_px} /Height {height_px}".encode() in data
     assert b"/BitsPerComponent 1" in data
+    # El visor no debe escalar al imprimir y debe elegir el papel por el tamaño del PDF.
+    assert b"/ViewerPreferences << /PrintScaling /None /PickTrayByPDFSize true >>" in data
+    assert b"/Info 6 0 R" in data and b"/Title <FEFF" in data
 
     media_box = re.search(rb"/MediaBox \[0 0 ([0-9.]+) ([0-9.]+)\]", data)
     assert media_box
-    assert float(media_box.group(1)) * 25.4 / 72 == pytest.approx(50, abs=0.01)
-    assert float(media_box.group(2)) * 25.4 / 72 == pytest.approx(25, abs=0.01)
+    assert float(media_box.group(1)) * 25.4 / 72 == pytest.approx(width_mm, abs=0.01)
+    assert float(media_box.group(2)) * 25.4 / 72 == pytest.approx(height_mm, abs=0.01)
 
-    matrix = re.search(
-        rb"q\n([0-9.]+) 0 0 ([0-9.]+) ([0-9.]+) ([0-9.]+) cm", data,
-    )
+    matrix = re.search(rb"q\n([0-9.]+) 0 0 ([0-9.]+) ([0-9.]+) ([0-9.]+) cm", data)
     assert matrix
-    assert float(matrix.group(1)) * labels.LABEL_DPI / 72 == pytest.approx(384, abs=0.02)
-    assert float(matrix.group(2)) * labels.LABEL_DPI / 72 == pytest.approx(192, abs=0.02)
-    assert float(matrix.group(3)) > 0
-    assert float(matrix.group(4)) > 0
+    # Cada pixel ocupa un punto de impresora y el raster parte de la esquina
+    # superior izquierda (la alineacion fina se prueba en test_label_print.py).
+    assert float(matrix.group(1)) * dpi / 72 == pytest.approx(width_px, abs=0.02)
+    assert float(matrix.group(2)) * dpi / 72 == pytest.approx(height_px, abs=0.02)
+    assert float(matrix.group(3)) * dpi / 72 == pytest.approx(0, abs=0.02)
+    top = float(media_box.group(2)) - float(matrix.group(4)) - float(matrix.group(2))
+    assert top * dpi / 72 == pytest.approx(0, abs=0.02)
 
     startxref = int(re.search(rb"startxref\n(\d+)", data).group(1))
     assert data[startxref:].startswith(b"xref\n")
 
 
 def test_generate_item_label_pdf_uses_item_and_skips_unprintable_ids():
-    assert labels.generate_item_label_pdf_bytes(PRODUCT).startswith(b"%PDF-1.4")
+    assert labels.generate_item_label_pdf_bytes(PRODUCT).startswith(b"%PDF-1.7")
     assert labels.generate_item_label_pdf_bytes({"id": "CAJA 001"}) is None
     assert labels.generate_item_label_pdf_bytes({"id": ""}) is None
 
@@ -395,6 +398,7 @@ def test_generate_item_label_forwards_professional_metadata(monkeypatch):
         "category": "Óptica",
         "location": "Estantería 2 · Piso 1",
         "item_type": "standalone",
+        "spec": None,
     }
 
 def test_container_level_code_with_na_zeros_generates_and_scans_exactly():
@@ -405,9 +409,10 @@ def test_container_level_code_with_na_zeros_generates_and_scans_exactly():
     assert _scan_label(img)["text"] == code
 
 
-def test_label_canvas_matches_sat_tt460_spec():
-    # 50x25mm @ 203dpi (aprox, redondeado a multiplos de 32px)
+def test_default_label_matches_sat_tt460_50x25_at_203dpi():
     assert labels.LABEL_DPI == 203
     assert labels.LABEL_WIDTH_MM == 50
     assert labels.LABEL_HEIGHT_MM == 25
-    assert labels.LABEL_CANVAS_SIZE == (384, 192)
+    # Toda el area fisica: 50 mm x 203 / 25,4 = 399,6 -> 399 puntos (sin pasarse
+    # del borde). Antes se usaban 384 x 192 y quedaba ~1 mm sin aprovechar.
+    assert labels.LABEL_CANVAS_SIZE == (399, 199)
