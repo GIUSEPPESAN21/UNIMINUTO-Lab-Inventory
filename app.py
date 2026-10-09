@@ -73,12 +73,13 @@ if st.session_state.get("login_at") is None:
     st.session_state.login_at = datetime.now(timezone.utc)
 user = session_user
 
-from views import inicio, escanear, inventario, prestamos, reservas, solicitudes, usuarios, reportes, acerca_de, perfil
+from views import inicio, escanear, inventario, prestamos, reservas, solicitudes, trazabilidad, usuarios, reportes, acerca_de, perfil
 
 pages = {
     "inicio": st.Page(inicio.render, title="Inicio", icon="🏠", default=True, url_path="inicio"),
     "escanear": st.Page(escanear.render, title="Escanear", icon="🛰️", url_path="escanear"),
     "solicitudes": st.Page(solicitudes.render, title="Solicitudes", icon="📝", url_path="solicitudes"),
+    "trazabilidad": st.Page(trazabilidad.render, title="Trazabilidad", icon="🧭", url_path="trazabilidad"),
     "reservas": st.Page(reservas.render, title="Reservas", icon="🗓️", url_path="reservas"),
     "prestamos": st.Page(prestamos.render, title="Prestamos", icon="📋", url_path="prestamos"),
 }
@@ -96,7 +97,7 @@ pages["acerca_de"] = st.Page(acerca_de.render, title="Acerca de", icon="🏢", u
 st.session_state.pages = pages
 
 # Navegacion agrupada por secciones para que el sidebar sea facil de leer.
-nav_sections = {"🧭 Principal": [pages["inicio"], pages["escanear"], pages["solicitudes"], pages["reservas"], pages["prestamos"]]}
+nav_sections = {"🧭 Principal": [pages["inicio"], pages["escanear"], pages["solicitudes"], pages["trazabilidad"], pages["reservas"], pages["prestamos"]]}
 if user["role"] in permissions.MANAGER_ROLES:
     nav_sections["🗂️ Gestion del laboratorio"] = [pages["inventario"], pages["reportes"]]
 if user["role"] in permissions.ADMIN_ROLES:

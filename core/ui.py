@@ -49,6 +49,98 @@ def page_header(title: str, subtitle: str = None, icon: str = None) -> None:
     st.markdown("<hr>", unsafe_allow_html=True)
 
 
+# ---------------------------------------------------------------------------
+# Componentes compartidos (contrato estable: las vistas los usan y style.css
+# los estiliza; se puede mejorar su HTML interno, pero NO cambiar firmas ni
+# nombres de clases CSS). Todo texto se escapa: puede venir de usuarios.
+# ---------------------------------------------------------------------------
+
+TONES = ("neutral", "info", "success", "warning", "danger")
+STEP_STATES = ("done", "current", "pending", "blocked")
+
+
+def _tone(tone: str) -> str:
+    return tone if tone in TONES else "neutral"
+
+
+def badge_html(text, tone: str = "neutral", icon: str = None) -> str:
+    """Pastilla de estado como HTML (para incrustar en otras piezas)."""
+    prefix = f"{esc(icon)} " if icon else ""
+    return f'<span class="lab-badge lab-badge--{_tone(tone)}">{prefix}{esc(text)}</span>'
+
+
+def status_badge(text, tone: str = "neutral", icon: str = None) -> None:
+    st.markdown(badge_html(text, tone, icon), unsafe_allow_html=True)
+
+
+def section_title(title: str, icon: str = None, caption: str = None) -> None:
+    """Titulo de seccion dentro de una pagina (mas liviano que page_header)."""
+    heading = f"{esc(icon)} {esc(title)}" if icon else esc(title)
+    cap = f'<div class="lab-section__caption">{esc(caption)}</div>' if caption else ""
+    st.markdown(f'<div class="lab-section"><div class="lab-section__title">{heading}</div>{cap}</div>',
+                unsafe_allow_html=True)
+
+
+def stat_cards(stats: list) -> None:
+    """Fila de indicadores. Cada stat: {"label", "value", "icon"?, "tone"?, "help"?}."""
+    cards = []
+    for stat in stats:
+        icon = f'<div class="lab-stat__icon">{esc(stat.get("icon"))}</div>' if stat.get("icon") else ""
+        help_text = f'<div class="lab-stat__help">{esc(stat.get("help"))}</div>' if stat.get("help") else ""
+        cards.append(
+            f'<div class="lab-stat lab-stat--{_tone(stat.get("tone", "neutral"))}">{icon}'
+            f'<div class="lab-stat__value">{esc(stat.get("value"))}</div>'
+            f'<div class="lab-stat__label">{esc(stat.get("label"))}</div>{help_text}</div>'
+        )
+    st.markdown(f'<div class="lab-stat-grid">{"".join(cards)}</div>', unsafe_allow_html=True)
+
+
+def empty_state(title: str, text: str = "", icon: str = "📭") -> None:
+    body = f'<div class="lab-empty__text">{esc(text)}</div>' if text else ""
+    st.markdown(
+        f'<div class="lab-empty"><div class="lab-empty__icon">{esc(icon)}</div>'
+        f'<div class="lab-empty__title">{esc(title)}</div>{body}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def timeline_html(steps: list) -> str:
+    """Linea de tiempo vertical. Cada paso: {"title", "detail"?, "time"?, "icon"?,
+    "state": done|current|pending|blocked}."""
+    rows = []
+    for index, step in enumerate(steps, start=1):
+        state = step.get("state") if step.get("state") in STEP_STATES else "pending"
+        icon = esc(step.get("icon") or ("✓" if state == "done" else index))
+        detail = f'<div class="lab-step__detail">{esc(step.get("detail"))}</div>' if step.get("detail") else ""
+        when = f'<div class="lab-step__time">{esc(step.get("time"))}</div>' if step.get("time") else ""
+        rows.append(
+            f'<div class="lab-step lab-step--{state}"><div class="lab-step__marker">{icon}</div>'
+            f'<div class="lab-step__body"><div class="lab-step__title">{esc(step.get("title"))}</div>'
+            f'{detail}{when}</div></div>'
+        )
+    return f'<div class="lab-timeline">{"".join(rows)}</div>'
+
+
+def timeline(steps: list) -> None:
+    st.markdown(timeline_html(steps), unsafe_allow_html=True)
+
+
+def quick_actions(actions: list, columns: int = 3) -> None:
+    """Tarjetas de acceso rapido. Cada accion: {"page": st.Page, "label", "icon"?,
+    "description"?}. Las acciones sin pagina se omiten."""
+    actions = [action for action in actions if action.get("page") is not None]
+    if not actions:
+        return
+    cols = st.columns(min(columns, len(actions)))
+    for index, action in enumerate(actions):
+        with cols[index % len(cols)]:
+            with st.container(border=True):
+                st.page_link(action["page"], label=action["label"], icon=action.get("icon"),
+                             use_container_width=True)
+                if action.get("description"):
+                    st.caption(action["description"])
+
+
 def _render_conflict_controls(storage, user: dict) -> None:
     """Acciones para resolver un conflicto de sincronizacion (solo maestro)."""
     if user.get("role") != permissions.ROLE_MASTER:
