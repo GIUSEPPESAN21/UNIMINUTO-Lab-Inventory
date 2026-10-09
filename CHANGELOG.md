@@ -28,6 +28,19 @@
 - Pestañas como control segmentado de ancho completo con pestañas iguales.
 - Acceso: los dos paneles miden lo mismo y la marca va centrada.
 
+### Compatibilidad con las dependencias actualizadas (Streamlit 1.65, pandas 3)
+- **pandas 3**: `dtype=str` ahora crea columnas de texto estrictas y editar un
+  ítem (cantidad, contenedor) después de reiniciar la app fallaba con
+  `TypeError: Invalid value '5' for dtype 'str'`. Las hojas del Excel se cargan
+  como `object`, igual que con pandas 2.
+- **Streamlit 1.65** pasó sus controles a react-aria: las pestañas se
+  estilizan con los nuevos selectores y los controles nativos (campos,
+  opciones, casillas, menús) toman los colores del nuevo
+  `.streamlit/config.toml`, con variantes `[theme.light]` y `[theme.dark]` que
+  respetan la preferencia del sistema.
+- Las pruebas con `AppTest.from_file` usan la ruta absoluta de `app.py` (desde
+  1.65 las rutas relativas se resuelven desde la carpeta `tests/`).
+
 ### Celular
 - Cabecera tipo app con el símbolo de UNIMINUTO centrado (nuevo
   `assets/uniminuto-simbolo.png`, también ícono de la pestaña del navegador).

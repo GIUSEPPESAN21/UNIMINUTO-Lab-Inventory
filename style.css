@@ -15,8 +15,9 @@
    accesos rápidos van centrados; los formularios y textos largos, a la
    izquierda para leerse bien. Íconos: Material Symbols (la fuente que ya
    trae Streamlit) en el azul de la marca, en lugar de emojis multicolor.
-   El tema NO se fija en .streamlit/config.toml a propósito: en Streamlit 1.50
-   un [theme] propio reemplaza la preferencia claro/oscuro del sistema.
+   Los controles nativos toman el color del tema de .streamlit/config.toml, que
+   define las variantes [theme.light] y [theme.dark] (Streamlit 1.46+) para
+   seguir la preferencia claro/oscuro del sistema.
    ============================================================================= */
 
 /* ---------------------------------------------------------------------------
@@ -790,6 +791,50 @@ body, .stApp {
 .stApp button[data-baseweb="tab"][aria-selected="true"] p,
 .stApp button[data-baseweb="tab"][aria-selected="true"] [data-testid="stIconMaterial"] { color: #FFFFFF; }
 .stApp [data-baseweb="tab-panel"] { padding-top: 1rem; }
+
+/* Streamlit 1.65 cambió las pestañas a react-aria (role="tablist" /
+   data-testid="stTab"): el mismo control segmentado con los nuevos selectores. */
+.stApp [data-testid="stTabs"] [role="tablist"] {
+    display: flex;
+    gap: 0.3rem;
+    padding: 0.3rem;
+    width: 100%;
+    box-sizing: border-box;
+    overflow: visible;
+    background: var(--lab-surface-2);
+    border: 1px solid var(--lab-border);
+    border-radius: 14px;
+    box-shadow: inset 0 1px 2px rgba(15, 27, 45, 0.05);
+}
+.stApp [data-testid="stTab"] {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 0.55rem 0.95rem;
+    border-radius: 10px;
+    color: var(--lab-text-muted);
+    background: transparent;
+    cursor: pointer;
+    transition: background-color var(--lab-dur) var(--lab-ease), color var(--lab-dur) var(--lab-ease),
+        box-shadow var(--lab-dur) var(--lab-ease);
+}
+.stApp [data-testid="stTab"] p { font-weight: 600; color: inherit; }
+.stApp [data-testid="stTab"] .react-aria-SelectionIndicator { display: none; }
+.stApp [data-testid="stTab"]:hover { color: var(--lab-text); background: var(--lab-surface-hover); }
+.stApp [data-testid="stTab"][aria-selected="true"] {
+    color: #FFFFFF;
+    background: var(--lab-brand-blue);
+    box-shadow: var(--lab-shadow-primary);
+}
+.stApp [data-testid="stTab"][aria-selected="true"] p,
+.stApp [data-testid="stTab"][aria-selected="true"] [data-testid="stIconMaterial"],
+.stApp [data-testid="stTab"][aria-selected="true"] [role="img"] { color: #FFFFFF; }
+.stApp [data-testid="stTab"][data-focus-visible] { outline: 3px solid var(--lab-focus); outline-offset: 2px; }
+.stApp [data-testid="stTabPanel"] { padding-top: 1rem; }
 
 .stApp [data-testid="stExpander"] details {
     background: var(--lab-surface);
@@ -1835,10 +1880,14 @@ body, .stApp {
     [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .lab-qa) { padding: 0.95rem 0.6rem 0.85rem; }
     [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .lab-qa) [data-testid="stPageLink-NavLink"] p { font-size: 0.92rem; }
     /* Pestañas: celdas iguales, dos por fila; una impar ocupa toda la fila. */
-    .stApp [data-baseweb="tab-list"] { flex-wrap: wrap; align-items: stretch; overflow: visible; }
-    .stApp button[data-baseweb="tab"] { flex: 1 1 calc(50% - 0.3rem); padding: 0.55rem 0.5rem; }
+    .stApp [data-baseweb="tab-list"],
+    .stApp [data-testid="stTabs"] [role="tablist"] { flex-wrap: wrap; align-items: stretch; overflow: visible; }
+    .stApp button[data-baseweb="tab"],
+    .stApp [data-testid="stTab"] { flex: 1 1 calc(50% - 0.3rem); padding: 0.55rem 0.5rem; }
     .stApp button[data-baseweb="tab"] p,
-    .stApp button[data-baseweb="tab"] [data-testid="stMarkdownContainer"] {
+    .stApp button[data-baseweb="tab"] [data-testid="stMarkdownContainer"],
+    .stApp [data-testid="stTab"] p,
+    .stApp [data-testid="stTab"] [data-testid="stMarkdownContainer"] {
         font-size: 0.86rem;
         white-space: normal;
         overflow: visible;

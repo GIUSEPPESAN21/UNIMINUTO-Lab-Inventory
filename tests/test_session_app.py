@@ -5,6 +5,8 @@ de HTML. Complementan las pruebas unitarias de core/auth.py."""
 
 from datetime import datetime, timedelta, timezone
 
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("streamlit.testing.v1")
@@ -13,11 +15,15 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 
 from core import auth  # noqa: E402
 
+# Ruta absoluta: desde Streamlit 1.65, AppTest.from_file resuelve las rutas
+# relativas desde el archivo de prueba (tests/), no desde la raiz del repo.
+APP_PATH = str(Path(__file__).resolve().parent.parent / "app.py")
+
 PASSWORD = "ClaveSegura123"
 
 
 def _start():
-    at = AppTest.from_file("app.py")
+    at = AppTest.from_file(APP_PATH)
     at.run()
     assert not at.exception
     return at, at.session_state["storage"]

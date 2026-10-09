@@ -254,6 +254,23 @@ def test_stylesheet_uses_the_uniminuto_palette_without_mixing_gold_into_blue():
     assert ".lab-ms" in CSS and "Material Symbols Rounded" in CSS
 
 
+def test_native_theme_uses_the_palette_in_light_and_dark_without_forcing_one():
+    import tomllib
+
+    config = tomllib.loads((Path(__file__).resolve().parent.parent / ".streamlit" / "config.toml").read_text("utf-8"))
+    theme = config["theme"]
+    # Sin "base": la app sigue la preferencia claro/oscuro del sistema.
+    assert "base" not in theme
+    assert theme["light"]["primaryColor"] == "#003698"
+    assert theme["dark"]["primaryColor"] and theme["dark"]["backgroundColor"] != theme["light"]["backgroundColor"]
+    assert theme["chartCategoricalColors"][:2] == ui.CHART_COLORS[:2]
+
+
+def test_stylesheet_styles_tabs_of_old_and_new_streamlit():
+    assert '[data-baseweb="tab"]' in CSS                  # Streamlit 1.50 (BaseWeb)
+    assert '[data-testid="stTab"]' in CSS and '[role="tablist"]' in CSS   # Streamlit 1.65 (react-aria)
+
+
 def test_stylesheet_has_visible_focus_and_no_scripts_or_foreign_hosts():
     assert ":focus-visible" in CSS
     lowered = CSS.lower()
