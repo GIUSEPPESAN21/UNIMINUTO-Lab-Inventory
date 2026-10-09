@@ -9,6 +9,9 @@
 
 [theme]
 font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+# Letra base un poco mas grande que la de fabrica (16 px): como todo el diseño
+# usa rem, textos, titulos, botones y menus crecen en la misma proporcion.
+baseFontSize = 17
 baseRadius = "0.75rem"
 buttonRadius = "0.75rem"
 showWidgetBorder = true

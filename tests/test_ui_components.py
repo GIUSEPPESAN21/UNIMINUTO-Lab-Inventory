@@ -264,6 +264,7 @@ def test_native_theme_uses_the_palette_in_light_and_dark_without_forcing_one():
     assert theme["light"]["primaryColor"] == "#003698"
     assert theme["dark"]["primaryColor"] and theme["dark"]["backgroundColor"] != theme["light"]["backgroundColor"]
     assert theme["chartCategoricalColors"][:2] == ui.CHART_COLORS[:2]
+    assert theme["baseFontSize"] == 17  # letra de toda la app un poco mas grande que 16 px
 
 
 def test_stylesheet_styles_tabs_of_old_and_new_streamlit():

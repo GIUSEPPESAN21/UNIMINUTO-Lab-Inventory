@@ -16,6 +16,11 @@
 - Las letras vuelven a dibujarse suavizadas y umbralizadas a 1 bit: el mismo grosor
   de las etiquetas anteriores.
 
+### Interfaz
+- Letra de toda la app un poco más grande: tamaño base de 17 px en lugar de 16
+  (`baseFontSize` en `.streamlit/config.toml`); todo el diseño usa rem y crece en
+  proporción.
+
 ## v1.13.0 — Interfaz simétrica con la paleta de UNIMINUTO
 
 ### Colores
