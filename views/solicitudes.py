@@ -5,9 +5,9 @@ from datetime import datetime, timedelta
 
 import streamlit as st
 
-from core import reservations, service_requests
-from core.ui import page_header
-from views.location_guide import render_location_guide
+from core import reservations, service_requests, traceability
+from core.ui import badge_html, esc, page_header, timeline
+from views.location_guide import render_location_guide, render_verifiable_route
 
 _TYPE_LABELS = {
     "Producto del inventario": service_requests.TYPE_PRODUCT,
@@ -27,12 +27,41 @@ def _local(value) -> str:
     return reservations.as_bogota(value).strftime("%d/%m/%Y %I:%M %p") if value else "Sin fecha"
 
 
-def _request_card(storage, row: dict, user: dict, allow_cancel=True) -> None:
+def _render_tracking(storage, row: dict, user: dict, events: list, loan: dict) -> None:
+    """Seguimiento chequeable de la solicitud y, si ya está aprobada, su ruta."""
+    actionable = (
+        row.get("request_type") == service_requests.TYPE_PRODUCT
+        and row.get("status") == service_requests.STATUS_APPROVED
+        and row.get("requester_id") == user.get("id")
+        and not traceability.first_event(events, traceability.EVENT_PICKED_UP)
+    )
+    with st.expander("🧭 Ruta y seguimiento" if actionable else "📍 Seguimiento", expanded=actionable):
+        timeline(traceability.request_timeline(row, events, loan))
+        if actionable:
+            st.markdown("**Ruta verificable hasta el producto**")
+            st.caption("Escanea (o escribe) el código de cada etiqueta en el camino; al llegar obtienes "
+                       "un comprobante que el profesor puede validar.")
+            render_verifiable_route(storage, row, user, key_prefix="req_route")
+
+
+def _request_card(storage, row: dict, user: dict, allow_cancel=True, events: list = None,
+                  loan: dict = None, show_tracking: bool = False) -> None:
     with st.container(border=True):
         c1, c2 = st.columns([3, 1])
         title = _request_title(row) or "Solicitud"
         quantity = f" · {row.get('quantity')} unidad(es)" if row.get("request_type") == "product" else ""
-        c1.markdown(f"**{title}**{quantity} · {_STATUS_LABELS.get(row.get('status'), row.get('status'))}")
+        # HTML escapado (y no markdown): un nombre de producto no puede inyectar enlaces ni imágenes.
+        c1.markdown(
+            f"<b>{esc(title)}</b>{esc(quantity)} · {esc(_STATUS_LABELS.get(row.get('status'), row.get('status')))}",
+            unsafe_allow_html=True,
+        )
+        if show_tracking:
+            stage, tone = traceability.request_stage(row, events, loan)
+            c1.markdown(
+                f"{badge_html(stage, tone)} <span class=\"lab-section__caption\">"
+                f"{esc(traceability.short_id(row.get('id')))}</span>",
+                unsafe_allow_html=True,
+            )
         c1.caption(
             f"Solicitante: {row.get('requester_name')} · Requerido: {_local(row.get('needed_at'))}"
         )
@@ -44,12 +73,16 @@ def _request_card(storage, row: dict, user: dict, allow_cancel=True) -> None:
             c1.caption("✉️ Administradores notificados")
         elif row.get("email_error"):
             c1.caption(f"⚠️ {row['email_error']}")
-        if allow_cancel and row.get("status") in ("pending", "approved"):
+        # Una solicitud ya retirada sigue su curso por el préstamo: no se ofrece cancelarla.
+        picked_up = bool(traceability.first_event(events, traceability.EVENT_PICKED_UP))
+        if allow_cancel and row.get("status") in ("pending", "approved") and not picked_up:
             if c2.button("Cancelar", key=f"cancel_req_{row['id']}", use_container_width=True):
                 ok, message = service_requests.cancel_request(storage, row["id"], user)
                 (st.success if ok else st.error)(message)
                 if ok:
                     st.rerun()
+        if show_tracking:
+            _render_tracking(storage, row, user, events or [], loan)
 
 
 def render():
@@ -122,6 +155,12 @@ def render():
                         st.info(message)
                     else:
                         st.warning(message)
+                    if request_type == service_requests.TYPE_PRODUCT:
+                        st.caption("🧭 Cuando la aprueben, abre **Mis solicitudes** o **Trazabilidad** para "
+                                   "recorrer la ruta verificable hasta el producto.")
+                    else:
+                        st.caption("📍 Sigue su avance (aprobada → en curso → entregado) en **Mis solicitudes** "
+                                   "o en **Trazabilidad**.")
                 except ValueError as exc:
                     st.error(str(exc))
 
@@ -129,8 +168,14 @@ def render():
         mine = storage.get_service_requests(user_id=user["id"])
         if not mine:
             st.info("Todavía no tienes solicitudes.")
+        # Eventos y préstamos propios: cada tarjeta muestra su línea de tiempo.
+        index = traceability.events_by_request(storage.get_trace_events(user_id=user["id"]))
+        loans = {loan["id"]: loan for loan in storage.get_all_loans() if loan.get("user_id") == user["id"]}
         for row in mine:
-            _request_card(storage, row, user)
+            events = index.get(row["id"], [])
+            pickup = traceability.first_event(events, traceability.EVENT_PICKED_UP)
+            loan = loans.get(pickup.get("loan_id")) if pickup else None
+            _request_card(storage, row, user, events=events, loan=loan, show_tracking=True)
 
     if reviewer:
         with tabs[2]:
@@ -163,4 +208,8 @@ def render():
             st.caption(
                 "Aprobar un producto no registra su salida: el retiro se confirma en Escanear para "
                 "mantener la cadena de custodia existente."
+            )
+            st.caption(
+                "🧭 En **Trazabilidad** validas el comprobante de ruta del estudiante, ves la cadena de "
+                "custodia de cada producto y marcas los servicios como en curso o entregados."
             )
