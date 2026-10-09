@@ -46,6 +46,9 @@ class FakeStorage:
         self.loans = {}
         self.reservations = {}
         self.service_requests = {}
+        self.settings = {}
+        self.trace_events = []
+        self.history = []
 
     # --- items ---
     def add_item(self, item_id, **kwargs):
@@ -238,6 +241,39 @@ class FakeStorage:
             return False
         row.update(email_notified=bool(sent), email_error=error)
         return True
+
+    # --- settings ---
+    def get_setting(self, key, default=None):
+        return self.settings.get(key, default)
+
+    def set_setting(self, key, value, actor_email=""):
+        self.settings[key] = value
+
+    # --- trazabilidad ---
+    def add_trace_event(self, event):
+        columns = (
+            "event_type", "request_id", "item_id", "loan_id", "user_id", "actor_id",
+            "actor_name", "actor_email", "receipt", "details", "created_at",
+        )
+        row = {column: "" for column in columns}
+        row.update({key: value for key, value in event.items() if key in columns})
+        row["id"] = uuid.uuid4().hex[:10]
+        row["created_at"] = row["created_at"] or datetime.now(timezone.utc).isoformat()
+        self.trace_events.append(row)
+        return dict(row)
+
+    def get_trace_events(self, request_id=None, item_id=None, user_id=None, event_type=None,
+                         loan_id=None, receipt=None):
+        filters = {"request_id": request_id, "item_id": item_id, "user_id": user_id,
+                   "event_type": event_type, "loan_id": loan_id, "receipt": receipt}
+        rows = [
+            dict(row) for row in self.trace_events
+            if all(value is None or row.get(key) == value for key, value in filters.items())
+        ]
+        return sorted(rows, key=lambda row: row.get("created_at") or "")
+
+    def get_item_history(self, item_id):
+        return [dict(row) for row in self.history if row.get("item_id") == item_id]
 
 
 @pytest.fixture

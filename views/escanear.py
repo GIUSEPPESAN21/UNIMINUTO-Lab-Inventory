@@ -8,33 +8,58 @@ from datetime import datetime, timedelta
 
 import streamlit as st
 
-from core import barcode, labels, loans as loans_core, notifications
+from core import barcode, labels, loans as loans_core, notifications, traceability
 from core.labels import ITEM_TYPE_BY_CHOICE, ITEM_TYPE_CHOICES, ITEM_TYPE_HELP, ITEM_TYPE_NAMES
 from core.ui import page_header
 from views.code_input import render_code_input
 from views.location_guide import render_location_guide
 
 
+def _pickup_label(request: dict, routes: dict) -> str:
+    route = routes.get(request["id"])
+    proof = (f"ruta verificada · comprobante {traceability.format_receipt(route.get('receipt'))}"
+             if route else "sin ruta verificada")
+    return f"Solicitud {traceability.short_id(request['id'])} · {request.get('quantity') or 1} u. · {proof}"
+
+
+def _render_pickup_notice(pickups: list, routes: dict) -> None:
+    """Aviso de que quien escanea tiene una solicitud aprobada de este producto."""
+    verified = [request for request in pickups if routes.get(request["id"])]
+    if verified:
+        st.success(
+            f"🧭 Tienes {len(pickups)} solicitud(es) aprobada(s) de este producto; "
+            f"{len(verified)} con ruta verificada. Al confirmar la salida quedará enlazada."
+        )
+    else:
+        st.info(
+            f"🧭 Tienes {len(pickups)} solicitud(es) aprobada(s) de este producto. Al confirmar la salida "
+            "quedará enlazada; si quieres, primero recorre la ruta verificable en Trazabilidad."
+        )
+
+
 def _render_label_download(item: dict):
-    label_png = labels.generate_item_label_png_bytes(item)
+    spec = labels.load_label_spec(st.session_state.storage)
+    label_pdf, label_png = labels.item_label_files(item, spec)
     if not label_png:
         return
-    label_pdf = labels.generate_item_label_pdf_bytes(item)
     pdf_col, png_col = st.columns(2)
-    if label_pdf:
-        pdf_col.download_button(
-            "🏷️ PDF 50×25 mm", data=label_pdf,
-            file_name=f"etiqueta_{item['id']}.pdf", mime="application/pdf",
-            help="Formato recomendado para imprimir sin reducción",
-            key=f"label_scan_pdf_{item['id']}", type="primary", use_container_width=True,
-        )
-    png_col.download_button(
-        "PNG · respaldo", data=label_png,
-        file_name=f"etiqueta_{item['id']}.png", mime="image/png",
-        help="Imagen a 203 dpi", key=f"label_scan_png_{item['id']}",
-        use_container_width=True,
+    pdf_col.download_button(
+        f"🏷️ PDF {spec.size_text}", data=label_pdf,
+        file_name=f"etiqueta_{item['id']}.pdf", mime="application/pdf",
+        help="Formato recomendado: mide exactamente lo mismo que la etiqueta",
+        key=f"label_scan_pdf_{item['id']}", type="primary", use_container_width=True,
     )
-    st.caption("Para la SAT TT 460: papel 50×25 mm, horizontal, escala 100 % y sin márgenes.")
+    png_col.download_button(
+        "PNG · solo archivo", data=label_png,
+        file_name=f"etiqueta_{item['id']}.png", mime="image/png",
+        help="Para guardar o integrar. No lo imprimas desde la app Fotos: la recorta y la "
+             "agranda. Para imprimir usa el PDF.",
+        key=f"label_scan_png_{item['id']}", use_container_width=True,
+    )
+    st.caption(
+        f"Etiqueta de {spec.describe()}: abre el PDF con Edge o Chrome (Ctrl + P), papel USER de "
+        f"{spec.size_text}, escala Predeterminado, sin márgenes."
+    )
 
 def _render_item_actions(item: dict, parent: dict = None):
     storage = st.session_state.storage
@@ -55,11 +80,27 @@ def _render_item_actions(item: dict, parent: dict = None):
         st.caption(item["description"])
 
     st.markdown("##### 📤 Dar salida (checkout)")
+    pickups = traceability.pending_pickups(storage, user, item["id"])
+    routes = {request["id"]: traceability.route_event_for(storage, request["id"]) for request in pickups}
+    if pickups:
+        _render_pickup_notice(pickups, routes)
     if item["available"] <= 0:
         st.warning("No hay unidades disponibles para dar salida en este momento.")
     else:
         with st.form(f"checkout_form_{item['id']}"):
-            qty = st.number_input("Cantidad", min_value=1, max_value=int(item["available"]), value=1, step=1)
+            linked_request = None
+            default_qty = 1
+            if pickups:
+                options = {request["id"]: request for request in pickups}
+                choice = st.selectbox(
+                    "Solicitud aprobada que retiras", [*options, ""],
+                    format_func=lambda rid: _pickup_label(options[rid], routes) if rid else "No vincular con una solicitud",
+                    help="La salida queda enlazada a la solicitud en Trazabilidad (evento «retirado»).",
+                )
+                linked_request = options.get(choice)
+                default_qty = int(pickups[0].get("quantity") or 1)
+            default_qty = max(1, min(default_qty, int(item["available"])))
+            qty = st.number_input("Cantidad", min_value=1, max_value=int(item["available"]), value=default_qty, step=1)
             with_date = st.checkbox("Definir fecha esperada de devolucion")
             expected_date = None
             if with_date:
@@ -74,6 +115,10 @@ def _render_item_actions(item: dict, parent: dict = None):
                 ok, msg, loan = loans_core.checkout(storage, item["id"], int(qty), user, expected_dt, notes)
                 if ok:
                     st.success(msg)
+                    if linked_request:
+                        # Se muestra tras el rerun (ver render): la salida ya quedó registrada.
+                        linked, link_msg, _ = traceability.record_pickup(storage, linked_request, loan, user)
+                        st.session_state.scan_trace_notice = (linked, f"{msg} {link_msg}")
                     notifications.send_whatsapp_alert_async(f"📤 Salida: {msg}")
                     st.session_state.scan_result = barcode.scan(storage, item["id"])
                     st.rerun()
@@ -204,6 +249,11 @@ def render():
 
     result = st.session_state.get("scan_result")
     st.markdown("---")
+
+    notice = st.session_state.pop("scan_trace_notice", None)
+    if notice:
+        linked, message = notice
+        (st.success if linked else st.warning)(f"🧭 {message}")
 
     if not result:
         st.caption("Esperando escaneo...")

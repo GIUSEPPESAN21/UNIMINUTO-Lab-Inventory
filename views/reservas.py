@@ -6,16 +6,18 @@ from datetime import datetime, timedelta
 import streamlit as st
 
 from core import reservations
-from core.ui import page_header
+from core.ui import card, card_header, empty_state, page_header, section_title, stat_cards
 
 _SCOPE_LABELS = {
     "Actividad específica": reservations.SCOPE_ACTIVITY,
     "Laboratorio completo": reservations.SCOPE_FULL_LAB,
 }
-_STATUS_LABELS = {
-    "pending": "🟡 Pendiente", "approved": "🟢 Aprobada",
-    "rejected": "🔴 Rechazada", "cancelled": "⚪ Cancelada",
+# Presentacion de cada estado: (texto, tono de la pastilla, icono).
+_STATUS_BADGES = {
+    "pending": ("Pendiente", "warning", "⏳"), "approved": ("Aprobada", "success", "✅"),
+    "rejected": ("Rechazada", "danger", "⛔"), "cancelled": ("Cancelada", "neutral", "⚪"),
 }
+_STATUS_CARD_TONE = {"pending": "warning", "approved": "success", "rejected": "danger"}
 
 
 def _local(value) -> str:
@@ -24,19 +26,28 @@ def _local(value) -> str:
     return reservations.as_bogota(value).strftime("%d/%m/%Y %I:%M %p")
 
 
-def _reservation_card(storage, row: dict, user: dict, allow_cancel=True) -> None:
-    with st.container(border=True):
-        c1, c2 = st.columns([3, 1])
-        c1.markdown(f"**{row.get('activity')}** · {_STATUS_LABELS.get(row.get('status'), row.get('status'))}")
-        c1.caption(
-            f"{_local(row.get('start_at'))} → {_local(row.get('end_at'))} · "
-            f"{row.get('attendees')} asistente(s) · {row.get('requester_name')}"
+def _status_badge(status) -> dict:
+    text, tone, icon = _STATUS_BADGES.get(status, (status or "Sin estado", "neutral", None))
+    return {"text": text, "tone": tone, "icon": icon}
+
+
+def _reservation_card(storage, row: dict, user: dict, allow_cancel=True, key_prefix: str = "res") -> None:
+    status = row.get("status")
+    with card(f"{key_prefix}_{row['id']}", tone=_STATUS_CARD_TONE.get(status)):
+        scope_icon = "🏫" if row.get("scope_type") == reservations.SCOPE_FULL_LAB else "🧪"
+        card_header(
+            row.get("activity"),
+            subtitle=f"{_local(row.get('start_at'))} → {_local(row.get('end_at'))}",
+            icon=scope_icon,
+            badges=[_status_badge(status)],
         )
+        c1, c2 = st.columns([3, 1], vertical_alignment="center")
+        c1.caption(f"👥 {row.get('attendees')} asistente(s) · Solicita: {row.get('requester_name')}")
         c1.write(row.get("purpose") or "Sin propósito")
         if row.get("review_notes"):
             c1.caption(f"Respuesta: {row['review_notes']}")
-        if allow_cancel and row.get("status") in ("pending", "approved"):
-            if c2.button("Cancelar", key=f"cancel_res_{row['id']}", use_container_width=True):
+        if allow_cancel and status in ("pending", "approved"):
+            if c2.button("Cancelar", key=f"cancel_{key_prefix}_{row['id']}", use_container_width=True):
                 ok, message = reservations.cancel_reservation(storage, row["id"], user)
                 (st.success if ok else st.error)(message)
                 if ok:
@@ -96,20 +107,25 @@ def render():
     with tabs[1]:
         mine = storage.get_reservations(user_id=user["id"])
         if not mine:
-            st.info("Todavía no tienes reservas.")
+            empty_state("Todavía no tienes reservas.", "Solicita una en la pestaña Nueva reserva.", icon="🗓️")
         for row in mine:
-            _reservation_card(storage, row, user)
+            _reservation_card(storage, row, user, key_prefix="mine")
 
     if reviewer:
         with tabs[2]:
             pending = storage.get_reservations(status=reservations.STATUS_PENDING)
             approved = storage.get_reservations(status=reservations.STATUS_APPROVED)
-            st.metric("Pendientes", len(pending))
+            stat_cards([
+                {"label": "Pendientes", "value": len(pending), "icon": "⏳",
+                 "tone": "warning" if pending else "success"},
+                {"label": "Aprobadas", "value": len(approved), "icon": "✅", "tone": "info"},
+            ])
+            section_title("Por revisar", icon="📝")
             if not pending:
-                st.success("No hay reservas pendientes.")
+                empty_state("No hay reservas pendientes.", icon="✅")
             for row in pending:
                 with st.expander(
-                    f"{row.get('activity')} · {_local(row.get('start_at'))} · {row.get('requester_name')}",
+                    f"⏳ {row.get('activity')} · {_local(row.get('start_at'))} · {row.get('requester_name')}",
                     expanded=False,
                 ):
                     st.write(row.get("purpose"))
@@ -120,8 +136,8 @@ def render():
                     with st.form(f"review_res_{row['id']}"):
                         notes = st.text_input("Observación para el solicitante")
                         c1, c2 = st.columns(2)
-                        approve = c1.form_submit_button("Aprobar", type="primary", use_container_width=True)
-                        reject = c2.form_submit_button("Rechazar", use_container_width=True)
+                        approve = c1.form_submit_button("✅ Aprobar", type="primary", use_container_width=True)
+                        reject = c2.form_submit_button("⛔ Rechazar", use_container_width=True)
                         if approve or reject:
                             decision = reservations.STATUS_APPROVED if approve else reservations.STATUS_REJECTED
                             ok, message = reservations.review_reservation(
@@ -131,8 +147,8 @@ def render():
                             if ok:
                                 st.rerun()
 
-            st.markdown("### Próximas reservas aprobadas")
+            section_title("Próximas reservas aprobadas", icon="📅")
             if not approved:
                 st.caption("No hay reservas aprobadas.")
             for row in approved:
-                _reservation_card(storage, row, user, allow_cancel=True)
+                _reservation_card(storage, row, user, allow_cancel=True, key_prefix="approved")

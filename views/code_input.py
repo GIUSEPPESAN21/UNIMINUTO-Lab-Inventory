@@ -182,11 +182,15 @@ def render_code_input(storage, item_type: str, key_prefix: str, initial_code: st
         st.warning(f"El código ya pertenece a: {existing.get('name') or 'un item existente'}.")
 
     if st.checkbox("Mostrar vista previa de la etiqueta", key=f"{key_prefix}_preview"):
+        spec = labels.load_label_spec(storage) if storage else labels.LabelSpec()
         try:
             data = labels.generate_label_png_bytes(
-                code, description="Nombre del producto", item_type=item_type,
+                code, description="Nombre del producto", item_type=item_type, spec=spec,
             )
-            st.image(data, caption=f"Vista previa a resolución nativa — {code}", width=labels.LABEL_CANVAS_SIZE[0])
+            st.image(
+                data, caption=f"Vista previa a {spec.describe()} — {code}",
+                width=min(spec.canvas_size[0], 640),
+            )
             st.caption("La banda mostrará el nombre real. La ruta se deriva del código; categoría y ubicación se agregan al descargar.")
         except ValueError as exc:
             st.error(f"No se pudo generar la etiqueta: {exc}")

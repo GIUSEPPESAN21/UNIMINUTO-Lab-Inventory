@@ -1,5 +1,124 @@
 # Changelog
 
+## v1.12.0 — Interfaz propia, productos desde la descripción y trazabilidad
+
+### Nuevo
+- **🧭 Trazabilidad:** ruta de retiro verificable para estudiantes (cada etiqueta del
+  camino se confirma escaneándola; si es la equivocada, la app indica dónde está y
+  hacia dónde ir), comprobante corto al completarla y línea de tiempo de cada
+  solicitud. Profesor y maestro: buscador, validación del comprobante, cadena de
+  custodia por producto y avance de servicios (en curso / entregado). Nueva hoja
+  `trace_events`; recorrer la ruta no escribe, se guarda un solo evento al final.
+- **✨ Generar productos desde la descripción** de un Contenedor Principal: propuesta
+  editable de Contenedores de Característica con código consecutivo, ubicación
+  heredada y avisos de ambigüedad; alta masiva con una sola escritura
+  (`save_items_bulk`). Catálogo agrupado por contenedor con tarjetas y filtros de
+  stock.
+- **🩺 Salud del inventario** en Reportes: auditoría de códigos, jerarquía,
+  ubicaciones, errores de digitación, categorías, medidas imposibles y contenido sin
+  registrar, con correcciones seguras confirmadas antes de escribir.
+
+### Interfaz
+- Sistema de diseño propio: paleta institucional, botones con degradado y
+  animación, pestañas tipo pastilla, tarjetas, indicadores, líneas de tiempo y modo
+  oscuro coherente; adaptado a celular y respetuoso de «reducir movimiento».
+- Barra lateral con marca, página activa resaltada y tarjeta de usuario; inicio con
+  saludo, indicadores y accesos rápidos según el rol; nueva pantalla de acceso.
+- Reportes, Préstamos, Reservas, Usuarios, Perfil y Acerca de usan los mismos
+  componentes; gráficas sin fondo propio para el modo oscuro.
+
+### Corregido
+- Reservas fallaba con «multiple elements with the same key» cuando un revisor tenía
+  una reserva propia aprobada.
+- Botones primarios con ayuda emergente y botones de formulario salían en el rojo
+  por defecto de Streamlit.
+
+### Calidad
+- De 562 a 863 pruebas (cobertura 89 %), en verde con Python 3.11, 3.12 y 3.13.
+
+## v1.11.0 — Etiquetas legibles, a tamaño real y sin letras apretadas
+
+### Corregido
+- **Letras diminutas y pegadas en la etiqueta:** había textos de 3,5–4,3 pt, 1 punto
+  (0,12 mm) entre líneas y el aviso siempre salía truncado («NO RETIRAR SIN P…»). La
+  causa era un diseño fijo de 384 × 192 puntos que forzaba barras de 9 mm en 25 mm de
+  alto y encogía todo lo demás. Ahora ningún texto baja de ~5 pt (nombre ≥ 7 pt), hay
+  espacio visible entre todos los bloques y las letras llevan espaciado proporcional.
+- **Etiqueta que se imprimía pequeña:** el PDF medía siempre 50 × 25 mm, así que en un
+  rollo o papel de driver más grande (la SAT TT460 acepta etiquetas de 20 a 112 mm de
+  ancho) salía reducida en una esquina. Ahora el tamaño se configura y el PDF mide
+  exactamente eso, ocupando toda la página (antes quedaba ~1 mm sin usar).
+- **Barras y letras remuestreadas al imprimir el PDF:** el raster iba centrado en la
+  página, a una fracción de punto de los puntos del cabezal. Chrome y Edge, con la
+  escala Predeterminado, reescalaban la etiqueta de 50 × 25 mm y perdían una fila de
+  puntos, y los visores basados en poppler deformaban las barras en todos los
+  tamaños. Ahora el raster se ancla arriba a la izquierda, como alinea Chrome al
+  imprimir, y sus bordes caen apenas dentro de puntos enteros, de modo que todos esos
+  visores lo copian punto por punto.
+- **Etiqueta recortada, ampliada y borrosa al imprimirla desde la app Fotos de Windows:**
+  el PNG se abría en Fotos, cuyo cuadro de impresión usa el papel «USER (50,8 × 50,8 mm)»
+  del driver y *Rellenar página*: recortaba el centro de la imagen, la agrandaba ×2,1 y
+  las barras de 2 puntos salían de 4 y de 5. Ahora el botón dice «PNG · solo archivo»
+  (con la advertencia), y la pestaña indica el **papel que debe definirse en el driver**
+  (en mm y en pulgadas) y trae una guía paso a paso para Edge/Chrome y una tabla de
+  síntomas (recortada, pequeña, girada, borrosa, marco cortado, desfase).
+- Las métricas de la pestaña usan coma decimal, y los botones deshabilitados se ven
+  deshabilitados en toda la app (antes un botón primario deshabilitado seguía azul).
+
+### Nuevo
+- **Inventario → 🖨️ Etiquetas** (profesor y maestro):
+  - Tamaño del rollo: 50 × 25, 50 × 30, 60 × 40, 100 × 50, 100 × 75, 100 × 100,
+    100 × 150 mm o personalizado (20–104 × 15–160 mm, así caben 4 × 3 y 4 × 6 pulgadas).
+  - Resolución: 203 dpi (SAT TT460) o 300 dpi.
+  - Contenido opcional: logo y laboratorio, aviso, ruta, ubicación, tipo y categoría.
+  - Vista previa en vivo con cualquier ítem del inventario, métricas de legibilidad
+    y aviso de lo que no cabe.
+  - Guía de impresión paso a paso.
+  - La configuración se guarda en la nueva hoja `settings` de la base y la usan
+    Inventario, Escanear y la vista previa del registro.
+- **Hoja de prueba de impresión:** PDF del tamaño configurado con un marco a 1 mm del
+  borde, una regla milimetrada y tres rejillas de barras (0,25, 0,35 y 0,5 mm, los
+  módulos del Code 128). Medirla indica si el visor reduce la página (regla más
+  corta), si el rollo es más grande (la prueba ocupa solo una parte), si el papel del
+  driver no coincide (marco cortado) o si la imagen se remuestrea (rejillas desiguales
+  o grises).
+- **PDF listo para imprimir a tamaño real:** `/PrintScaling /None`,
+  `/PickTrayByPDFSize`, versión 1.7 y título con el tamaño.
+
+### Diseño adaptable de la etiqueta
+- Composición por prioridades: si todo no cabe a tamaño legible, se omite lo menos
+  importante (categoría → tipo → aviso → ubicación…) en vez de apretar. La marca
+  institucional, el nombre, el Code 128 y el código siempre se conservan.
+- En etiquetas pequeñas la ruta sube junto al logo y ahorra una fila; el aviso usa su
+  versión corta antes que recortarse; un nombre largo pasa a dos líneas cuando hay
+  espacio. El código y la ruta nunca se recortan.
+- En etiquetas grandes el espacio extra se usa para mostrar más datos y barras más
+  altas (hasta el 36 % del alto, máximo 18 mm). Antes solo crecía el tamaño de letra.
+- Rasterizado monocromo con *hinting*: trazos uniformes y letras separadas, sin el
+  empaste que producía suavizar y luego umbralizar a 1 bit.
+- Barras con módulo entero de 0,25–0,5 mm, zona de silencio de 10 módulos cuando cabe
+  y un mínimo de 7 mm de alto (antes 9 mm fijos), por encima de la recomendación
+  general para Code 128.
+- Separador «|» entre datos: la ubicación libre ya puede contener «·».
+- Etiquetas cacheadas por ítem y tamaño: unos 15 ms por etiqueta y el catálogo no las
+  regenera en cada recarga.
+
+### Calidad
+- De 332 a 562 pruebas (cobertura 70 % → 75 %; `labels.py` 94 %), en verde con
+  Python 3.11, 3.12 y 3.13:
+  - Decodificación exacta del Code 128 desde los píxeles en todos los tamaños, a 203 y
+    a 300 dpi.
+  - Bloques que nunca se tocan, con filas en blanco comprobadas en la imagen.
+  - Piso de legibilidad, textos institucionales completos y omisión priorizada.
+  - PDF a tamaño exacto y regla de calibración que mide lo que dice (±0,4 mm).
+  - Impresión punto por punto con el motor PDF de Chrome y Edge (PDFium), siguiendo
+    su ruta de impresión en Windows, y con poppler; además, un barrido de todos los
+    tamaños permitidos contra el redondeo de cada visor (`pypdfium2` se suma a las
+    dependencias de desarrollo).
+  - Persistencia de la configuración, migración de bases sin la hoja `settings` y
+    la pestaña Etiquetas con la app real.
+- Las protecciones clave se verificaron rompiéndolas a propósito (mutación).
+
 ## v1.10.0 — Eliminación definitiva, integridad de datos y seguridad
 
 ### Corregido

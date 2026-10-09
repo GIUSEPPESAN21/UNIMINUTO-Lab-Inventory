@@ -4,16 +4,32 @@
 import streamlit as st
 
 from core import auth, permissions
-from core.ui import guard_role, page_header
+from core.ui import (
+    ROLE_LABELS, card, card_header_html, empty_state, guard_role, initials, page_header, section_title,
+    stat_cards,
+)
 
 ROLES = ["estudiante", "profesor", "maestro"]
+_ROLE_TONES = {"estudiante": "success", "profesor": "info", "maestro": "warning"}
 
 
 def _user_card(storage, user: dict, current_user: dict) -> None:
-    with st.container(border=True):
-        c1, c2, c3, c4 = st.columns([3, 2, 2, 2])
-        c1.markdown(f"**{user.get('full_name')}**")
-        c1.caption(f"{user.get('institutional_email')} · ID: {user.get('student_id') or 'N/A'}")
+    is_active = user.get("status") == "active"
+    with card(f"user_{user['id']}", tone=None if is_active else "danger"):
+        role = user.get("role", "estudiante")
+        badges = [{"text": ROLE_LABELS.get(role, role), "tone": _ROLE_TONES.get(role, "neutral")}]
+        badges.append({"text": "Activo", "tone": "success", "icon": "●"} if is_active
+                      else {"text": "Deshabilitado", "tone": "danger", "icon": "●"})
+        c1, c2, c3, c4 = st.columns([3, 2, 2, 2], vertical_alignment="center")
+        c1.markdown(
+            card_header_html(
+                user.get("full_name"),
+                subtitle=f"{user.get('institutional_email')} · ID: {user.get('student_id') or 'N/A'}",
+                icon=initials(user.get("full_name")),
+                badges=badges,
+            ),
+            unsafe_allow_html=True,
+        )
         c2.caption(f"Programa: {user.get('program_or_department') or 'N/A'}")
 
         new_role = c3.selectbox(
@@ -28,7 +44,6 @@ def _user_card(storage, user: dict, current_user: dict) -> None:
                 st.success(f"Rol de {user['full_name']} actualizado a {new_role}.")
                 st.rerun()
 
-        is_active = user.get("status") == "active"
         toggle_label = "🚫 Deshabilitar" if is_active else "✅ Habilitar"
         if user["id"] != current_user["id"] and c4.button(
             toggle_label, key=f"toggle_{user['id']}", use_container_width=True
@@ -85,7 +100,14 @@ def render():
             "El registro solo otorga profesor si el correo ya está en la lista blanca."
         )
         users = storage.get_all_users()
-        search = st.text_input("Buscar por nombre, correo o ID")
+        stat_cards([
+            {"label": "Usuarios", "value": len(users), "icon": "👥", "tone": "info"},
+            {"label": "Profesores", "value": len([u for u in users if u.get("role") == "profesor"]),
+             "icon": "👨‍🏫", "tone": "neutral"},
+            {"label": "Deshabilitados", "value": len([u for u in users if u.get("status") != "active"]),
+             "icon": "🚫", "tone": "neutral"},
+        ])
+        search = st.text_input("🔎 Buscar por nombre, correo o ID")
         if search:
             value = search.lower()
             users = [
@@ -94,7 +116,7 @@ def render():
                 or value in (user.get("institutional_email") or "").lower()
                 or value in (user.get("student_id") or "").lower()
             ]
-        st.caption(f"{len(users)} usuario(s)")
+        section_title(f"{len(users)} usuario(s)", icon="📇")
         for user in users:
             _user_card(storage, user, current_user)
 
@@ -113,13 +135,14 @@ def render():
                     st.success(f"'{email}' agregado a la lista blanca.")
                     st.rerun()
 
-        st.markdown("---")
         emails = storage.get_whitelist()
+        section_title("Correos autorizados", icon="✅", caption=f"{len(emails)} correo(s) en la lista")
         if not emails:
-            st.info("La lista blanca está vacía.")
+            empty_state("La lista blanca está vacía.", icon="📭")
         for email in emails:
-            c1, c2 = st.columns([4, 1])
-            c1.write(email)
-            if c2.button("Quitar", key=f"remove_wl_{email}"):
-                storage.remove_from_whitelist(email)
-                st.rerun()
+            with card(f"wl_{email}"):
+                c1, c2 = st.columns([4, 1], vertical_alignment="center")
+                c1.markdown(card_header_html(email, icon="✉️"), unsafe_allow_html=True)
+                if c2.button("Quitar", key=f"remove_wl_{email}", use_container_width=True):
+                    storage.remove_from_whitelist(email)
+                    st.rerun()

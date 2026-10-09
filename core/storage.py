@@ -60,6 +60,17 @@ SHEET_COLUMNS = {
         "id", "item_id", "timestamp", "type", "quantity_change",
         "actor_user_id", "details",
     ],
+    # Configuracion del laboratorio (clave/valor), p. ej. el tamaño de etiqueta.
+    "settings": [
+        "key", "value", "updated_by", "updated_at",
+    ],
+    # Trazabilidad (core/traceability.py): ruta verificada, retiro, validacion
+    # de comprobante y avance de servicios. `user_id` es el dueño de la
+    # solicitud; `actor_*`, quien registro el evento; `details`, JSON.
+    "trace_events": [
+        "id", "event_type", "request_id", "item_id", "loan_id", "user_id",
+        "actor_id", "actor_name", "actor_email", "receipt", "details", "created_at",
+    ],
 }
 
 _cached_dfs = None
@@ -1450,3 +1461,172 @@ class LabStorage:
             dfs["service_requests"] = df
             _write_and_sync(dfs)
             return True
+
+    # ------------------------------------------------------------------
+    # CONFIGURACION DEL LABORATORIO (clave / valor)
+    # ------------------------------------------------------------------
+
+    @firestore_retry
+    def get_setting(self, key: str, default=None):
+        df = _read_excel("settings")["settings"]
+        rows = df[df["key"] == key]
+        if rows.empty:
+            return default
+        value = rows.iloc[0]["value"]
+        return default if value in (None, "") else value
+
+    def set_setting(self, key: str, value: str, actor_email: str = "") -> None:
+        """Crea o reemplaza un valor de configuracion y lo publica en el momento."""
+        with _db_write():
+            dfs = _read_excel()
+            df = dfs["settings"]
+            row = {"key": key, "value": value, "updated_by": actor_email, "updated_at": _now_str()}
+            idx = df.index[df["key"] == key].tolist()
+            if idx:
+                for column, cell in row.items():
+                    df.at[idx[0], column] = cell
+            else:
+                df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+            dfs["settings"] = df
+            _write_and_sync(dfs)
+
+    # ------------------------------------------------------------------
+    # TRAZABILIDAD (eventos; ver core/traceability.py)
+    # ------------------------------------------------------------------
+
+    def add_trace_event(self, event: dict) -> dict:
+        """Agrega UN evento de trazabilidad (una escritura = un commit). Solo se
+        guardan las columnas conocidas; `details` debe venir ya como texto JSON."""
+        columns = SHEET_COLUMNS["trace_events"]
+        row = {column: "" for column in columns}
+        row.update({key: "" if value is None else str(value) for key, value in event.items() if key in columns})
+        row["id"] = _new_id()
+        row["created_at"] = row["created_at"] or _now_str()
+        with _db_write():
+            dfs = _read_excel()
+            dfs["trace_events"] = pd.concat([dfs["trace_events"], pd.DataFrame([row])], ignore_index=True)
+            _write_and_sync(dfs)
+        return dict(row)
+
+    @firestore_retry
+    def get_trace_events(self, request_id: str = None, item_id: str = None, user_id: str = None,
+                         event_type: str = None, loan_id: str = None, receipt: str = None) -> list:
+        """Eventos que cumplen TODOS los filtros dados, del más antiguo al más reciente."""
+        df = _read_excel("trace_events")["trace_events"]
+        filters = {"request_id": request_id, "item_id": item_id, "user_id": user_id,
+                   "event_type": event_type, "loan_id": loan_id, "receipt": receipt}
+        for column, value in filters.items():
+            if value is not None:
+                df = df[df[column] == value]
+        rows = [_clean_nan(row.to_dict()) for _, row in df.iterrows()]
+        return sorted(rows, key=lambda row: row.get("created_at") or "")
+
+    # ------------------------------------------------------------------
+    # ALTA DE VARIOS ITEMS NUEVOS EN UNA SOLA ESCRITURA
+    # ------------------------------------------------------------------
+
+    @firestore_retry
+    def save_items_bulk(self, items: list, actor_email: str = "", details: str = None) -> list:
+        """Crea varios items NUEVOS con UNA sola lectura + escritura + sincronizacion
+        (un solo commit en GitHub en vez de uno por producto).
+
+        Todo o nada: cada fila se valida con las reglas de `save_item` (formato del
+        codigo, tipo, Contenedor Principal existente, codigo libre) mas nombre
+        obligatorio, contenedor activo, codigo no repetido en la tanda y cantidades
+        enteras no negativas. Si alguna falla se lanza ValueError con TODOS los
+        errores y no se escribe nada. Como en `save_item`, un codigo dado de baja se
+        reutiliza (se borra su rastro anterior). Un item puede apuntar a un
+        Contenedor Principal creado antes en la misma tanda. Cada alta queda en el
+        historial ("Alta", con el `details` de la fila o el general). Devuelve los
+        codigos creados, en orden."""
+        items = list(items or [])
+        if not items:
+            return []
+
+        def whole(value, field):
+            raw = "" if value is None else str(value).strip()
+            if raw.lower() in ("", "nan", "none"):
+                return 0
+            try:
+                number = float(raw)
+            except ValueError:
+                raise ValueError(f"{field} debe ser un numero entero.") from None
+            if not number.is_integer() or number < 0:
+                raise ValueError(f"{field} debe ser un numero entero mayor o igual a 0.")
+            return int(number)
+
+        with _db_write():
+            dfs = _read_excel()
+            df_items = dfs["items"]
+            rows, errors, reused, batch_types = [], [], [], {}
+            for position, raw in enumerate(items, start=1):
+                custom_id = str(raw.get("id", "") or "").strip()
+                name = str(raw.get("name", "") or "").strip()
+                label = f"Fila {position} ({custom_id or 'sin codigo'})"
+                if not custom_id or not name:
+                    errors.append(f"{label}: codigo y nombre son obligatorios.")
+                    continue
+                if custom_id in batch_types:
+                    errors.append(f"{label}: el codigo esta repetido en la misma tanda.")
+                    continue
+                existing = df_items[df_items["id"] == custom_id]
+                if not existing.empty and existing.iloc[0]["status"] != "retired":
+                    errors.append(f"{label}: Ya existe un item con ese codigo.")
+                    continue
+
+                item_type = str(raw.get("item_type", "standalone") or "standalone").strip()
+                parent_id = str(raw.get("parent_id", "") or "").strip()
+                try:
+                    quantity = whole(raw.get("quantity", 0), "Cantidad")
+                    min_alert = whole(raw.get("min_stock_alert", 0), "Umbral de alerta")
+                    lookup = df_items
+                    if parent_id in batch_types:
+                        # Contenedor creado antes en esta misma tanda (va primero en la busqueda).
+                        lookup = pd.concat([pd.DataFrame(rows), df_items], ignore_index=True)
+                    _validate_item_data({"item_type": item_type, "parent_id": parent_id},
+                                        lookup, custom_id, is_new=True)
+                    if parent_id and parent_id not in batch_types:
+                        parent_rows = df_items[df_items["id"] == parent_id]
+                        if parent_rows.iloc[0]["status"] == "retired":
+                            raise ValueError(f"El Contenedor Principal '{parent_id}' esta dado de baja.")
+                except ValueError as exc:
+                    errors.append(f"{label}: {exc}")
+                    continue
+
+                batch_types[custom_id] = item_type
+                if not existing.empty:
+                    reused.append(custom_id)
+                rows.append({
+                    "id": custom_id,
+                    "name": name,
+                    "category": str(raw.get("category", "") or ""),
+                    "description": str(raw.get("description", "") or ""),
+                    "item_type": item_type,
+                    "parent_id": parent_id,
+                    "unit": str(raw.get("unit", "") or "").strip() or "unidad",
+                    "quantity": quantity,
+                    "location": str(raw.get("location", "") or ""),
+                    "min_stock_alert": min_alert,
+                    "status": "active",
+                    "created_by": raw.get("created_by") or actor_email,
+                    "updated_at": _now_str(),
+                })
+
+            if errors:
+                raise ValueError("No se creo ningun item. " + " ".join(errors))
+
+            for custom_id in reused:
+                # Codigo liberado por una baja anterior: se reutiliza como item nuevo.
+                _purge_item_records(dfs, _cascade_ids(dfs["items"], custom_id), actor_email)
+
+            now = _now_str()  # sin errores, `rows` corresponde 1 a 1 con `items`
+            history = [{
+                "id": _new_id(), "item_id": row["id"], "timestamp": now, "type": "Alta",
+                "quantity_change": row["quantity"], "actor_user_id": actor_email,
+                "details": raw.get("details") or details or "Item creado en el sistema.",
+            } for row, raw in zip(rows, items)]
+            dfs["items"] = pd.concat([dfs["items"], pd.DataFrame(rows)], ignore_index=True)
+            dfs["item_history"] = pd.concat([dfs["item_history"], pd.DataFrame(history)], ignore_index=True)
+            _write_and_sync(dfs)
+            logger.info(f"{len(rows)} item(s) creados en una sola escritura por {actor_email or 'sistema'}.")
+        return [row["id"] for row in rows]
