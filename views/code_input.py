@@ -10,9 +10,9 @@ import streamlit as st
 
 from core import barcode, labels
 
-MODE_GENERATED = "✨ Generar automáticamente"
-MODE_MANUAL = "⌨️ Escanear o escribir"
-MODE_SCANNED = "📷 Usar código escaneado"
+MODE_GENERATED = ":material/auto_awesome: Generar automáticamente"
+MODE_MANUAL = ":material/keyboard: Escanear o escribir"
+MODE_SCANNED = ":material/photo_camera: Usar código escaneado"
 
 FORMAT_OPTIONS = {
     "GLIOPS estándar (ubicación)": barcode.FORMAT_STANDARD,

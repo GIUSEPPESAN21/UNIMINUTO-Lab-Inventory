@@ -486,35 +486,35 @@ def _page_html(at):
 
 def test_health_tab_shows_the_findings_grouped_by_severity(seeded_storage):
     at = _open_reportes()
-    assert [e.label for e in at.expander] == ["⚠️ Avisos (7)", "💡 Sugerencias (6)"]
+    assert [e.label for e in at.expander] == [":material/warning: Avisos (7)", ":material/lightbulb: Sugerencias (6)"]
     html = _page_html(at)
     assert "Salud del inventario" in html and "Contendor 2" in html
     assert "Piezas con Biseles: 3x2, 2x2, 4x1, 2x1, 1x0" in html
     assert "lab-stat-grid" in html and "lab-badge--warning" in html
     assert "otra.persona@" not in html                         # nunca se muestra quien registro
-    _button(at, "🛠️ Corregir a «Contenedor 2»")
+    _button(at, ":material/build: Corregir a «Contenedor 2»")
     _button(at, "Revisar y aplicar todas (5)")
 
 
 def test_a_safe_fix_is_only_written_after_confirmation(seeded_storage):
     at = _open_reportes()
-    _button(at, "🛠️ Corregir a «Contenedor 2»").click().run(timeout=60)
+    _button(at, ":material/build: Corregir a «Contenedor 2»").click().run(timeout=60)
     assert seeded_storage.get_item("2-1-02-00-000")["name"] == "Contendor 2"   # todavia nada
     assert "Revisa el cambio antes de guardarlo" in _page_html(at)
 
-    _button(at, "✅ Confirmar y guardar").click().run(timeout=60)
+    _button(at, ":material/check_circle: Confirmar y guardar").click().run(timeout=60)
     assert not at.exception
     assert seeded_storage.get_item("2-1-02-00-000")["name"] == "Contenedor 2"
     assert any("Corrección aplicada en 1 ítem(s)" in s.value for s in at.success)
     history = seeded_storage.get_item_history("2-1-02-00-000")
     assert history[0]["details"] == "Corrección de calidad de datos: Corregir a «Contenedor 2»."
     assert history[0]["actor_user_id"] == PROFESSOR_EMAIL
-    assert not any(b.label == "🛠️ Corregir a «Contenedor 2»" for b in at.button)
+    assert not any(b.label == ":material/build: Corregir a «Contenedor 2»" for b in at.button)
 
 
 def test_cancelling_a_fix_changes_nothing(seeded_storage):
     at = _open_reportes()
-    _button(at, "🛠️ Normalizar ubicación").click().run(timeout=60)
+    _button(at, ":material/build: Normalizar ubicación").click().run(timeout=60)
     _button(at, "Cancelar").click().run(timeout=60)
     assert not at.exception
     assert seeded_storage.get_item("2-1-01-00-000")["location"] == "Estantería- 2; Piso-1; Contenedor-1."
@@ -524,12 +524,12 @@ def test_cancelling_a_fix_changes_nothing(seeded_storage):
 def test_all_safe_fixes_can_be_applied_at_once(seeded_storage):
     at = _open_reportes()
     _button(at, "Revisar y aplicar todas (5)").click().run(timeout=60)
-    _button(at, "✅ Confirmar y guardar").click().run(timeout=60)
+    _button(at, ":material/check_circle: Confirmar y guardar").click().run(timeout=60)
     assert not at.exception
     names = [seeded_storage.get_item(code)["name"] for code in ("2-1-01-00-000", "2-1-02-00-000", "2-1-03-00-000")]
     assert names == ["Contenedor 1", "Contenedor 2", "Contenedor 3"]
     assert seeded_storage.get_item("2-1-02-00-000")["location"] == "Estantería 2 · Piso 1 · Contenedor 02"
-    assert [e.label for e in at.expander] == ["⚠️ Avisos (5)", "💡 Sugerencias (3)"]
+    assert [e.label for e in at.expander] == [":material/warning: Avisos (5)", ":material/lightbulb: Sugerencias (3)"]
     assert not any(b.label.startswith("Revisar y aplicar todas") for b in at.button)
 
 
@@ -540,10 +540,10 @@ def _rename_meanwhile(storage, item_id, name):
 
 def test_a_fix_is_refused_if_the_item_changed_meanwhile(seeded_storage):
     at = _open_reportes()
-    _button(at, "🛠️ Corregir a «Contenedor 2»").click().run(timeout=60)
+    _button(at, ":material/build: Corregir a «Contenedor 2»").click().run(timeout=60)
     _rename_meanwhile(seeded_storage, "2-1-02-00-000", "Contendor dos")    # sigue con el error
 
-    _button(at, "✅ Confirmar y guardar").click().run(timeout=60)
+    _button(at, ":material/check_circle: Confirmar y guardar").click().run(timeout=60)
     assert not at.exception
     assert seeded_storage.get_item("2-1-02-00-000")["name"] == "Contendor dos"
     assert any("cambió después del análisis" in w.value for w in at.warning)
@@ -551,7 +551,7 @@ def test_a_fix_is_refused_if_the_item_changed_meanwhile(seeded_storage):
 
 def test_a_pending_fix_is_dropped_if_someone_already_fixed_the_item(seeded_storage):
     at = _open_reportes()
-    _button(at, "🛠️ Corregir a «Contenedor 2»").click().run(timeout=60)
+    _button(at, ":material/build: Corregir a «Contenedor 2»").click().run(timeout=60)
     _rename_meanwhile(seeded_storage, "2-1-02-00-000", "Contenedor de bases")
 
     at.run(timeout=60)

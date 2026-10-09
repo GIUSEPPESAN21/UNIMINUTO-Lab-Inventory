@@ -1,5 +1,40 @@
 # Changelog
 
+## v1.13.0 — Interfaz simétrica con la paleta de UNIMINUTO
+
+### Colores
+- Paleta institucional tomada del logotipo y del manual de imagen: azul Pantone
+  287 C (`#003698`) para toda la interfaz y amarillo Pantone 116 C (`#FFCE00`)
+  solo como acento. Se quitaron los brillos amarillos superpuestos al azul (daban
+  un tono verde oliva), los azules ajenos a la marca y los bordes de colores de
+  las tarjetas; los tonos de estado quedan solo en pastillas y avisos. Las
+  gráficas de Reportes usan los mismos colores.
+- Íconos monocromáticos (Material Symbols, la fuente que ya trae Streamlit) en
+  lugar de emojis multicolor: navegación, encabezados, indicadores, accesos,
+  pestañas, botones y avisos. Los componentes de `core/ui.py` siguen aceptando
+  emojis y los traducen (`material_name`, `material`, `icon_html`).
+
+### Simetría y centrado
+- Logotipo nítido y centrado en una tarjeta blanca en la parte superior de la
+  barra lateral, con el nombre del sistema debajo; la tarjeta de usuario y el
+  botón de salida, centrados al pie.
+- Encabezados de página centrados (ícono y título en una línea, subtítulo y
+  subrayado amarillo); títulos de sección centrados entre dos filetes; inicio
+  con la bienvenida centrada.
+- Indicadores con el contenido centrado y filas incompletas centradas (con 5
+  indicadores: 5, o 3 + 2 en tableta); accesos rápidos repartidos en filas
+  parejas (7 → 4 + 3) con la segunda fila centrada y todas las tarjetas del
+  mismo tamaño; la última fila de productos del inventario también se centra.
+- Pestañas como control segmentado de ancho completo con pestañas iguales.
+- Acceso: los dos paneles miden lo mismo y la marca va centrada.
+
+### Celular
+- Cabecera tipo app con el símbolo de UNIMINUTO centrado (nuevo
+  `assets/uniminuto-simbolo.png`, también ícono de la pestaña del navegador).
+- Indicadores y accesos rápidos en mosaico de dos columnas (el impar, centrado o
+  a lo ancho), pestañas en celdas iguales que dejan saltar el texto, botones
+  más altos para el dedo.
+
 ## v1.12.1 — Dependencias instalables otra vez
 
 ### Corregido

@@ -13,9 +13,10 @@ _TYPE_LABELS = {
     "Producto del inventario": service_requests.TYPE_PRODUCT,
     "Servicio del laboratorio": service_requests.TYPE_SERVICE,
 }
-_STATUS_LABELS = {
-    "pending": "🟡 Pendiente", "approved": "🟢 Aprobada",
-    "rejected": "🔴 Rechazada", "cancelled": "⚪ Cancelada",
+# Estado de la solicitud como pastilla: (texto, tono, icono).
+_STATUS_BADGES = {
+    "pending": ("Pendiente", "warning", "⏳"), "approved": ("Aprobada", "success", "✅"),
+    "rejected": ("Rechazada", "danger", "⛔"), "cancelled": ("Cancelada", "neutral", "⚪"),
 }
 
 
@@ -35,7 +36,7 @@ def _render_tracking(storage, row: dict, user: dict, events: list, loan: dict) -
         and row.get("requester_id") == user.get("id")
         and not traceability.first_event(events, traceability.EVENT_PICKED_UP)
     )
-    with st.expander("🧭 Ruta y seguimiento" if actionable else "📍 Seguimiento", expanded=actionable):
+    with st.expander(":material/explore: Ruta y seguimiento" if actionable else ":material/location_on: Seguimiento", expanded=actionable):
         timeline(traceability.request_timeline(row, events, loan))
         if actionable:
             st.markdown("**Ruta verificable hasta el producto**")
@@ -52,7 +53,8 @@ def _request_card(storage, row: dict, user: dict, allow_cancel=True, events: lis
         quantity = f" · {row.get('quantity')} unidad(es)" if row.get("request_type") == "product" else ""
         # HTML escapado (y no markdown): un nombre de producto no puede inyectar enlaces ni imágenes.
         c1.markdown(
-            f"<b>{esc(title)}</b>{esc(quantity)} · {esc(_STATUS_LABELS.get(row.get('status'), row.get('status')))}",
+            f"<b>{esc(title)}</b>{esc(quantity)} "
+            f"{badge_html(*_STATUS_BADGES.get(row.get('status'), (row.get('status'), 'neutral', None)))}",
             unsafe_allow_html=True,
         )
         if show_tracking:
@@ -70,9 +72,9 @@ def _request_card(storage, row: dict, user: dict, allow_cancel=True, events: lis
         if row.get("review_notes"):
             c1.caption(f"Respuesta: {row['review_notes']}")
         if row.get("email_notified"):
-            c1.caption("✉️ Administradores notificados")
+            c1.caption(":material/mail: Administradores notificados")
         elif row.get("email_error"):
-            c1.caption(f"⚠️ {row['email_error']}")
+            c1.caption(f":material/warning: {row['email_error']}")
         # Una solicitud ya retirada sigue su curso por el préstamo: no se ofrece cancelarla.
         picked_up = bool(traceability.first_event(events, traceability.EVENT_PICKED_UP))
         if allow_cancel and row.get("status") in ("pending", "approved") and not picked_up:
@@ -91,12 +93,12 @@ def render():
     reviewer = user.get("role") in service_requests.REVIEWER_ROLES
 
     page_header(
-        "Solicitudes", icon="📝",
+        "Solicitudes", icon=":material/edit_note:",
         subtitle="Solicita productos o servicios; el responsable recibe una notificación automática",
     )
-    titles = ["➕ Nueva solicitud", "📋 Mis solicitudes"]
+    titles = [":material/add: Nueva solicitud", ":material/history: Mis solicitudes"]
     if reviewer:
-        titles.append("✅ Gestionar")
+        titles.append(":material/fact_check: Gestionar")
     tabs = st.tabs(titles)
 
     with tabs[0]:
@@ -156,10 +158,10 @@ def render():
                     else:
                         st.warning(message)
                     if request_type == service_requests.TYPE_PRODUCT:
-                        st.caption("🧭 Cuando la aprueben, abre **Mis solicitudes** o **Trazabilidad** para "
+                        st.caption(":material/explore: Cuando la aprueben, abre **Mis solicitudes** o **Trazabilidad** para "
                                    "recorrer la ruta verificable hasta el producto.")
                     else:
-                        st.caption("📍 Sigue su avance (aprobada → en curso → entregado) en **Mis solicitudes** "
+                        st.caption(":material/location_on: Sigue su avance (aprobada → en curso → entregado) en **Mis solicitudes** "
                                    "o en **Trazabilidad**.")
                 except ValueError as exc:
                     st.error(str(exc))
@@ -210,6 +212,6 @@ def render():
                 "mantener la cadena de custodia existente."
             )
             st.caption(
-                "🧭 En **Trazabilidad** validas el comprobante de ruta del estudiante, ves la cadena de "
+                ":material/explore: En **Trazabilidad** validas el comprobante de ruta del estudiante, ves la cadena de "
                 "custodia de cada producto y marcas los servicios como en curso o entregados."
             )

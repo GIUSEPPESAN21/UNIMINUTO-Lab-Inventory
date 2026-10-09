@@ -33,8 +33,71 @@ import streamlit as st
 
 from core import permissions
 
-LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "uniminuto-logo.png"
+ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
+LOGO_PATH = ASSETS_DIR / "uniminuto-logo.png"
+# Simbolo (cruz y "MD") recortado del logotipo, sin alterar trazos ni colores:
+# icono de la pestaña del navegador y de la barra superior en celular, donde el
+# logotipo completo seria ilegible.
+SYMBOL_PATH = ASSETS_DIR / "uniminuto-simbolo.png"
 ROLE_LABELS = {"estudiante": "Estudiante", "profesor": "Profesor", "maestro": "Perfil maestro"}
+
+# Colores institucionales para las graficas (azul Pantone 287 C, amarillo
+# Pantone 116 C y sus matices), los mismos de style.css.
+BRAND_BLUE = "#003698"
+BRAND_GOLD = "#FFCE00"
+CHART_COLORS = [BRAND_BLUE, BRAND_GOLD, "#4F7FD1", "#B38F00", "#9DB4E3", "#00205B", "#FFE580"]
+
+# ---------------------------------------------------------------------------
+# Iconos. Las vistas pasan un emoji (contrato historico) o ":material/nombre:";
+# los componentes lo pintan con Material Symbols, la fuente de iconos que ya
+# trae Streamlit: monocromos y del color de la paleta, en lugar de emojis
+# multicolor que chocan con los colores institucionales. Un emoji sin
+# equivalencia se muestra tal cual.
+# ---------------------------------------------------------------------------
+MATERIAL_ICONS = {
+    "🏠": "home", "🛰": "barcode_scanner", "📝": "edit_note", "🧭": "explore",
+    "🗓": "calendar_month", "📅": "event", "📋": "assignment", "📦": "inventory_2",
+    "📊": "bar_chart", "📈": "trending_up", "📉": "trending_down", "👥": "group",
+    "👤": "person", "🏢": "info", "🗂": "folder_open", "🔐": "admin_panel_settings",
+    "🚪": "logout", "✅": "check_circle", "✔": "check", "✓": "check", "⚠": "warning",
+    "⛔": "block", "🚫": "block", "⏳": "hourglass_top", "⏰": "alarm", "⏱": "timer",
+    "🏷": "label", "✨": "auto_awesome", "✏": "edit", "🔎": "search", "📥": "move_to_inbox",
+    "📤": "outbox", "⬇": "download", "⬆": "upload", "🛠": "build", "➕": "add",
+    "💡": "lightbulb", "🔏": "verified", "🔗": "link", "🖨": "print", "💾": "save",
+    "🔴": "error", "🟡": "pending", "🟢": "check_circle", "⚪": "cancel", "🩺": "monitor_heart",
+    "🤝": "handshake", "🗑": "delete", "🧩": "extension", "🎓": "school",
+    "👨‍🏫": "co_present", "🗄": "shelves", "✉": "mail", "🏆": "emoji_events",
+    "📜": "history", "🧪": "science", "📖": "menu_book", "📇": "contacts", "⌨": "keyboard",
+    "📷": "photo_camera", "✖": "close", "↩": "undo", "↺": "refresh", "🛡": "shield",
+    "👋": "waving_hand", "🏛": "account_balance", "⚡": "bolt", "🔔": "notifications",
+    "🪪": "badge", "🔒": "lock", "🔹": "widgets", "💬": "chat", "🧾": "receipt_long",
+    "📍": "location_on", "🏫": "domain", "🔄": "sync", "🔁": "repeat", "📭": "inbox",
+    "●": "circle",
+}
+_MATERIAL_PREFIX = ":material/"
+
+
+def material_name(icon):
+    """Nombre del icono Material para un emoji o ":material/nombre:" (None si no hay)."""
+    text = str(icon or "").strip()
+    if text.startswith(_MATERIAL_PREFIX) and text.endswith(":"):
+        return text[len(_MATERIAL_PREFIX):-1] or None
+    return MATERIAL_ICONS.get(text.replace("️", ""))
+
+
+def material(icon) -> str:
+    """Icono para widgets nativos (st.button, st.page_link, st.toast...):
+    ":material/nombre:" si hay equivalencia; si no, el texto original."""
+    name = material_name(icon)
+    return f"{_MATERIAL_PREFIX}{name}:" if name else str(icon or "")
+
+
+def icon_html(icon) -> str:
+    """Icono como HTML para las piezas propias (texto escapado)."""
+    name = material_name(icon)
+    if name:
+        return f'<span class="lab-ms" aria-hidden="true">{esc(name)}</span>'
+    return esc(icon)
 
 _WEEKDAYS_ES = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
 _MONTHS_ES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
@@ -112,11 +175,12 @@ def page_header(title: str, subtitle: str = None, icon: str = None) -> None:
     """Encabezado de pagina consistente para todas las vistas (tarjeta con
     icono, titulo y subtitulo). Todo se escapa: puede incluir nombres
     escritos por usuarios."""
-    icon_html = f'<div class="lab-page-header__icon" aria-hidden="true">{esc(icon)}</div>' if icon else ""
+    icon_part = f'<div class="lab-page-header__icon" aria-hidden="true">{icon_html(icon)}</div>' if icon else ""
     sub_html = f'<p class="page-subtitle">{esc(subtitle)}</p>' if subtitle else ""
     st.markdown(
-        f'<div class="lab-page-header">{icon_html}<div class="lab-page-header__text">'
-        f'<div class="main-header" role="heading" aria-level="1">{esc(title)}</div>{sub_html}</div></div>',
+        f'<div class="lab-page-header"><div class="lab-page-header__text">'
+        f'<div class="lab-page-header__row">{icon_part}'
+        f'<div class="main-header" role="heading" aria-level="1">{esc(title)}</div></div>{sub_html}</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -128,11 +192,11 @@ def hero(title: str, subtitle: str = None, eyebrow: str = None, icon: str = None
     sub_html = f'<div class="lab-hero__text">{esc(subtitle)}</div>' if subtitle else ""
     meta = "".join(badge_html(b.get("text"), b.get("tone", "neutral"), b.get("icon")) for b in (badges or []))
     meta_html = f'<div class="lab-hero__meta">{meta}</div>' if meta else ""
-    icon_html = f'<div class="lab-hero__icon" aria-hidden="true">{esc(icon)}</div>' if icon else ""
+    icon_part = f'<div class="lab-hero__icon" aria-hidden="true">{icon_html(icon)}</div>' if icon else ""
     st.markdown(
-        f'<section class="lab-hero"><div class="lab-hero__body">{eyebrow_html}'
+        f'<section class="lab-hero">{icon_part}<div class="lab-hero__body">{eyebrow_html}'
         f'<div class="lab-hero__title" role="heading" aria-level="1">{esc(title)}</div>'
-        f'{sub_html}{meta_html}</div>{icon_html}</section>',
+        f'{sub_html}{meta_html}</div></section>',
         unsafe_allow_html=True,
     )
 
@@ -153,7 +217,7 @@ def _tone(tone: str) -> str:
 
 def badge_html(text, tone: str = "neutral", icon: str = None) -> str:
     """Pastilla de estado como HTML (para incrustar en otras piezas)."""
-    prefix = f'<span aria-hidden="true">{esc(icon)}</span> ' if icon else ""
+    prefix = f'<span class="lab-badge__icon" aria-hidden="true">{icon_html(icon)}</span>' if icon else ""
     return f'<span class="lab-badge lab-badge--{_tone(tone)}">{prefix}{esc(text)}</span>'
 
 
@@ -163,7 +227,8 @@ def status_badge(text, tone: str = "neutral", icon: str = None) -> None:
 
 def section_title(title: str, icon: str = None, caption: str = None) -> None:
     """Titulo de seccion dentro de una pagina (mas liviano que page_header)."""
-    heading = f"{esc(icon)} {esc(title)}" if icon else esc(title)
+    icon_part = f'<span class="lab-section__icon" aria-hidden="true">{icon_html(icon)}</span>' if icon else ""
+    heading = f'{icon_part}<span class="lab-section__text">{esc(title)}</span>'
     cap = f'<div class="lab-section__caption">{esc(caption)}</div>' if caption else ""
     st.markdown(
         f'<div class="lab-section"><div class="lab-section__title" role="heading" aria-level="2">{heading}</div>'
@@ -177,7 +242,7 @@ def stat_cards(stats: list) -> None:
     cards = []
     for stat in stats:
         icon = (
-            f'<div class="lab-stat__icon" aria-hidden="true">{esc(stat.get("icon"))}</div>'
+            f'<div class="lab-stat__icon" aria-hidden="true">{icon_html(stat.get("icon"))}</div>'
             if stat.get("icon") else ""
         )
         help_text = f'<div class="lab-stat__help">{esc(stat.get("help"))}</div>' if stat.get("help") else ""
@@ -186,13 +251,18 @@ def stat_cards(stats: list) -> None:
             f'<div class="lab-stat__value">{esc(stat.get("value"))}</div>'
             f'<div class="lab-stat__label">{esc(stat.get("label"))}</div>{help_text}</div>'
         )
-    st.markdown(f'<div class="lab-stat-grid">{"".join(cards)}</div>', unsafe_allow_html=True)
+    # La clase con el numero de tarjetas le dice al CSS cuantas columnas usar
+    # para que las filas queden parejas y centradas (5 -> 5, o 3 + 2 en tableta).
+    count = min(len(cards), 6)
+    st.markdown(
+        f'<div class="lab-stat-grid lab-stat-grid--n{count}">{"".join(cards)}</div>', unsafe_allow_html=True
+    )
 
 
 def empty_state(title: str, text: str = "", icon: str = "📭") -> None:
     body = f'<div class="lab-empty__text">{esc(text)}</div>' if text else ""
     st.markdown(
-        f'<div class="lab-empty"><div class="lab-empty__icon" aria-hidden="true">{esc(icon)}</div>'
+        f'<div class="lab-empty"><div class="lab-empty__icon" aria-hidden="true">{icon_html(icon)}</div>'
         f'<div class="lab-empty__title">{esc(title)}</div>{body}</div>',
         unsafe_allow_html=True,
     )
@@ -204,7 +274,7 @@ def timeline_html(steps: list) -> str:
     rows = []
     for index, step in enumerate(steps, start=1):
         state = step.get("state") if step.get("state") in STEP_STATES else "pending"
-        icon = esc(step.get("icon") or ("✓" if state == "done" else index))
+        icon = icon_html(step.get("icon") or ("✓" if state == "done" else index))
         detail = f'<div class="lab-step__detail">{esc(step.get("detail"))}</div>' if step.get("detail") else ""
         when = f'<div class="lab-step__time">{esc(step.get("time"))}</div>' if step.get("time") else ""
         current = ' aria-current="step"' if state == "current" else ""
@@ -228,19 +298,48 @@ def quick_actions(actions: list, columns: int = 3) -> None:
     actions = [action for action in actions if action.get("page") is not None]
     if not actions:
         return
-    per_row = max(1, min(columns, len(actions)))
-    for start in range(0, len(actions), per_row):
-        cols = st.columns(per_row)
-        for col, action in zip(cols, actions[start:start + per_row]):
-            with col:
-                with st.container(border=True):
-                    st.page_link(action["page"], label=action["label"], icon=action.get("icon"),
-                                 use_container_width=True)
-                    description = action.get("description")
-                    if description:
-                        st.markdown(f'<div class="lab-qa">{esc(description)}</div>', unsafe_allow_html=True)
-                    else:
-                        st.markdown('<div class="lab-qa lab-qa--empty"></div>', unsafe_allow_html=True)
+    rows = balanced_rows(len(actions), columns)
+    widest = max(rows)
+    start = 0
+    with st.container(key="lab_qa_grid"):
+        for count in rows:
+            cols = centered_columns(count, widest)
+            for col, action in zip(cols, actions[start:start + count]):
+                with col:
+                    with st.container(border=True):
+                        st.markdown(
+                            f'<div class="lab-qa__icon" aria-hidden="true">{icon_html(action.get("icon"))}</div>',
+                            unsafe_allow_html=True,
+                        )
+                        st.page_link(action["page"], label=action["label"], use_container_width=True)
+                        description = action.get("description")
+                        if description:
+                            st.markdown(f'<div class="lab-qa">{esc(description)}</div>', unsafe_allow_html=True)
+                        else:
+                            st.markdown('<div class="lab-qa lab-qa--empty"></div>', unsafe_allow_html=True)
+            start += count
+
+
+def centered_columns(count: int, widest: int, **kwargs) -> list:
+    """st.columns para una fila de `count` tarjetas del mismo ancho que las de
+    una fila completa de `widest`, centrada con dos espaciadores de media
+    columna: la rejilla queda simetrica (en celular los espaciadores vacios se
+    ocultan). Devuelve solo las columnas de contenido."""
+    pad = (widest - count) / 2
+    if pad <= 0:
+        return st.columns(count, **kwargs)
+    return st.columns([pad] + [1] * count + [pad], **kwargs)[1:-1]
+
+
+def balanced_rows(total: int, per_row: int) -> list:
+    """Reparte `total` tarjetas en filas lo mas parejas posible, sin superar
+    `per_row` por fila: 7 en filas de 4 -> [4, 3]; 5 -> [3, 2]; 6 -> [3, 3]."""
+    if total <= 0:
+        return []
+    per_row = max(1, per_row)
+    count = -(-total // per_row)
+    base, extra = divmod(total, count)
+    return [base + 1] * extra + [base] * (count - extra)
 
 
 # ---------------------------------------------------------------------------
@@ -258,12 +357,12 @@ def card(key: str, tone: str = None):
 def card_header_html(title, subtitle: str = None, icon: str = None, badges: list = None) -> str:
     """Encabezado de tarjeta: icono, titulo, subtitulo y pastillas
     (badges: lista de dicts {"text", "tone"?, "icon"?})."""
-    icon_html = f'<div class="lab-card-head__icon" aria-hidden="true">{esc(icon)}</div>' if icon else ""
+    icon_part = f'<div class="lab-card-head__icon" aria-hidden="true">{icon_html(icon)}</div>' if icon else ""
     sub_html = f'<div class="lab-card-head__subtitle">{esc(subtitle)}</div>' if subtitle else ""
     pills = "".join(badge_html(b.get("text"), b.get("tone", "neutral"), b.get("icon")) for b in (badges or []))
     pills_html = f'<div class="lab-card-head__badges">{pills}</div>' if pills else ""
     return (
-        f'<div class="lab-card-head">{icon_html}<div class="lab-card-head__text">'
+        f'<div class="lab-card-head">{icon_part}<div class="lab-card-head__text">'
         f'<div class="lab-card-head__title">{esc(title)}</div>{sub_html}</div>{pills_html}</div>'
     )
 
@@ -287,7 +386,7 @@ def feature_cards(items: list) -> None:
     cards = []
     for item in items:
         icon = (
-            f'<div class="lab-feature__icon" aria-hidden="true">{esc(item.get("icon"))}</div>'
+            f'<div class="lab-feature__icon" aria-hidden="true">{icon_html(item.get("icon"))}</div>'
             if item.get("icon") else ""
         )
         cards.append(
@@ -303,7 +402,7 @@ def alert_list(items: list, label: str = "Alertas") -> None:
     La lista es desplazable y enfocable con teclado cuando es larga."""
     rows = []
     for item in items:
-        icon = f'<div class="lab-alert__icon" aria-hidden="true">{esc(item.get("icon"))}</div>' if item.get("icon") else ""
+        icon = f'<div class="lab-alert__icon" aria-hidden="true">{icon_html(item.get("icon"))}</div>' if item.get("icon") else ""
         text = f'<div class="lab-alert__text">{esc(item.get("text"))}</div>' if item.get("text") else ""
         rows.append(
             f'<div class="lab-alert lab-alert--{_tone(item.get("tone", "neutral"))}" role="listitem">{icon}'
@@ -336,19 +435,19 @@ def _render_conflict_controls(storage, user: dict) -> None:
         return
     keep_remote, keep_local = st.columns(2)
     if keep_remote.button(
-        "⬇️ Conservar la versión de GitHub", key="sync_keep_remote", use_container_width=True,
+        ":material/download: Conservar la versión de GitHub", key="sync_keep_remote", use_container_width=True,
         help="Descarta los cambios hechos desde el conflicto y carga la base que esta en GitHub.",
     ):
         ok, message = storage.resolve_sync_conflict("remote")
-        st.toast(message, icon="✅" if ok else "⚠️")
+        st.toast(message, icon=":material/check_circle:" if ok else ":material/warning:")
         if ok:
             st.rerun()
     if keep_local.button(
-        "⬆️ Conservar la versión de esta app", key="sync_keep_local", use_container_width=True,
+        ":material/upload: Conservar la versión de esta app", key="sync_keep_local", use_container_width=True,
         help="Publica esta version sobre la de GitHub. La anterior sigue en el historial de commits.",
     ):
         ok, message = storage.resolve_sync_conflict("local")
-        st.toast(message, icon="✅" if ok else "⚠️")
+        st.toast(message, icon=":material/check_circle:" if ok else ":material/warning:")
         if ok:
             st.rerun()
 
@@ -369,12 +468,12 @@ def sync_status_banner(storage, user: dict) -> None:
             "**La sincronizacion con GitHub no esta configurada**: los datos se estan "
             "guardando solo en este contenedor y se **perderan** al reiniciarse la app. "
             "Agrega `GITHUB_TOKEN` y `GITHUB_REPO` en Settings → Secrets de Streamlit Cloud.",
-            icon="🔴",
+            icon=":material/error:",
         )
         return
 
     if status.get("conflict"):
-        st.error(f"**Conflicto de sincronizacion con GitHub.** {status['message']}", icon="🔴")
+        st.error(f"**Conflicto de sincronizacion con GitHub.** {status['message']}", icon=":material/error:")
         _render_conflict_controls(storage, user)
         return
 
@@ -383,8 +482,8 @@ def sync_status_banner(storage, user: dict) -> None:
             f"**Fallo la sincronizacion con GitHub** ({status['repo'] or 'repo no configurado'} · "
             f"`{status['db_path']}`): {status['message']} Los cambios se estan guardando solo "
             "localmente y se perderan al reiniciarse la app.",
-            icon="🔴",
+            icon=":material/error:",
         )
-        if st.button("🔄 Reintentar sincronización", key="sync_retry"):
+        if st.button(":material/sync: Reintentar sincronización", key="sync_retry"):
             storage.retry_sync()
             st.rerun()

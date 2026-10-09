@@ -293,11 +293,14 @@ contraseña — todos obligatorios.
 ## Arquitectura
 
 - **Frontend/backend**: Streamlit, con navegación agrupada por secciones
-  (`st.navigation`): Principal, Gestión del laboratorio, Administración y Mi
-  cuenta — visibles según el rol de quien inició sesión. La interfaz usa un
-  sistema de diseño propio (`style.css` + componentes de `core/ui.py`): tarjetas,
-  indicadores, líneas de tiempo, botones animados y modo oscuro, adaptados a
-  celular.
+  (`st.navigation`): Principal, Gestión, Administración y Mi cuenta — visibles
+  según el rol de quien inició sesión. La interfaz usa un sistema de diseño
+  propio (`style.css` + componentes de `core/ui.py`) con la paleta institucional
+  de UNIMINUTO (azul Pantone 287 C `#003698`, amarillo Pantone 116 C `#FFCE00`),
+  íconos monocromáticos Material Symbols, composición simétrica (encabezados,
+  indicadores y accesos centrados; filas incompletas centradas), modo oscuro y
+  una vista de celular tipo app (símbolo centrado en la cabecera, mosaicos de
+  dos columnas).
 - **Base de datos**: un archivo Excel (`UNIMINUTO_LAB_DB.xlsx`) que vive en el
   repositorio **privado** `GIUSEPPESAN21/UNIMINUTO-Lab-Database`. Cada
   escritura se guarda localmente y se sincroniza a GitHub vía API en un hilo

@@ -84,7 +84,7 @@ def test_catalog_groups_by_container_and_offers_the_generator(db):
     toggles = [b for b in at.button if (b.key or "").startswith("inv_gen_toggle_")]
     # Ordenados por codigo (no por nombre: "Contendor 2" quedaria antes que "Contenedor 1").
     assert [b.key for b in toggles] == [f"inv_gen_toggle_{c['id']}" for c in REAL]
-    assert all(b.label == "✨ Generar productos desde la descripción" for b in toggles)
+    assert all(b.label == ":material/auto_awesome: Generar productos desde la descripción" for b in toggles)
     assert "3 contenedor(es) describen productos que aún no están registrados" in _text(at.info)
     html = _text(at.markdown)
     assert "lab-stat" in html and "Pendientes de conteo" in html
@@ -99,12 +99,12 @@ def test_generator_shows_the_editable_preview_with_notes(db):
         (code, name, selected) for code, name, _feature, selected in EXPECTED[C1["id"]]
     ]
     assert frame["Cantidad"].tolist() == [0] * 5 and set(frame["Unidad"]) == {"unidad"}
-    assert any(e.label == "⚠️ Puntos para confirmar (3)" for e in at.expander)
+    assert any(e.label == ":material/warning: Puntos para confirmar (3)" for e in at.expander)
     assert "«fichas» es un término genérico" in _text(at.markdown)
     create = _button(at, f"inv_gen_create_{C1['id']}")
-    assert create.label == "✅ Crear 5 producto(s)" and not create.disabled
+    assert create.label == ":material/check_circle: Crear 5 producto(s)" and not create.disabled
     assert "Crear en una sola sincronización" in _text(at.markdown)            # timeline del flujo
-    assert _button(at, f"inv_gen_toggle_{C1['id']}").label == "✖️ Cerrar el generador"
+    assert _button(at, f"inv_gen_toggle_{C1['id']}").label == ":material/close: Cerrar el generador"
 
 
 def test_creating_from_the_preview_writes_once_and_closes(db, writes):
@@ -133,7 +133,7 @@ def test_container_2_creates_12_and_leaves_the_1x0_for_review(db, writes):
     frame = _editor(at)
     assert frame["Crear"].tolist() == [True] * 12 + [False]
     assert "probablemente es «1x1»" in frame["Notas"].iloc[-1]
-    assert _button(at, f"inv_gen_create_{C2['id']}").label == "✅ Crear 12 producto(s)"
+    assert _button(at, f"inv_gen_create_{C2['id']}").label == ":material/check_circle: Crear 12 producto(s)"
     _button(at, f"inv_gen_create_{C2['id']}").click().run()
     assert not at.exception and len(writes) == 1
     created = {c["name"] for c in db.get_children(C2["id"])}
@@ -174,7 +174,7 @@ def test_filters_and_list_view(db):
     assert "4 item(s) encontrados." in _text(at.caption)
     at.selectbox(key="inv_location").select("Todos").run()
 
-    at.radio(key="inv_view").set_value("📋 Lista").run()
+    at.radio(key="inv_view").set_value(":material/view_list: Lista").run()
     assert not at.exception
     assert "7 item(s) encontrados." in _text(at.caption)
 

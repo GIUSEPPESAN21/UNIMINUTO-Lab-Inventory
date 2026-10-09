@@ -14,11 +14,11 @@ import streamlit as st
 
 from core.storage import LabStorage
 from core import auth, permissions
-from core.ui import LOGO_PATH, footer, sync_status_banner, user_chip_html
+from core.ui import LOGO_PATH, SYMBOL_PATH, footer, sync_status_banner, user_chip_html
 
 st.set_page_config(
     page_title="Inventario de Laboratorio UNIMINUTO",
-    page_icon="🎓",
+    page_icon=str(SYMBOL_PATH) if SYMBOL_PATH.exists() else "🎓",
     layout="wide",
 )
 
@@ -78,47 +78,44 @@ user = session_user
 from views import inicio, escanear, inventario, prestamos, reservas, solicitudes, trazabilidad, usuarios, reportes, acerca_de, perfil
 
 pages = {
-    "inicio": st.Page(inicio.render, title="Inicio", icon="🏠", default=True, url_path="inicio"),
-    "escanear": st.Page(escanear.render, title="Escanear", icon="🛰️", url_path="escanear"),
-    "solicitudes": st.Page(solicitudes.render, title="Solicitudes", icon="📝", url_path="solicitudes"),
-    "trazabilidad": st.Page(trazabilidad.render, title="Trazabilidad", icon="🧭", url_path="trazabilidad"),
-    "reservas": st.Page(reservas.render, title="Reservas", icon="🗓️", url_path="reservas"),
-    "prestamos": st.Page(prestamos.render, title="Préstamos", icon="📋", url_path="prestamos"),
+    "inicio": st.Page(inicio.render, title="Inicio", icon=":material/home:", default=True, url_path="inicio"),
+    "escanear": st.Page(escanear.render, title="Escanear", icon=":material/barcode_scanner:", url_path="escanear"),
+    "solicitudes": st.Page(solicitudes.render, title="Solicitudes", icon=":material/edit_note:", url_path="solicitudes"),
+    "trazabilidad": st.Page(trazabilidad.render, title="Trazabilidad", icon=":material/explore:", url_path="trazabilidad"),
+    "reservas": st.Page(reservas.render, title="Reservas", icon=":material/calendar_month:", url_path="reservas"),
+    "prestamos": st.Page(prestamos.render, title="Préstamos", icon=":material/assignment:", url_path="prestamos"),
 }
 
 if user["role"] in permissions.MANAGER_ROLES:
-    pages["inventario"] = st.Page(inventario.render, title="Inventario", icon="📦", url_path="inventario")
-    pages["reportes"] = st.Page(reportes.render, title="Reportes", icon="📊", url_path="reportes")
+    pages["inventario"] = st.Page(inventario.render, title="Inventario", icon=":material/inventory_2:", url_path="inventario")
+    pages["reportes"] = st.Page(reportes.render, title="Reportes", icon=":material/bar_chart:", url_path="reportes")
 
 if user["role"] in permissions.ADMIN_ROLES:
-    pages["usuarios"] = st.Page(usuarios.render, title="Usuarios", icon="👥", url_path="usuarios")
+    pages["usuarios"] = st.Page(usuarios.render, title="Usuarios", icon=":material/group:", url_path="usuarios")
 
-pages["perfil"] = st.Page(perfil.render, title="Mi perfil", icon="👤", url_path="perfil")
-pages["acerca_de"] = st.Page(acerca_de.render, title="Acerca de", icon="🏢", url_path="acerca-de")
+pages["perfil"] = st.Page(perfil.render, title="Mi perfil", icon=":material/person:", url_path="perfil")
+pages["acerca_de"] = st.Page(acerca_de.render, title="Acerca de", icon=":material/info:", url_path="acerca-de")
 
 st.session_state.pages = pages
 
 # Navegacion agrupada por secciones para que el sidebar sea facil de leer.
-nav_sections = {"🧭 Principal": [pages["inicio"], pages["escanear"], pages["solicitudes"], pages["trazabilidad"], pages["reservas"], pages["prestamos"]]}
+nav_sections = {"Principal": [pages["inicio"], pages["escanear"], pages["solicitudes"], pages["trazabilidad"], pages["reservas"], pages["prestamos"]]}
 if user["role"] in permissions.MANAGER_ROLES:
-    nav_sections["🗂️ Gestión del laboratorio"] = [pages["inventario"], pages["reportes"]]
+    nav_sections["Gestión"] = [pages["inventario"], pages["reportes"]]
 if user["role"] in permissions.ADMIN_ROLES:
-    nav_sections["🔐 Administración"] = [pages["usuarios"]]
-nav_sections["👤 Mi cuenta"] = [pages["perfil"], pages["acerca_de"]]
+    nav_sections["Administración"] = [pages["usuarios"]]
+nav_sections["Mi cuenta"] = [pages["perfil"], pages["acerca_de"]]
 
-# Marca institucional arriba a la izquierda (sidebar y cabecera cuando se
-# colapsa); el logo se sirve desde assets/, sin depender de Internet.
+# Marca institucional: el logotipo completo, centrado, encabeza la barra
+# lateral; con la barra cerrada (celular) la cabecera muestra solo el simbolo,
+# que sigue siendo legible a ese tamaño. Se sirven desde assets/, sin Internet.
 if LOGO_PATH.exists():
-    st.logo(str(LOGO_PATH), size="large", icon_image=str(LOGO_PATH))
+    st.logo(str(LOGO_PATH), size="large",
+            icon_image=str(SYMBOL_PATH) if SYMBOL_PATH.exists() else str(LOGO_PATH))
 
 with st.sidebar:
-    st.markdown(
-        '<div class="lab-side-brand"><span class="lab-side-brand__name">Inventario de Laboratorio</span>'
-        '<span class="lab-side-brand__tag">UNIMINUTO · Laboratorio de Ingeniería</span></div>',
-        unsafe_allow_html=True,
-    )
     st.markdown(user_chip_html(user), unsafe_allow_html=True)
-    if st.button("🚪 Cerrar sesión", use_container_width=True):
+    if st.button("Cerrar sesión", icon=":material/logout:", use_container_width=True):
         st.session_state.user = None
         st.session_state.login_at = None
         st.rerun()

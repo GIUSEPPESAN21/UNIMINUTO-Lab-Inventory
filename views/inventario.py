@@ -20,13 +20,16 @@ from core import permissions
 from core.labels import (
     ITEM_TYPE_BY_CHOICE, ITEM_TYPE_CHOICES, ITEM_TYPE_HELP, ITEM_TYPE_ICONS, ITEM_TYPE_LABELS, ITEM_TYPE_NAMES,
 )
-from core.ui import badge_html, empty_state, esc, guard_role, page_header, section_title, stat_cards, timeline
+from core.ui import (
+    badge_html, centered_columns, empty_state, esc, guard_role, icon_html, page_header, section_title, stat_cards,
+    timeline,
+)
 from views import label_settings
 from views.code_input import render_code_input
 
 ALL = "Todos"
-VIEW_GROUPED = "🗂️ Por contenedor"
-VIEW_LIST = "📋 Lista"
+VIEW_GROUPED = ":material/view_agenda: Por contenedor"
+VIEW_LIST = ":material/view_list: Lista"
 
 STOCK_PENDING = "Pendiente de conteo"
 STOCK_EMPTY = "Sin disponibles"
@@ -36,7 +39,7 @@ STOCK_FILTERS = [ALL, STOCK_OK, STOCK_LOW, STOCK_EMPTY, STOCK_PENDING]
 
 GENERATOR_KEY = "inv_generate_for"        # id del contenedor con el generador abierto
 GENERATOR_RESULT_KEY = "inv_generate_result"
-GENERATOR_LABEL = "✨ Generar productos desde la descripción"
+GENERATOR_LABEL = ":material/auto_awesome: Generar productos desde la descripción"
 
 _SUBTLE = "color:var(--subtle-text-color); font-size:0.85rem;"
 
@@ -58,17 +61,18 @@ def _delete_warning(impact: dict) -> str:
         )
     if impact.get("open_loans"):
         parts.append(
-            f"⚠️ Hay {impact['open_loans']} préstamo(s) abierto(s): registra primero su reingreso; "
+            f":material/warning: Hay {impact['open_loans']} préstamo(s) abierto(s): registra primero su reingreso; "
             "mientras tanto no se podrá eliminar."
         )
     return " ".join(parts)
 
 
 def _edit_item_form(storage, item: dict, user: dict):
-    st.markdown(f'<h2 style="text-align:center;">✏️ Editando: {esc(item.get("name"))}</h2>', unsafe_allow_html=True)
+    st.markdown(f'<h2 style="text-align:center;">{icon_html("✏️")} Editando: {esc(item.get("name"))}</h2>',
+                unsafe_allow_html=True)
     impact = storage.get_delete_impact(item["id"])
     if suggestions.is_pending_count(item):
-        st.info("⏳ Este producto está pendiente de conteo: escribe su **Cantidad total** y guarda.")
+        st.info(":material/hourglass_top: Este producto está pendiente de conteo: escribe su **Cantidad total** y guarda.")
     with st.form("edit_item_form"):
         name = st.text_input("Nombre", value=item.get("name", ""))
         category = st.text_input("Categoria", value=item.get("category", ""))
@@ -85,7 +89,7 @@ def _edit_item_form(storage, item: dict, user: dict):
         confirm_delete = st.checkbox("Entiendo que se eliminará de forma permanente", key=f"confirm_delete_{item['id']}")
         c1, c2, c3 = st.columns(3)
         save = c1.form_submit_button("Guardar cambios", type="primary", use_container_width=True)
-        delete = c2.form_submit_button("🗑️ Eliminar definitivamente", use_container_width=True)
+        delete = c2.form_submit_button(":material/delete: Eliminar definitivamente", use_container_width=True)
         cancel = c3.form_submit_button("Cancelar", use_container_width=True)
 
         if save:
@@ -110,7 +114,7 @@ def _edit_item_form(storage, item: dict, user: dict):
             else:
                 ok, msg = storage.delete_item(item["id"], actor_email=user["institutional_email"])
                 if ok:
-                    st.toast(msg, icon="🗑️")
+                    st.toast(msg, icon=":material/delete:")
                     st.session_state.editing_item_id = None
                     st.session_state.scan_result = None  # evita mostrar el item recien eliminado
                     st.rerun()
@@ -187,7 +191,7 @@ def _matches(item: dict, flt: _Filters, available: int, ignore_search: bool = Fa
     return True
 
 
-def _label_popover(slot, item: dict, spec, label: str = "🏷️") -> None:
+def _label_popover(slot, item: dict, spec, label: str = ":material/label:") -> None:
     label_pdf, label_png = labels.item_label_files(item, spec)
     if not label_png:
         slot.write("")
@@ -208,14 +212,14 @@ def _label_popover(slot, item: dict, spec, label: str = "🏷️") -> None:
         st.caption(
             f"Abre el PDF con Edge o Chrome (Ctrl + P): papel USER de "
             f"{spec.size_text}, escala Predeterminado, sin márgenes. "
-            "¿Sale mal? Revisa la pestaña 🖨️ Etiquetas."
+            "¿Sale mal? Revisa la pestaña :material/print: Etiquetas."
         )
 
 
-def _edit_button(slot, item: dict, label: str = "✏️") -> None:
+def _edit_button(slot, item: dict, label: str = ":material/edit:") -> None:
     # Solo el boton de icono lleva ayuda: `help` envuelve el boton en un tooltip y
     # style.css (".stButton > button") deja de aplicarle el estilo de la app.
-    help_text = "Editar o eliminar" if label == "✏️" else None
+    help_text = "Editar o eliminar" if label == ":material/edit:" else None
     if slot.button(label, key=f"edit_{item['id']}", help=help_text, use_container_width=True):
         st.session_state.editing_item_id = item["id"]
         st.rerun()
@@ -224,7 +228,7 @@ def _edit_button(slot, item: dict, label: str = "✏️") -> None:
 def _title_html(item: dict, size: str = "1rem") -> str:
     icon = ITEM_TYPE_ICONS.get(item.get("item_type"), "")
     return (
-        f'<div style="font-weight:700; font-size:{size}; line-height:1.3;">{icon} {esc(item.get("name"))}</div>'
+        f'<div style="font-weight:700; font-size:{size}; line-height:1.3;">{icon_html(icon)} {esc(item.get("name"))}</div>'
         f'<div style="{_SUBTLE}">{esc(item.get("id"))}</div>'
     )
 
@@ -255,19 +259,23 @@ def _product_card(item: dict, available: int, spec, show_type: bool = False) -> 
         )
         st.caption(_stock_line(item, available))
         if item.get("location"):
-            st.caption(f"📍 {item.get('location')}")
+            st.caption(f":material/location_on: {item.get('location')}")
         edit_col, label_col = st.columns(2)
-        _edit_button(edit_col, item, "✏️ Editar")
-        _label_popover(label_col, item, spec, "🏷️ Etiqueta")
+        _edit_button(edit_col, item, ":material/edit: Editar")
+        _label_popover(label_col, item, spec, ":material/label: Etiqueta")
 
 
 def _product_grid(items: list, availability: dict, spec, show_type: bool = False, per_row: int = 3) -> None:
-    """Tarjetas en filas de `per_row` (cada fila alinea sus tarjetas; en celular se apilan)."""
-    for start in range(0, len(items), per_row):
-        columns = st.columns(per_row)
-        for column, item in zip(columns, items[start:start + per_row]):
-            with column:
-                _product_card(item, availability.get(item["id"], 0), spec, show_type=show_type)
+    """Tarjetas en filas de `per_row`, todas del mismo ancho y alto por fila; la
+    ultima fila incompleta queda centrada (en celular se apilan)."""
+    if not items:
+        return
+    with st.container(key=f"lab_product_grid_{items[0]['id']}"):
+        for start in range(0, len(items), per_row):
+            row = items[start:start + per_row]
+            for column, item in zip(centered_columns(len(row), per_row), row):
+                with column:
+                    _product_card(item, availability.get(item["id"], 0), spec, show_type=show_type)
 
 
 def _item_row(item: dict, available: int, spec) -> None:
@@ -295,11 +303,11 @@ def _container_header(master: dict, children: list, availability: dict, suggeste
         badges.append(badge_html(f"{suggested} sugerido(s) desde la descripción", "info", "✨"))
     html = _title_html(master, size="1.15rem") + f'<div style="margin:0.4rem 0 0.2rem;">{" ".join(badges)}</div>'
     if master.get("location"):
-        html += f'<div style="{_SUBTLE}">📍 {esc(master.get("location"))}</div>'
+        html += f'<div style="{_SUBTLE}">{icon_html("📍")} {esc(master.get("location"))}</div>'
     if (master.get("description") or "").strip():
         html += (
             f'<div style="{_SUBTLE} white-space:pre-line; margin-top:0.35rem; padding-left:0.6rem; '
-            f'border-left:3px solid var(--border-color);">📝 {esc(master.get("description").strip())}</div>'
+            f'border-left:3px solid var(--border-color);">{icon_html("📝")} {esc(master.get("description").strip())}</div>'
         )
     st.markdown(html, unsafe_allow_html=True)
 
@@ -318,11 +326,11 @@ def _container_card(storage, user, master: dict, children: list, availability: d
         has_description = bool((master.get("description") or "").strip())
         is_open = st.session_state.get(GENERATOR_KEY) == master["id"]
         edit_col, label_col, gen_col = st.columns([1, 1, 3])
-        _edit_button(edit_col, master, "✏️ Editar")
-        _label_popover(label_col, master, spec, "🏷️ Etiqueta")
+        _edit_button(edit_col, master, ":material/edit: Editar")
+        _label_popover(label_col, master, spec, ":material/label: Etiqueta")
         if has_description:
             gen_col.button(
-                "✖️ Cerrar el generador" if is_open else GENERATOR_LABEL,
+                ":material/close: Cerrar el generador" if is_open else GENERATOR_LABEL,
                 key=f"inv_gen_toggle_{master['id']}", use_container_width=True,
                 type="secondary" if is_open or not suggested else "primary",
                 on_click=_toggle_generator, args=(master["id"],),
@@ -335,7 +343,7 @@ def _container_card(storage, user, master: dict, children: list, availability: d
         if not children:
             st.caption(
                 "Este contenedor todavía no tiene productos."
-                + (" Usa «✨ Generar productos desde la descripción» para crearlos." if has_description else "")
+                + (" Usa «:material/auto_awesome: Generar productos desde la descripción» para crearlos." if has_description else "")
             )
             return
         _product_grid(children, availability, spec)
@@ -359,7 +367,7 @@ def _close_generator() -> None:
 
 def _render_generator(storage, user: dict, master: dict) -> None:
     section_title(
-        "Generar productos desde la descripción", icon="✨",
+        "Generar productos desde la descripción", icon=":material/auto_awesome:",
         caption="Revisa la propuesta: puedes desmarcar, renombrar, cambiar el código y escribir la cantidad. "
                 "Nada se guarda hasta que pulses «Crear».",
     )
@@ -383,7 +391,7 @@ def _render_generator(storage, user: dict, master: dict) -> None:
             "No hay productos nuevos por crear",
             "Todo lo que describe el contenedor ya está registrado."
             if analysis["existing"] else "La descripción no menciona productos que se puedan reconocer.",
-            icon="✅",
+            icon=":material/check_circle:",
         )
         st.button("Cerrar", key=f"inv_gen_close_{master['id']}", on_click=_close_generator)
         return
@@ -417,7 +425,7 @@ def _render_generator(storage, user: dict, master: dict) -> None:
 
     notes = [(p["name"], note) for p in proposals for note in p["notes"]]
     if notes:
-        with st.expander(f"⚠️ Puntos para confirmar ({len(notes)})", expanded=True):
+        with st.expander(f":material/warning: Puntos para confirmar ({len(notes)})", expanded=True):
             for name, note in notes:
                 st.markdown(f"- **{esc(name)}** — {esc(note)}")
 
@@ -443,7 +451,7 @@ def _render_generator(storage, user: dict, master: dict) -> None:
 
     create_col, cancel_col = st.columns([2, 1])
     create = create_col.button(
-        f"✅ Crear {len(payloads)} producto(s)", type="primary", disabled=not ready,
+        f":material/check_circle: Crear {len(payloads)} producto(s)", type="primary", disabled=not ready,
         key=f"inv_gen_create_{master['id']}", use_container_width=True,
     )
     cancel_col.button("Cancelar", key=f"inv_gen_cancel_{master['id']}", use_container_width=True,
@@ -472,7 +480,7 @@ def _render_generator(storage, user: dict, master: dict) -> None:
 def _render_catalog(storage, user: dict, spec) -> None:
     result = st.session_state.pop(GENERATOR_RESULT_KEY, None)
     if result:
-        st.success(f"✨ {result}")
+        st.success(f":material/auto_awesome: {result}")
 
     try:
         items = storage.get_all_items()
@@ -501,7 +509,7 @@ def _render_catalog(storage, user: dict, spec) -> None:
     with_suggestions = sum(1 for count in suggested.values() if count)
     if with_suggestions:
         st.info(
-            f"✨ {with_suggestions} contenedor(es) describen productos que aún no están registrados. "
+            f":material/auto_awesome: {with_suggestions} contenedor(es) describen productos que aún no están registrados. "
             f"Abre «{GENERATOR_LABEL}» en su tarjeta para revisarlos y crearlos."
         )
 
@@ -533,7 +541,7 @@ def _render_catalog(storage, user: dict, spec) -> None:
         visible = [i for i in items if _matches(i, flt, available(i))]
         st.caption(f"{len(visible)} item(s) encontrados.")
         if not visible:
-            empty_state("No se encontraron items", "Prueba con otros filtros o registra uno nuevo.", icon="🔎")
+            empty_state("No se encontraron items", "Prueba con otros filtros o registra uno nuevo.", icon=":material/search:")
         for item in visible:
             if item.get("item_type") == "master":
                 _container_card(storage, user, item, children_by_parent.get(item["id"], []), availability, spec,
@@ -556,7 +564,7 @@ def _render_catalog(storage, user: dict, spec) -> None:
 
     st.caption(f"{found} item(s) encontrados.")
     if not groups and not loose_visible:
-        empty_state("No se encontraron items", "Prueba con otros filtros o registra uno nuevo.", icon="🔎")
+        empty_state("No se encontraron items", "Prueba con otros filtros o registra uno nuevo.", icon=":material/search:")
         return
     if groups:
         section_title("Contenedores Principales", icon=ITEM_TYPE_ICONS["master"],
@@ -593,7 +601,7 @@ def _render_new_item(storage, user: dict) -> None:
             "Descripcion", height=80,
             placeholder="Ej: Contiene piezas Lego de pines 4x2 - 2x2 y una caja con puertas y ventanas"
             if is_master else None,
-            help="Describe lo que guarda el contenedor: luego, en el Catálogo, «✨ Generar productos "
+            help="Describe lo que guarda el contenedor: luego, en el Catálogo, «:material/auto_awesome: Generar productos "
                  "desde la descripción» te propondrá sus productos." if is_master else None,
         )
         location = st.text_input("Ubicacion fisica")
@@ -613,7 +621,7 @@ def _render_new_item(storage, user: dict) -> None:
             quantity = st.number_input("Cantidad inicial", min_value=0, step=1, value=1, key="inv_new_qty")
             min_alert = st.number_input("Umbral de alerta", min_value=0, step=1, value=0, key="inv_new_alert")
 
-        submitted = st.form_submit_button("💾 Registrar", type="primary", use_container_width=True)
+        submitted = st.form_submit_button(":material/save: Registrar", type="primary", use_container_width=True)
 
         if submitted:
             new_id = (new_id or "").strip()
@@ -671,7 +679,7 @@ def _render_import(storage, user: dict) -> None:
         "M1-E1,Multimetro digital,Instrumentacion,Fluke 115,standalone,,unidad,4,Mesa 1,1\n"
     )
     st.download_button(
-        "⬇️ Descargar plantilla CSV", data=template_csv, file_name="plantilla_items_laboratorio.csv",
+        ":material/download: Descargar plantilla CSV", data=template_csv, file_name="plantilla_items_laboratorio.csv",
         mime="text/csv", use_container_width=True,
     )
 
@@ -681,7 +689,7 @@ def _render_import(storage, user: dict) -> None:
             df_upload = pd.read_csv(uploaded, dtype=str).fillna("")
             st.dataframe(df_upload, use_container_width=True, hide_index=True)
 
-            if st.button("📤 Procesar importacion", type="primary", use_container_width=True):
+            if st.button(":material/upload: Procesar importacion", type="primary", use_container_width=True):
                 rows = df_upload.to_dict(orient="records")
                 with st.spinner("Importando items..."):
                     result = storage.bulk_upsert_items(rows, actor_email=user["institutional_email"])
@@ -692,7 +700,7 @@ def _render_import(storage, user: dict) -> None:
                 if result["errors"]:
                     st.warning("Algunas filas no se importaron:")
                     for err in result["errors"]:
-                        st.caption(f"⚠️ {err}")
+                        st.caption(f":material/warning: {err}")
                 st.rerun()
         except Exception as e:
             st.error(f"No se pudo leer el CSV: {e}")
@@ -705,7 +713,7 @@ def render():
     if not guard_role(user, permissions.MANAGER_ROLES, "el Inventario"):
         return
 
-    page_header("Inventario", icon="📦", subtitle="Catálogo por contenedor, alta, edición e importación masiva")
+    page_header("Inventario", icon=":material/inventory_2:", subtitle="Catálogo por contenedor, alta, edición e importación masiva")
 
     if st.session_state.get("editing_item_id"):
         item = storage.get_item(st.session_state.editing_item_id)
@@ -717,7 +725,7 @@ def render():
         return
 
     tab_catalogo, tab_nuevo, tab_import, tab_etiquetas = st.tabs(
-        ["📋 Catalogo", "➕ Nuevo item", "📥 Importar CSV masivo", "🖨️ Etiquetas"]
+        [":material/list_alt: Catalogo", ":material/add: Nuevo item", ":material/upload_file: Importar CSV masivo", ":material/print: Etiquetas"]
     )
     label_spec = labels.load_label_spec(storage)
 

@@ -11,7 +11,7 @@ chequeable de solicitudes, préstamos y servicios.
 import streamlit as st
 
 from core import location, service_requests, traceability
-from core.ui import badge_html, empty_state, esc, page_header, section_title, stat_cards, timeline
+from core.ui import badge_html, empty_state, esc, material, page_header, section_title, stat_cards, timeline
 from views.location_guide import render_route_record, render_verifiable_route
 
 _STATUS_FILTERS = {
@@ -27,7 +27,7 @@ MAX_CUSTODY_STEPS = 40
 def _page_link(page_key: str, label: str, icon: str) -> None:
     page = (st.session_state.get("pages") or {}).get(page_key)
     if page is not None:
-        st.page_link(page, label=label, icon=icon, use_container_width=True)
+        st.page_link(page, label=label, icon=material(icon), use_container_width=True)
 
 
 def _reviewer_names(storage, requests: list) -> dict:
@@ -91,14 +91,14 @@ def _render_student(storage, user: dict) -> None:
         and row.get("status") == service_requests.STATUS_APPROVED
         and not traceability.first_event(index.get(row["id"]), traceability.EVENT_PICKED_UP)
     ]
-    tab_route, tab_list = st.tabs([f"🧭 Ruta de retiro ({len(ready)})", f"📜 Mis solicitudes ({len(requests)})"])
+    tab_route, tab_list = st.tabs([f":material/explore: Ruta de retiro ({len(ready)})", f":material/history: Mis solicitudes ({len(requests)})"])
 
     with tab_route:
         if not ready:
             empty_state(
                 "Nada por retirar",
                 "Cuando aprueben una solicitud de producto, aquí tendrás la ruta paso a paso para llegar a él.",
-                icon="🧭",
+                icon=":material/explore:",
             )
             _page_link("solicitudes", "Hacer una solicitud", "📝")
         else:
@@ -114,14 +114,14 @@ def _render_student(storage, user: dict) -> None:
                     key="trace_route_choice",
                 )
             row = options[choice]
-            section_title(f"Ruta hacia {traceability.request_title(row)}", icon="🧭",
+            section_title(f"Ruta hacia {traceability.request_title(row)}", icon=":material/explore:",
                           caption="Escanea (o escribe) el código de cada etiqueta en el camino. Al llegar "
                                   "obtienes un comprobante que el profesor puede validar.")
             render_verifiable_route(storage, row, user, key_prefix="trace_route")
 
     with tab_list:
         if not requests:
-            empty_state("Todavía no tienes solicitudes", "Tus solicitudes y su avance aparecerán aquí.", icon="📜")
+            empty_state("Todavía no tienes solicitudes", "Tus solicitudes y su avance aparecerán aquí.", icon=":material/history:")
         names = _reviewer_names(storage, requests)
         for row in requests:
             events_row = index.get(row["id"], [])
@@ -147,7 +147,7 @@ def _render_search(requests: list, events: list, index: dict, loans: dict, names
     if not results:
         empty_state("Sin resultados",
                     "Prueba con el código del producto, el nombre del estudiante o el número de la solicitud.",
-                    icon="🔎")
+                    icon=":material/search:")
         return
     shown = results[:MAX_RESULTS]
     st.caption(f"{len(results)} solicitud(es)" + (f"; se muestran {len(shown)}." if len(results) > len(shown) else "."))
@@ -161,7 +161,7 @@ def _render_receipt_check(storage, user: dict, names: dict, loans: dict) -> None
                "Valídalo aquí antes de entregar el producto.")
     with st.form("trace_receipt_form"):
         code = st.text_input("Comprobante", placeholder="Ej: K7Q-2MX", max_chars=12)
-        if st.form_submit_button("🔏 Validar comprobante", type="primary", use_container_width=True):
+        if st.form_submit_button(":material/verified: Validar comprobante", type="primary", use_container_width=True):
             st.session_state.trace_receipt = traceability.verify_receipt(storage, code)
 
     verification = st.session_state.get("trace_receipt")
@@ -169,7 +169,7 @@ def _render_receipt_check(storage, user: dict, names: dict, loans: dict) -> None
         return
     _FEEDBACK.get(verification.get("tone"), st.info)(verification["message"])
     for warning in verification.get("warnings") or []:
-        st.caption(f"⚠️ {warning}")
+        st.caption(f":material/warning: {warning}")
     if not verification.get("valid"):
         return
 
@@ -186,7 +186,7 @@ def _render_receipt_check(storage, user: dict, names: dict, loans: dict) -> None
             for check in checks
         ))
     if not any(check.get("actor_id") == user.get("id") for check in checks):
-        if st.button("✅ Registrar que validé este comprobante", key="trace_receipt_record", use_container_width=True):
+        if st.button(":material/check_circle: Registrar que validé este comprobante", key="trace_receipt_record", use_container_width=True):
             ok, message, _ = traceability.record_receipt_check(storage, verification, user)
             st.session_state.trace_receipt = traceability.verify_receipt(storage, verification["receipt"])
             st.session_state.trace_receipt_notice = (ok, message)
@@ -199,7 +199,7 @@ def _render_receipt_check(storage, user: dict, names: dict, loans: dict) -> None
 def _render_custody(storage, requests: list, names: dict) -> None:
     with st.form("trace_custody_form"):
         code = st.text_input("Código del producto", placeholder="Escanea o escribe, p. ej. 2-1-01-01-001")
-        if st.form_submit_button("🔗 Ver cadena de custodia", use_container_width=True):
+        if st.form_submit_button(":material/link: Ver cadena de custodia", use_container_width=True):
             st.session_state.trace_custody_code = (code or "").strip()
     code = st.session_state.get("trace_custody_code")
     if not code:
@@ -226,7 +226,7 @@ def _render_custody(storage, requests: list, names: dict) -> None:
     st.caption(f"{item.get('name')} · {item['id']} · ruta {route}")
 
     if open_loans:
-        section_title("¿Quién lo tiene ahora?", icon="🤝")
+        section_title("¿Quién lo tiene ahora?", icon=":material/handshake:")
         for loan in open_loans:
             due = loan.get("expected_return_at")
             st.caption(
@@ -235,14 +235,14 @@ def _render_custody(storage, requests: list, names: dict) -> None:
                 + (f" · devolver antes de {traceability.fmt_local(due)}" if due else "")
             )
 
-    section_title("Historial del producto", icon="🔗",
+    section_title("Historial del producto", icon=":material/link:",
                   caption="Lo más reciente primero: movimientos de inventario, solicitudes y trazabilidad.")
     steps = traceability.custody_timeline(
         storage.get_item_history(item["id"]), item_requests,
         storage.get_trace_events(item_id=item["id"]), names,
     )
     if not steps:
-        empty_state("Sin movimientos", "Este producto todavía no tiene historial.", icon="🔗")
+        empty_state("Sin movimientos", "Este producto todavía no tiene historial.", icon=":material/link:")
         return
     steps = list(reversed(steps))
     timeline(steps[:MAX_CUSTODY_STEPS])
@@ -259,7 +259,7 @@ def _render_services(storage, user: dict, requests: list, index: dict, names: di
     if notice:
         (st.success if notice[0] else st.error)(notice[1])
     if not active:
-        empty_state("Sin servicios por atender", "Los servicios aprobados aparecen aquí hasta su entrega.", icon="🛠️")
+        empty_state("Sin servicios por atender", "Los servicios aprobados aparecen aquí hasta su entrega.", icon=":material/build:")
     for row in active:
         events_row = index.get(row["id"], [])
         stage = traceability.service_stage(events_row)
@@ -272,7 +272,7 @@ def _render_services(storage, user: dict, requests: list, index: dict, names: di
                 cols = st.columns(2 if stage == "approved" else 1)
                 start = cols[0].form_submit_button(
                     "▶️ Marcar en curso", use_container_width=True) if stage == "approved" else False
-                deliver = cols[-1].form_submit_button("📦 Marcar entregado", type="primary", use_container_width=True)
+                deliver = cols[-1].form_submit_button(":material/inventory_2: Marcar entregado", type="primary", use_container_width=True)
                 if start or deliver:
                     target = traceability.EVENT_SERVICE_STARTED if start else traceability.EVENT_SERVICE_DELIVERED
                     ok, message, _ = traceability.mark_service_stage(storage, row["id"], target, user, notes)
@@ -295,7 +295,7 @@ def _render_manager(storage, user: dict) -> None:
     stat_cards(traceability.manager_summary(requests, events))
 
     tab_search, tab_receipt, tab_custody, tab_services = st.tabs(
-        ["🔎 Seguimiento", "🔏 Validar comprobante", "🔗 Cadena de custodia", "🛠️ Servicios"]
+        [":material/search: Seguimiento", ":material/verified: Validar comprobante", ":material/link: Cadena de custodia", ":material/build: Servicios"]
     )
     with tab_search:
         _render_search(requests, events, index, loans, names)
@@ -310,7 +310,7 @@ def _render_manager(storage, user: dict) -> None:
 def render():
     storage = st.session_state.storage
     user = st.session_state.user
-    page_header("Trazabilidad", icon="🧭", subtitle="Ruta verificable y seguimiento de solicitudes")
+    page_header("Trazabilidad", icon=":material/explore:", subtitle="Ruta verificable y seguimiento de solicitudes")
     if traceability.is_manager(user):
         _render_manager(storage, user)
     else:
