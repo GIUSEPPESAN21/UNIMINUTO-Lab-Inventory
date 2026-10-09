@@ -189,12 +189,47 @@ Escanear para conservar la cadena de custodia. Los servicios requieren nombre,
 descripción y fecha. Si SMTP está configurado, los administradores reciben un
 correo; si falla, la solicitud permanece guardada y muestra la advertencia.
 
-### Guía móvil de ubicación
+### Ruta verificable y trazabilidad (🧭 Trazabilidad)
 
-Cada producto muestra pasos interactivos derivados del código V3 (estantería,
-piso, contenedor, caja e ítem). Mesa y Lego tienen rutas especiales; códigos
-libres/heredados usan `location`. No se dibuja un mapa porque los documentos no
-incluyen plano, coordenadas ni punto de entrada.
+Cada producto muestra su ruta derivada del código V3 (estantería › piso ›
+contenedor › caja › ítem) con la etiqueta que se encontrará en cada punto. Mesa y
+Lego tienen rutas especiales; códigos libres/heredados usan `location`.
+
+- **Estudiante:** con una solicitud aprobada, recorre la ruta paso a paso y
+  confirma cada punto **escaneando su etiqueta** (o escribiendo el código). Si
+  escanea una equivocada, la app le dice dónde está y hacia dónde ir. Estantería y
+  piso, que no tienen etiqueta, se confirman al llegar o quedan probados al escanear
+  el contenedor. Al terminar recibe un **comprobante** corto y ve su solicitud en
+  una línea de tiempo (creada → revisada → ruta verificada → retirada → devuelta).
+  Los servicios muestran creada → aprobada → en curso → entregado.
+- **Profesor/maestro:** busca por solicitud, producto, estudiante o comprobante;
+  ve quién hizo qué y cuándo, valida el comprobante con el producto en la mano,
+  consulta la **cadena de custodia** de un producto y marca el avance de los
+  servicios.
+- Recorrer la ruta no escribe en la base: se guarda **un solo evento** al
+  completarla (hoja `trace_events`). Registrar la salida en Escanear enlaza el
+  préstamo con la solicitud aprobada. Un estudiante solo ve sus propios registros.
+
+### Generar productos desde la descripción
+
+En **📦 Inventario**, cada Contenedor Principal con descripción ofrece
+**✨ Generar productos desde la descripción**: interpreta el texto (por ejemplo,
+«Contiene Piezas Lego de Pines 4x2 - 2x2 - 2x1») y propone un Contenedor de
+Característica por tipo de pieza o caja interna, con código consecutivo dentro del
+contenedor (2-1-01-01-000, 2-1-01-02-000…) y la ubicación heredada. La vista previa
+es editable (crear sí/no, nombre, código, cantidad, unidad), señala lo ambiguo
+(como una medida «1x0») y crea todo con **una sola escritura** en la base. Las
+cantidades no vienen en la descripción: escríbelas antes de crear o quedan como
+«pendiente de conteo». El catálogo se muestra agrupado por contenedor.
+
+### Salud del inventario (📊 Reportes)
+
+La pestaña **🩺 Salud del inventario** audita los datos: códigos y jerarquía,
+ubicación textual frente al código, errores de digitación («Contendor»),
+categorías escritas de varias formas, medidas imposibles, cantidades pendientes y
+contenido descrito sin productos. Las correcciones seguras (como normalizar la
+ubicación desde el código) se revisan en una tabla antes/después y solo se aplican
+al confirmar; quedan en el historial del ítem.
 
 ### Eliminar ítems
 
@@ -257,9 +292,12 @@ contraseña — todos obligatorios.
 
 ## Arquitectura
 
-- **Frontend/backend**: Streamlit, con navegación moderna agrupada por
-  secciones (`st.navigation`): Principal, Gestión del laboratorio,
-  Administración y Mi cuenta — visibles según el rol de quien inició sesión.
+- **Frontend/backend**: Streamlit, con navegación agrupada por secciones
+  (`st.navigation`): Principal, Gestión del laboratorio, Administración y Mi
+  cuenta — visibles según el rol de quien inició sesión. La interfaz usa un
+  sistema de diseño propio (`style.css` + componentes de `core/ui.py`): tarjetas,
+  indicadores, líneas de tiempo, botones animados y modo oscuro, adaptados a
+  celular.
 - **Base de datos**: un archivo Excel (`UNIMINUTO_LAB_DB.xlsx`) que vive en el
   repositorio **privado** `GIUSEPPESAN21/UNIMINUTO-Lab-Database`. Cada
   escritura se guarda localmente y se sincroniza a GitHub vía API en un hilo
@@ -275,7 +313,10 @@ core/
   storage.py             Capa de datos: Excel local (escritura atómica) + sync a GitHub
   auth.py                 Registro, login, reglas de rol
   labels.py                Nomenclatura de tipos de item (UI) y etiquetas adaptables a su tamaño real (PNG/PDF/prueba)
-  ui.py                    Componentes visuales compartidos (logo, encabezados)
+  ui.py                    Componentes visuales compartidos (encabezados, tarjetas, indicadores, línea de tiempo)
+  traceability.py         Ruta verificable, comprobantes, líneas de tiempo y cadena de custodia
+  inventory_suggestions.py Productos propuestos a partir de la descripción de un contenedor
+  data_quality.py         Auditoría de calidad del inventario y correcciones seguras
   barcode.py              Validación/lectura de codigos (GLIOPS V3) y resolución de escaneo
   loans.py                Checkout / checkin / vencidos
   reservations.py         Validación, conflictos y aprobación de reservas
@@ -284,7 +325,7 @@ core/
   notifications.py        Correo SMTP + alertas WhatsApp opcionales
   reports.py              Analítica y exportación a Excel
 views/
-  login.py, inicio.py, escanear.py, inventario.py, solicitudes.py,
+  login.py, inicio.py, escanear.py, inventario.py, solicitudes.py, trazabilidad.py,
   reservas.py, location_guide.py, label_settings.py, perfil.py, prestamos.py, usuarios.py,
   reportes.py, acerca_de.py
 tests/                  Pruebas unitarias de core/* (pytest, sin tocar Excel/GitHub)

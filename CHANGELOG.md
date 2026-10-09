@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.12.0 — Interfaz propia, productos desde la descripción y trazabilidad
+
+### Nuevo
+- **🧭 Trazabilidad:** ruta de retiro verificable para estudiantes (cada etiqueta del
+  camino se confirma escaneándola; si es la equivocada, la app indica dónde está y
+  hacia dónde ir), comprobante corto al completarla y línea de tiempo de cada
+  solicitud. Profesor y maestro: buscador, validación del comprobante, cadena de
+  custodia por producto y avance de servicios (en curso / entregado). Nueva hoja
+  `trace_events`; recorrer la ruta no escribe, se guarda un solo evento al final.
+- **✨ Generar productos desde la descripción** de un Contenedor Principal: propuesta
+  editable de Contenedores de Característica con código consecutivo, ubicación
+  heredada y avisos de ambigüedad; alta masiva con una sola escritura
+  (`save_items_bulk`). Catálogo agrupado por contenedor con tarjetas y filtros de
+  stock.
+- **🩺 Salud del inventario** en Reportes: auditoría de códigos, jerarquía,
+  ubicaciones, errores de digitación, categorías, medidas imposibles y contenido sin
+  registrar, con correcciones seguras confirmadas antes de escribir.
+
+### Interfaz
+- Sistema de diseño propio: paleta institucional, botones con degradado y
+  animación, pestañas tipo pastilla, tarjetas, indicadores, líneas de tiempo y modo
+  oscuro coherente; adaptado a celular y respetuoso de «reducir movimiento».
+- Barra lateral con marca, página activa resaltada y tarjeta de usuario; inicio con
+  saludo, indicadores y accesos rápidos según el rol; nueva pantalla de acceso.
+- Reportes, Préstamos, Reservas, Usuarios, Perfil y Acerca de usan los mismos
+  componentes; gráficas sin fondo propio para el modo oscuro.
+
+### Corregido
+- Reservas fallaba con «multiple elements with the same key» cuando un revisor tenía
+  una reserva propia aprobada.
+- Botones primarios con ayuda emergente y botones de formulario salían en el rojo
+  por defecto de Streamlit.
+
+### Calidad
+- De 562 a 863 pruebas (cobertura 89 %), en verde con Python 3.11, 3.12 y 3.13.
+
 ## v1.11.0 — Etiquetas legibles, a tamaño real y sin letras apretadas
 
 ### Corregido

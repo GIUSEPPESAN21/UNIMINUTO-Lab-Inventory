@@ -1587,3 +1587,7 @@ body, .stApp {
     [data-testid="stSidebarNavLink"]:hover { transform: none; }
     .stApp button[data-testid^="stBaseButton-primary"] { transition: none; }
 }
+
+/* Botón de los popovers (p. ej. «🏷️ Etiqueta» en tarjetas angostas): una sola línea. */
+[data-testid="stPopover"] button { padding-left: 0.6rem; padding-right: 0.6rem; }
+[data-testid="stPopover"] button p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

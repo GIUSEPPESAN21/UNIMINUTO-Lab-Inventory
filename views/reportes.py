@@ -24,6 +24,13 @@ _GROUP_TITLES = {
 _SUBTLE = 'style="color: var(--subtle-text-color); font-size: 0.85rem;"'
 
 
+def _transparent(fig):
+    """Gráfica sin fondo propio: hereda el fondo claro u oscuro de la app."""
+    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      margin=dict(l=10, r=10, t=10, b=10), font=dict(family="Inter, sans-serif"))
+    return fig
+
+
 def render():
     storage = st.session_state.storage
 
@@ -45,38 +52,50 @@ def render():
     )
 
     with tab1:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Prestamos historicos", len(all_loans))
-        c2.metric("Duracion promedio de prestamo", f"{reports.average_loan_duration_hours(all_loans):.1f} h")
-        c3.metric("Items activos", len([i for i in items if i.get("status") == "active"]))
-
-        st.markdown("---")
+        stat_cards([
+            {"label": "Préstamos históricos", "value": len(all_loans), "icon": "📋", "tone": "info"},
+            {"label": "Duración promedio de un préstamo",
+             "value": f"{reports.average_loan_duration_hours(all_loans):.1f} h".replace(".", ","), "icon": "⏱️"},
+            {"label": "Ítems activos", "value": len([i for i in items if i.get("status") == "active"]),
+             "icon": "📦", "tone": "success"},
+        ])
         import plotly.express as px
 
         col_a, col_b = st.columns(2)
         with col_a:
-            st.subheader("📅 Salidas por dia (ultimos 30 dias)")
+            section_title("Salidas por día", icon="📅", caption="Últimos 30 días")
             df_daily = reports.loans_per_day(all_loans)
             if df_daily.empty:
-                st.info("Sin salidas registradas en los ultimos 30 dias.")
+                empty_state("Sin salidas registradas", "Aquí verás las salidas de los últimos 30 días.",
+                            icon="📅")
             else:
-                fig = px.bar(df_daily, x="Fecha", y="Salidas")
-                st.plotly_chart(fig, use_container_width=True)
+                fig = px.bar(df_daily, x="Fecha", y="Salidas", color_discrete_sequence=["#1565C0"])
+                st.plotly_chart(_transparent(fig), use_container_width=True)
         with col_b:
-            st.subheader("🗂️ Items activos por categoria")
+            section_title("Ítems activos por categoría", icon="🗂️")
             df_cat = reports.items_by_category(items)
             if df_cat.empty:
-                st.info("Sin items activos para graficar.")
+                empty_state("Sin ítems activos", "Registra productos para ver su distribución.", icon="🗂️")
             else:
-                fig2 = px.pie(df_cat, names="Categoria", values="Items", hole=0.45)
-                st.plotly_chart(fig2, use_container_width=True)
+                fig2 = px.pie(df_cat, names="Categoria", values="Items", hole=0.55,
+                              color_discrete_sequence=["#1565C0", "#26A69A", "#F2B705", "#E65100", "#7E57C2"])
+                st.plotly_chart(_transparent(fig2), use_container_width=True)
 
-        st.markdown("---")
-        st.subheader("🏆 Items mas prestados")
-        st.dataframe(reports.most_borrowed_items(all_loans), use_container_width=True, hide_index=True)
-
-        st.subheader("👤 Usuarios con mas prestamos")
-        st.dataframe(reports.top_users_by_loans(all_loans), use_container_width=True, hide_index=True)
+        top_items = reports.most_borrowed_items(all_loans)
+        top_users = reports.top_users_by_loans(all_loans)
+        col_c, col_d = st.columns(2)
+        with col_c:
+            section_title("Ítems más prestados", icon="🏆")
+            if top_items.empty:
+                empty_state("Todavía no hay préstamos", icon="🏆")
+            else:
+                st.dataframe(top_items, use_container_width=True, hide_index=True)
+        with col_d:
+            section_title("Usuarios con más préstamos", icon="👤")
+            if top_users.empty:
+                empty_state("Todavía no hay préstamos", icon="👤")
+            else:
+                st.dataframe(top_users, use_container_width=True, hide_index=True)
 
     with tab_health:
         _render_health(storage, st.session_state.user, items)
@@ -84,16 +103,16 @@ def render():
     with tab2:
         overdue = loans_core.get_overdue_loans(storage)
         if not overdue:
-            st.success("No hay prestamos vencidos.")
+            empty_state("No hay préstamos vencidos", "Todo se ha devuelto a tiempo.", icon="✅")
         for loan in overdue:
             st.error(
                 f"**{loan['item_name']}** x{loan['quantity']} · prestado a {loan['user_name']} "
-                f"· debia devolverse antes del {loan['expected_return_at'].strftime('%d/%m/%Y')}"
+                f"· debía devolverse antes del {loan['expected_return_at'].strftime('%d/%m/%Y')}"
             )
 
     with tab3:
-        st.subheader("Descarga masiva de la base de datos")
-        st.caption("Genera un Excel con items, usuarios (sin contrasenas) y prestamos.")
+        section_title("Descarga completa de la base de datos", icon="📥",
+                      caption="Un Excel con ítems, usuarios (sin contraseñas) y préstamos.")
         if st.button("📥 Generar Excel", type="primary"):
             buf = reports.export_full_database(items, users, all_loans)
             st.session_state["export_buffer"] = buf
