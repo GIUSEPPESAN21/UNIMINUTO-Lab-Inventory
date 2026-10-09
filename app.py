@@ -8,12 +8,13 @@ via correo institucional.
 """
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 import streamlit as st
 
 from core.storage import LabStorage
 from core import auth, permissions
-from core.ui import centered_logo, esc, sync_status_banner
+from core.ui import LOGO_PATH, footer, sync_status_banner, user_chip_html
 
 st.set_page_config(
     page_title="Inventario de Laboratorio UNIMINUTO",
@@ -24,9 +25,10 @@ st.set_page_config(
 
 @st.cache_data
 def load_css():
+    # Ruta relativa a este archivo (no al directorio de trabajo) y UTF-8 explicito:
+    # la hoja de estilos tiene tildes y simbolos.
     try:
-        with open("style.css") as f:
-            return f.read()
+        return (Path(__file__).resolve().parent / "style.css").read_text(encoding="utf-8")
     except FileNotFoundError:
         return ""
 
@@ -81,7 +83,7 @@ pages = {
     "solicitudes": st.Page(solicitudes.render, title="Solicitudes", icon="📝", url_path="solicitudes"),
     "trazabilidad": st.Page(trazabilidad.render, title="Trazabilidad", icon="🧭", url_path="trazabilidad"),
     "reservas": st.Page(reservas.render, title="Reservas", icon="🗓️", url_path="reservas"),
-    "prestamos": st.Page(prestamos.render, title="Prestamos", icon="📋", url_path="prestamos"),
+    "prestamos": st.Page(prestamos.render, title="Préstamos", icon="📋", url_path="prestamos"),
 }
 
 if user["role"] in permissions.MANAGER_ROLES:
@@ -99,45 +101,30 @@ st.session_state.pages = pages
 # Navegacion agrupada por secciones para que el sidebar sea facil de leer.
 nav_sections = {"🧭 Principal": [pages["inicio"], pages["escanear"], pages["solicitudes"], pages["trazabilidad"], pages["reservas"], pages["prestamos"]]}
 if user["role"] in permissions.MANAGER_ROLES:
-    nav_sections["🗂️ Gestion del laboratorio"] = [pages["inventario"], pages["reportes"]]
+    nav_sections["🗂️ Gestión del laboratorio"] = [pages["inventario"], pages["reportes"]]
 if user["role"] in permissions.ADMIN_ROLES:
-    nav_sections["🔐 Administracion"] = [pages["usuarios"]]
+    nav_sections["🔐 Administración"] = [pages["usuarios"]]
 nav_sections["👤 Mi cuenta"] = [pages["perfil"], pages["acerca_de"]]
 
-ROLE_LABELS = {"estudiante": "Estudiante", "profesor": "Profesor", "maestro": "Perfil maestro"}
-LOGO_URL = (
-    "https://upload.wikimedia.org/wikipedia/commons/d/db/"
-    "Logotipo_de_la_Corporaci%C3%B3n_Universitaria_Minuto_de_Dios.svg"
-)
+# Marca institucional arriba a la izquierda (sidebar y cabecera cuando se
+# colapsa); el logo se sirve desde assets/, sin depender de Internet.
+if LOGO_PATH.exists():
+    st.logo(str(LOGO_PATH), size="large", icon_image=str(LOGO_PATH))
 
 with st.sidebar:
-    centered_logo(LOGO_URL, width=70)
     st.markdown(
-        '<p style="text-align:center; font-weight:600; margin-top:4px;">Laboratorio de Ingeniería</p>',
+        '<div class="lab-side-brand"><span class="lab-side-brand__name">Inventario de Laboratorio</span>'
+        '<span class="lab-side-brand__tag">UNIMINUTO · Laboratorio de Ingeniería</span></div>',
         unsafe_allow_html=True,
     )
-    st.markdown("---")
-    st.markdown(
-        f"""
-        <div class="user-chip">
-            <div class="user-avatar">{esc(user['full_name'][:1].upper())}</div>
-            <div>
-                <div class="user-name">{esc(user['full_name'])}</div>
-                <div class="user-role role-{esc(user['role'])}">{esc(ROLE_LABELS.get(user['role'], user['role']))}</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.markdown("---")
-    if st.button("🚪 Cerrar sesion", use_container_width=True):
+    st.markdown(user_chip_html(user), unsafe_allow_html=True)
+    if st.button("🚪 Cerrar sesión", use_container_width=True):
         st.session_state.user = None
         st.session_state.login_at = None
         st.rerun()
-    st.markdown("---")
-    st.caption("© 2026 UNIMINUTO · Laboratorio de Ingeniería.")
 
 sync_status_banner(storage, user)
 
 nav = st.navigation(nav_sections)
 nav.run()
+footer()
