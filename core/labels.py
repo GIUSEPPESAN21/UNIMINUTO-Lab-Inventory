@@ -70,13 +70,11 @@ def type_name(item_type: str) -> str:
 # amplia. Si la etiqueta sale pequeña, casi siempre el tamaño configurado (o el
 # papel del driver) no coincide con el rollo real: ver la hoja de prueba.
 #
-# Diseño adaptable con piso de legibilidad: ningun texto se imprime por debajo
-# de ~5 pt y el espacio entre bloques es proporcional al tamaño. Si todo no
-# cabe a un tamaño legible se omite primero lo menos importante (categoria,
-# tipo, aviso, ...) en vez de encoger y apretar las letras; la interfaz informa
-# que se omitio. Las letras se rasterizan en monocromo con hinting: trazos
-# uniformes y letras separadas, sin el "empaste" que produce suavizar y luego
-# umbralizar a 1 bit.
+# Formato clasico del laboratorio (encabezado con logo, banda negra con el
+# nombre, linea de datos, barras y codigo), escalado al tamaño configurado;
+# solo el contenido se ajusta para caber (ver "Formato de la etiqueta"). Las
+# letras se rasterizan en monocromo con hinting: trazos uniformes y letras
+# separadas, sin el "empaste" que produce suavizar y luego umbralizar a 1 bit.
 #
 # Code 128 codifica todo el ASCII imprimible, asi que sirve tal cual para los
 # codigos numericos y alfanumericos (ver core/barcode.py) y lo leen los
@@ -87,7 +85,6 @@ def type_name(item_type: str) -> str:
 
 import functools
 import io
-import itertools
 import json
 import math
 import re
@@ -143,18 +140,13 @@ LABEL_NOTICE_SHORT_TEXT = "NO RETIRAR SIN PRÉSTAMO"
 
 # Barras: modulo entre 0,25 mm (minimo recomendado para lectores USB) y
 # 0,5 mm; zona de silencio de 10 modulos si cabe (ISO/IEC 15417), nunca menos
-# de 6. Alto minimo 7 mm (la recomendacion general es >= 6,35 mm o el 15 % del
-# ancho del simbolo) y, si sobra espacio, hasta el 36 % del alto de la etiqueta.
+# de 6. El alto (9 a 10 mm a 50 x 25) lo fija el formato de la etiqueta.
 _MIN_QUIET_MODULES = 6
 _PREFERRED_QUIET_MODULES = 10
 _MAX_MODULE_DOTS = 4  # 0,5 mm a 203 dpi
 _MIN_MODULE_MM = 0.25
 _MAX_MODULE_MM = 0.5
-_MIN_BAR_MM = 7.0
-_BAR_HEIGHT_RATIO = 0.36
-_MAX_BAR_MM = 18.0
-_LOGO_MIN_MM = 3.6
-_SHRINK_LIMIT = 0.72  # un texto largo se reduce como mucho al 72 % antes de partirse u omitirse
+_SHRINK_LIMIT = 0.72  # un texto de la hoja de prueba se reduce como mucho al 72 %
 # En el PDF el raster empieza 0,01 puntos de impresora hacia adentro y termina
 # 0,001 antes de su ultimo punto (ver _label_image_to_pdf). Ambos superan con
 # holgura el error numerico de los visores y ninguno mueve el centro de un pixel.
@@ -171,7 +163,7 @@ class _TextStyle:
     shrink: float = _SHRINK_LIMIT  # cuanto puede reducirse para caber (0 = hasta el piso)
 
 
-# Antes: aviso 3,5 pt, metadatos 3,9 pt, tipo 4,3 pt y 1 punto entre lineas.
+# Estilos de la hoja de prueba de impresion (y del respaldo sin logo).
 _STYLES = {
     "lab": _TextStyle(6.6, 5.4, 0.07, 0.10, shrink=0.0),
     "notice": _TextStyle(5.8, 5.0, 0.05, 0.10, shrink=0.0),
@@ -179,17 +171,6 @@ _STYLES = {
     "meta": _TextStyle(6.2, 5.2, 0.03, 0.10),
     "code": _TextStyle(9.5, 6.0, 0.06, 0.0),
 }
-
-# Importancia relativa del contenido: si no todo cabe, se conserva el conjunto
-# de mayor valor que quepa a tamaño legible. La marca institucional pesa mas
-# que todos los datos secundarios juntos: solo se omite si no hay alternativa.
-_FEATURE_WEIGHTS = {
-    "name": 100, "brand": 70, "name_wrap": 32, "route": 26,
-    "location": 20, "notice": 14, "type": 8, "category": 6,
-}
-_META_ORDER = ("route", "location", "type", "category")
-# Barra vertical: los datos libres (p. ej. "Estantería 2 · Piso 1") ya pueden traer "·".
-_META_SEPARATOR = "  |  "
 
 _FONT_CANDIDATES_BOLD = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -497,7 +478,7 @@ def _barcode_geometry(n_modules: int, width_px: int, dpi: int) -> tuple:
 
 
 # ---------------------------------------------------------------------------
-# Diseño adaptable
+# Composicion
 # ---------------------------------------------------------------------------
 
 def _location_guide(code: str) -> str:
@@ -550,8 +531,11 @@ class LabelLine:
 
     @property
     def width(self) -> float:
-        style = _STYLES[self.role]
-        return _measure(self.text, self.size, style.tracking, style.word_spacing)
+        return (
+            sum(_advance(char, self.size) for char in self.text)
+            + max(0, len(self.text) - 1) * self.tracking
+            + self.text.count(" ") * self.word_spacing
+        )
 
     @property
     def box(self) -> tuple:
@@ -607,9 +591,7 @@ class LabelLayout:
         return notes
 
 
-class _NoFit(Exception):
-    """El conjunto de contenido probado no cabe a tamaño legible."""
-
+# Estilos de texto de la hoja de prueba de impresion (escalan con el tamaño).
 
 def _type_scale(spec: LabelSpec) -> float:
     """Factor de tamaño del texto respecto a la etiqueta de referencia 50 x 25.
@@ -646,316 +628,306 @@ def _fit(role: str, text: str, max_width: float, preferred: int, low: int):
     return None if size is None else _make_line(role, text, size)
 
 
-def _fit_or_ellipsize(role: str, text: str, max_width: float, preferred: int, low: int):
-    line = _fit(role, text, max_width, preferred, low)
-    if line is not None:
-        return line, False
-    style = _STYLES[role]
-    clipped = _ellipsize(text, _load_font(low), max_width, style.tracking * low, style.word_spacing * low)
-    if not clipped:
-        raise _NoFit(role)
-    return _make_line(role, clipped, low), True
+# ---------------------------------------------------------------------------
+# Formato de la etiqueta (el clasico del laboratorio)
+# ---------------------------------------------------------------------------
+# Composicion fija, la de las etiquetas que el laboratorio ya usa y prefiere:
+#
+#   logo | LABORATORIO DE INGENIERIA / tipo de activo / aviso
+#   ----------------------------------------------------------
+#   [ nombre en banda negra ]
+#   RUTA · UBIC · CAT
+#   |||||||||||||||| codigo de barras ||||||||||||||||
+#                     2-1-01-00-000
+#
+# La geometria esta en puntos de impresora sobre el lienzo de referencia de
+# 384 x 192 (50 x 25 mm a 203 dpi) y escala con el tamaño real configurado.
+# Solo el CONTENIDO se ajusta para caber, sin cambiar el formato: primero baja
+# la letra hasta su minimo, despues se quita el espacio extra entre letras, los
+# datos pasan a una segunda linea y, como ultimo recurso, el texto se acorta
+# con «…». Si aun asi falta alto para las barras, se omiten los datos.
+_CLASSIC_CANVAS = (384, 192)
+_C_MARGIN_X = 8
+_C_MARGIN_Y = 4
+_C_GAP = 2
+_C_HEADER_HEIGHT = 46
+_C_HEADER_LINE_GAP = 1
+_C_DIVIDER = 1
+_C_LOGO_BOX = (78, 42)
+_C_HEADER_TEXT_GAP = 8
+_C_TITLE_PADDING = (5, 1)
+# (tamaño preferido, tamaño minimo con el espaciado original, piso sin espaciado)
+_C_SIZES = {
+    "lab": (14, 9, 9), "type": (12, 9, 9), "notice": (10, 9, 9),
+    "name": (18, 15, 12), "meta": (11, 9, 9), "code": (26, 9, 9),
+}
+# Espacio extra entre letras y entre palabras, en puntos de impresora.
+_C_SPACING = {"lab": (2, 2), "type": (1, 1), "notice": (1, 1), "name": (1, 1), "meta": (0, 0), "code": (0, 0)}
+# Piso absoluto de las letras: 9 puntos a 203 dpi (~3,2 pt, el texto mas
+# pequeño del formato clasico), aunque la etiqueta configurada sea mas chica.
+_C_MIN_FONT = 9
+_C_MIN_BAR_MM = 9.0
+_C_MAX_BAR_MM = 10.0
+_C_META_SEPARATOR = "  ·  "
+_C_MAX_META_LINES = 2
 
 
-def _wrap_name(text: str, max_width: float, preferred: int, low: int) -> list:
-    """Nombre en dos lineas equilibradas (sin recortar) o lista vacia."""
-    words = text.split()
-    if len(words) < 2:
-        return []
-    style = _STYLES["name"]
-    for size in range(preferred, low - 1, -1):
+def _classic_width(text: str, size: int, tracking: float = 0, word_spacing: float = 0) -> float:
+    return (
+        sum(_advance(char, size) for char in text)
+        + max(0, len(text) - 1) * tracking
+        + text.count(" ") * word_spacing
+    )
+
+
+def _classic_fit(role: str, text: str, max_width: float, scale: float, clip: bool = True,
+                 legible: int = 1):
+    """(linea, recortada): la letra mas grande que cabe con el espaciado
+    original; si no cabe ni a su minimo, sin espaciado extra hasta el piso; y
+    solo entonces acortada con «…». Ningun tamaño baja de `legible`. Con
+    clip=False devuelve (None, True) en lugar de acortar."""
+    preferred, minimum, floor = (max(legible, round(value * scale)) for value in _C_SIZES[role])
+    tracking, word_spacing = (round(value * scale) for value in _C_SPACING[role])
+    for size in range(preferred, minimum - 1, -1):
+        if _classic_width(text, size, tracking, word_spacing) <= max_width:
+            return LabelLine(role, text, size, tracking, word_spacing), False
+    for size in range(minimum, min(floor, minimum) - 1, -1):
+        if _classic_width(text, size) <= max_width:
+            return LabelLine(role, text, size), False
+    if not clip:
+        return None, True
+    low = min(floor, minimum)
+    clipped = _ellipsize(text, _load_font(low), max_width)
+    return LabelLine(role, clipped or text[:1], low), True
+
+
+def _classic_meta_lines(segments: list, max_width: float, scale: float, legible: int) -> list:
+    """Opciones para los datos [(clave, texto), ...], de la mas completa a la
+    mas compacta: todos en una linea o en dos (sin cortar palabras); luego sin
+    los ultimos datos (categoria, despues ubicacion), otra vez en una o dos
+    lineas; y, como ultimo recurso, todo en una linea acortada con «…». Cada
+    opcion: (lineas, recortada, claves mostradas)."""
+    if not segments:
+        return [([], False, ())]
+    keys = tuple(key for key, _ in segments)
+    texts = [text for _, text in segments]
+    options = []
+    for count in range(len(texts), 0, -1):
+        shown = texts[:count]
+        line, _ = _classic_fit(
+            "meta", _C_META_SEPARATOR.join(shown), max_width, scale, clip=False, legible=legible,
+        )
+        if line is not None:
+            options.append(([line], False, keys[:count]))
+            continue
         best = None
-        for cut in range(1, len(words)):
-            first, second = " ".join(words[:cut]), " ".join(words[cut:])
-            widest = max(
-                _measure(first, size, style.tracking, style.word_spacing),
-                _measure(second, size, style.tracking, style.word_spacing),
-            )
-            if widest <= max_width and (best is None or widest < best[0]):
-                best = (widest, first, second)
+        for cut in range(1, count) if _C_MAX_META_LINES > 1 else ():
+            parts = [_C_META_SEPARATOR.join(shown[:cut]), _C_META_SEPARATOR.join(shown[cut:])]
+            fitted = [_classic_fit("meta", part, max_width, scale, clip=False, legible=legible)[0]
+                      for part in parts]
+            if all(fitted):
+                size = min(item.size for item in fitted)
+                if best is None or size > best[0]:
+                    best = (size, parts)
         if best:
-            return [_make_line("name", best[1], size, inverse=True),
-                    _make_line("name", best[2], size, inverse=True)]
-    return []
+            lines = [_classic_meta_line(text, best[0], max_width, scale) for text in best[1]]
+            options.append((lines, False, keys[:count]))
+    joined = _C_META_SEPARATOR.join(texts)
+    options.append(([_classic_fit("meta", joined, max_width, scale, legible=legible)[0]], True, keys))
+    return options
 
 
-def _label_fields(code: str, spec: LabelSpec, description, notice, category, location, item_type) -> dict:
+def _classic_meta_line(text: str, size: int, max_width: float, scale: float) -> LabelLine:
+    """Linea de datos a un tamaño comun (las dos lineas se ven iguales)."""
+    tracking, word_spacing = (round(value * scale) for value in _C_SPACING["meta"])
+    if _classic_width(text, size, tracking, word_spacing) > max_width:
+        tracking = word_spacing = 0
+    if _classic_width(text, size, tracking, word_spacing) > max_width:
+        text = _ellipsize(text, _load_font(size), max_width)
+    return LabelLine("meta", text, size, tracking, word_spacing)
+
+
+def _classic_fields(code: str, spec: LabelSpec, description, notice, category, location, item_type) -> dict:
     notice = _clean_text(notice)
     item_type = _clean_text(item_type)
-    location = _clean_text(location)
-    category = _clean_text(category)
-    variants = []
+    location, category = _clean_text(location), _clean_text(category)
+    # notice=None (o "") conserva la variante minima, sin encabezado.
+    header = []
     if notice:
-        variants = [notice]
-        if notice == LABEL_NOTICE_TEXT:
-            variants.append(LABEL_NOTICE_SHORT_TEXT)
-    meta = {
-        "route": _location_guide(code) if spec.shows("route") else "",
-        "location": f"UBIC: {location}" if location and spec.shows("location") else "",
-        "type": ITEM_TYPE_NAMES.get(item_type, "") if spec.shows("type") else "",
-        "category": f"CAT: {category}" if category and spec.shows("category") else "",
-    }
+        if spec.shows("brand"):
+            header.append(("lab", LABEL_INSTITUTION_TEXT))
+        if spec.shows("type"):
+            header.append(("type", type_name(item_type) or "Activo de laboratorio"))
+        if spec.shows("notice"):
+            header.append(("notice", notice))
+    meta = []
+    route = _location_guide(code)
+    if route and spec.shows("route"):
+        meta.append(("route", route))
+    if location and spec.shows("location"):
+        meta.append(("location", f"UBIC: {location}"))
+    if category and spec.shows("category"):
+        meta.append(("category", f"CAT: {category}"))
     return {
         "code": code,
         "name": _clean_text(description),
-        # notice=None (o "") conserva la variante minima sin encabezado.
-        "brand": bool(notice) and spec.shows("brand"),
-        "notice_variants": variants if spec.shows("notice") else [],
+        "logo": bool(notice) and spec.shows("brand"),
+        "header": header,
         "meta": meta,
     }
 
 
-def _available_features(fields: dict) -> set:
-    available = {key for key, text in fields["meta"].items() if text}
-    if fields["name"]:
-        available.update({"name", "name_wrap"})
-    if fields["brand"]:
-        available.add("brand")
-    if fields["notice_variants"]:
-        available.add("notice")
-    return available
-
-
-def _candidate_sets(available: set) -> list:
-    keys = sorted(available)
-    subsets = [frozenset(combo) for r in range(len(keys), -1, -1)
-               for combo in itertools.combinations(keys, r)]
-    subsets.sort(key=lambda s: (-sum(_FEATURE_WEIGHTS[k] for k in s), -len(s), sorted(s)))
-    return subsets
-
-
-def _compose(fields: dict, spec: LabelSpec, canvas: tuple, keep: frozenset, scale: float) -> LabelLayout:
-    """Ubica el contenido `keep` a escala `scale`. Lanza _NoFit si no cabe."""
+def _compose_classic(fields: dict, spec: LabelSpec, canvas: tuple) -> LabelLayout:
     width, height = canvas
-    dpi = spec.dpi
-    type_scale = _type_scale(spec) * scale
+    scale = min(width / _CLASSIC_CANVAS[0], height / _CLASSIC_CANVAS[1])
 
-    def dots(mm: float) -> int:
-        return max(1, round(_mm_to_dots(mm, dpi)))
+    def px(value: float) -> int:
+        return max(1, round(value * scale))
 
-    margin_x = dots(_clamp(0.03 * spec.width_mm, 1.5, 3.0))
-    margin_y = dots(_clamp(0.06 * spec.height_mm, 1.5, 3.0))
+    margin_x, margin_y, gap = px(_C_MARGIN_X), px(_C_MARGIN_Y), px(_C_GAP)
     content_width = width - 2 * margin_x
-    gap = max(3, round(_mm_to_dots(_clamp(0.032 * spec.height_mm, 0.75, 2.0), dpi) * scale))
+    legible = max(1, round(_C_MIN_FONT * spec.dpi / LABEL_DPI))
     shortened = []
-
-    def sizes(role: str) -> tuple:
-        return _style_sizes(role, dpi, type_scale)
-
-    # --- Encabezado: logo + laboratorio + (aviso | primer dato promovido) ---
-    meta_items = [(key, fields["meta"][key]) for key in _META_ORDER if key in keep and fields["meta"][key]]
-    header_lines, logo_size = [], None
-    with_brand, with_notice = "brand" in keep, "notice" in keep
-    if with_brand or with_notice:
-        lab_pref, lab_low = sizes("lab")
-        notice_pref, notice_low = sizes("notice")
-        meta_pref, meta_low = sizes("meta")
-        line_gap = max(2, round(0.28 * notice_pref))
-        if with_brand:
-            estimated = _ink_extent(LABEL_INSTITUTION_TEXT, lab_pref)
-            text_block = estimated[1] - estimated[0]
-            if with_notice or meta_items:
-                text_block += line_gap + round(0.93 * (notice_pref if with_notice else meta_pref))
-            logo_height = max(text_block, dots(_LOGO_MIN_MM))
-            logo = _load_brand_logo()
-            aspect = (logo.width / logo.height) if logo is not None else 2.2
-            logo_size = (max(1, round(logo_height * aspect)), logo_height)
-            text_x = margin_x + logo_size[0] + dots(1.2)
-        else:
-            text_x = margin_x
-        text_width = width - margin_x - text_x
-        if with_brand:
-            lab = _fit("lab", LABEL_INSTITUTION_TEXT, text_width, lab_pref, lab_low)
-            if lab is None:
-                raise _NoFit("brand")
-            header_lines.append(lab)
-        if with_notice:
-            notice_line = None
-            for variant in fields["notice_variants"]:
-                notice_line = _fit("notice", variant, text_width, notice_pref, notice_low)
-                if notice_line is not None:
-                    break
-            if notice_line is None:
-                raise _NoFit("notice")
-            header_lines.append(notice_line)
-        elif with_brand and meta_items:
-            # Sin aviso, el primer dato (normalmente la ruta) sube junto al logo
-            # y ahorra una fila completa.
-            promoted = _fit("meta", meta_items[0][1], text_width, meta_pref, meta_low)
-            if promoted is not None:
-                header_lines.append(promoted)
-                meta_items = meta_items[1:]
-        for line in header_lines:
-            line.x = text_x
-        header_text_height = (
-            sum(line.ink_height for line in header_lines) + line_gap * (len(header_lines) - 1)
-        )
-        header_height = max(header_text_height, logo_size[1] if logo_size else 0)
-    else:
-        line_gap = 0
-        header_height = 0
-
-    # --- Nombre en banda negra (1 o 2 lineas) ---
-    name_lines, band_pad_y = [], 0
-    if "name" in keep:
-        name_pref, name_low = sizes("name")
-        pad_x = max(2, round(0.42 * name_pref))
-        band_pad_y = max(2, round(0.24 * name_pref))
-        band_text_width = content_width - 2 * pad_x
-        single = _fit("name", fields["name"], band_text_width, name_pref, name_low)
-        if single is not None:
-            name_lines = [single]
-        elif "name_wrap" in keep:
-            name_lines = _wrap_name(fields["name"], band_text_width, name_pref, name_low)
-            if not name_lines:
-                raise _NoFit("name_wrap")
-        else:
-            line, clipped = _fit_or_ellipsize("name", fields["name"], band_text_width, name_pref, name_low)
-            name_lines = [line]
-            if clipped:
-                shortened.append("name")
-        for line in name_lines:
-            line.inverse = True
-            line.x = margin_x + pad_x
-        name_gap = max(2, round(0.22 * name_lines[0].size))
-        band_height = (
-            sum(line.ink_height for line in name_lines)
-            + name_gap * (len(name_lines) - 1) + 2 * band_pad_y
-        )
-    else:
-        band_height = 0
-        name_gap = 0
-
-    # --- Datos (ruta, ubicacion, tipo, categoria): 2 lineas como maximo en
-    #     etiquetas bajas, hasta 4 en las altas ---
-    meta_lines = []
-    if meta_items:
-        meta_pref, meta_low = sizes("meta")
-        groups, current = [], []
-        for key, text in meta_items:
-            candidate = current + [text]
-            if _fit("meta", _META_SEPARATOR.join(candidate), content_width, meta_pref, meta_low):
-                current = candidate
-                continue
-            if current:
-                groups.append(current)
-                current = [text]
-                if _fit("meta", text, content_width, meta_pref, meta_low):
-                    continue
-            if key == "route":
-                raise _NoFit("route")  # la ruta nunca se recorta: o completa o nada
-            groups.append([text])
-            current = []
-        if current:
-            groups.append(current)
-        if len(groups) > (2 if spec.height_mm < 40 else 4):
-            raise _NoFit("meta")
-        for group in groups:
-            line, clipped = _fit_or_ellipsize(
-                "meta", _META_SEPARATOR.join(group), content_width, meta_pref, meta_low,
-            )
-            if clipped:
-                shortened.append("meta")
-            meta_lines.append(line)
-        common = min(line.size for line in meta_lines)
-        meta_lines = [
-            line if line.size == common else _make_line("meta", line.text, common)
-            for line in meta_lines
-        ]
-        for line in meta_lines:
-            line.x = margin_x
-    meta_gap = max(2, round(0.3 * meta_lines[0].size)) if meta_lines else 0
-    meta_height = sum(line.ink_height for line in meta_lines) + meta_gap * max(0, len(meta_lines) - 1)
 
     # --- Codigo de barras y codigo legible (siempre completos) ---
     modules = _code128_modules(fields["code"])
-    module_dots, quiet = _barcode_geometry(len(modules), width, dpi)
+    module_dots, quiet = _barcode_geometry(len(modules), width, spec.dpi)
     if not module_dots:
         raise ValueError(
             f"El código '{fields['code']}' es demasiado largo: su código de barras no cabe "
             f"en una etiqueta de {spec.size_text} ({width} puntos de ancho)."
         )
-    code_pref, code_low = sizes("code")
-    code_line = _fit("code", fields["code"], content_width, code_pref, code_low)
-    if code_line is None:
-        floor = math.ceil(_pt_to_px(_STYLES["code"].floor_pt, dpi))
-        code_line = _fit("code", fields["code"], content_width, code_low, floor)
-    if code_line is None:
+    code_line, code_clipped = _classic_fit(
+        "code", fields["code"], content_width, scale, clip=False, legible=legible,
+    )
+    if code_clipped:
         raise ValueError(
             f"El código '{fields['code']}' no cabe legible en una etiqueta de {spec.size_text}."
         )
-    bar_min = dots(_MIN_BAR_MM)
-    bar_preferred = max(bar_min, dots(_clamp(_BAR_HEIGHT_RATIO * spec.height_mm, _MIN_BAR_MM, _MAX_BAR_MM)))
-    bar_code_gap = max(2, round(0.55 * gap))
+    # Barras de 9 a 10 mm reales en 50 x 25, en proporcion en otros tamaños.
+    physical = min(spec.width_mm / LABEL_WIDTH_MM, spec.height_mm / LABEL_HEIGHT_MM)
+    min_bar = max(1, round(_mm_to_dots(_C_MIN_BAR_MM * physical, spec.dpi)))
+    max_bar = max(min_bar, round(_mm_to_dots(_C_MAX_BAR_MM * physical, spec.dpi)))
 
-    # --- Alto total, reparto del espacio sobrante y posiciones ---
-    divider = max(2, dots(0.25)) if header_height else 0
-    blocks = []  # (tipo, alto, separacion_previa)
-    if header_height:
-        blocks.append(("header", header_height, 0))
-        blocks.append(("divider", divider, max(2, gap // 2)))
-    if band_height:
-        blocks.append(("band", band_height, gap if blocks else 0))
+    # --- Encabezado: logo + laboratorio / tipo / aviso ---
+    header_height = px(_C_HEADER_HEIGHT)
+    logo_box_size = (px(_C_LOGO_BOX[0]), min(header_height, px(_C_LOGO_BOX[1])))
+    text_x = margin_x + (logo_box_size[0] + px(_C_HEADER_TEXT_GAP) if fields["logo"] else 0)
+    header_lines = []
+    for role, text in fields["header"]:
+        header_width = width - margin_x - text_x
+        line, clipped = _classic_fit(role, text, header_width, scale, legible=legible)
+        if clipped and role == "notice" and text == LABEL_NOTICE_TEXT:
+            line, clipped = _classic_fit(role, LABEL_NOTICE_SHORT_TEXT, header_width, scale, legible=legible)
+        if clipped:
+            shortened.append(role)
+        line.x = text_x
+        header_lines.append(line)
+    branded = bool(header_lines or fields["logo"])
+    # Con el piso de legibilidad, en etiquetas muy chicas el texto puede pedir
+    # mas alto que el encabezado escalado: el encabezado crece para contenerlo.
+    header_gap = px(_C_HEADER_LINE_GAP)
+    header_ink = sum(line.ink_height for line in header_lines) + header_gap * max(0, len(header_lines) - 1)
+    header_height = max(header_height, header_ink)
+
+    # --- Nombre en banda negra ---
+    pad_x, pad_y = px(_C_TITLE_PADDING[0]), px(_C_TITLE_PADDING[1])
+    name_line = None
+    if fields["name"]:
+        name_line, clipped = _classic_fit(
+            "name", fields["name"], content_width - 2 * pad_x, scale, legible=legible,
+        )
+        name_line.inverse = True
+        if clipped:
+            shortened.append("name")
+
+    # --- Datos: la opcion mas completa que deja alto para las barras ---
+    meta_options = _classic_meta_lines(fields["meta"], content_width, scale, legible)
+
+    def rows_height(with_header: bool, with_name: bool, meta_lines: list) -> int:
+        used = margin_y
+        if with_header:
+            used += header_height + px(_C_DIVIDER) + gap
+        if with_name:
+            used += name_line.ink_height + 2 * pad_y + gap
+        used += sum(line.ink_height + gap for line in meta_lines)
+        return used
+
+    def bar_room(*state) -> int:
+        return height - margin_y - code_line.ink_height - gap - rows_height(*state)
+
+    # Si falta alto para las barras se prueba lo mas compacto: primero los
+    # datos, luego sin datos, luego sin nombre y, al final, sin encabezado.
+    plans = []
+    for with_header in ((True, False) if branded else (False,)):
+        for meta_lines, meta_clipped, meta_keys in meta_options:
+            plans.append((with_header, bool(name_line), meta_lines, meta_clipped, meta_keys))
+        if fields["meta"]:
+            plans.append((with_header, bool(name_line), [], False, ()))
+        if name_line:
+            plans.append((with_header, False, [], False, ()))
+    for with_header, with_name, meta_lines, meta_clipped, meta_keys in plans:
+        if bar_room(with_header, with_name, meta_lines) >= min_bar:
+            break
+    else:
+        with_header, with_name, meta_lines, meta_clipped, meta_keys = False, False, [], False, ()
+        if bar_room(False, False, []) < 1:
+            raise ValueError(
+                f"La etiqueta de {spec.size_text} es demasiado baja: el código de barras no cabe."
+            )
+    if meta_clipped:
+        shortened.append("meta")
     if meta_lines:
-        blocks.append(("meta", meta_height, gap if blocks else 0))
-    blocks.append(("bars", bar_min, gap if blocks else 0))
-    blocks.append(("code", code_line.ink_height, bar_code_gap))
-    used = 2 * margin_y + sum(h + g for _, h, g in blocks)
-    if used > height:
-        raise _NoFit("height")
+        common = min(line.size for line in meta_lines)
+        meta_lines = [_classic_meta_line(line.text, common, content_width, scale) for line in meta_lines]
 
-    spare = height - used
-    bar_height = bar_min + min(spare, bar_preferred - bar_min)
-    spare -= bar_height - bar_min
-    growable = [i for i, (kind, _, g) in enumerate(blocks) if g and kind not in ("code", "divider")]
-    if growable and spare > 0:
-        extra = min(spare // len(growable), gap)
-        blocks = [
-            (kind, h, g + extra if i in growable else g) for i, (kind, h, g) in enumerate(blocks)
-        ]
-        spare -= extra * len(growable)
+    room = bar_room(with_header, with_name, meta_lines)
+    bar_height = max(1, min(max_bar, room))
+    # El bloque completo se centra en el alto (en 50 x 25 casi no sobra espacio).
+    y = margin_y + max(0, room - bar_height) // 2
 
-    y = margin_y + spare // 2
-    logo_box = divider_box = band_box = bar_box = None
-    for kind, block_height, block_gap in blocks:
-        y += block_gap
-        if kind == "header":
-            if logo_size:
-                logo_y = y + (block_height - logo_size[1]) // 2
-                logo_box = (margin_x, logo_y, margin_x + logo_size[0], logo_y + logo_size[1])
-            text_y = y + (block_height - header_text_height) // 2
-            for line in header_lines:
-                line.top = text_y
-                text_y += line.ink_height + line_gap
-        elif kind == "divider":
-            divider_box = (margin_x, y, width - margin_x, y + block_height)
-        elif kind == "band":
-            band_box = (margin_x, y, width - margin_x, y + block_height)
-            text_y = y + band_pad_y
-            for line in name_lines:
-                line.top = text_y
-                text_y += line.ink_height + name_gap
-        elif kind == "meta":
-            text_y = y
-            for line in meta_lines:
-                line.top = text_y
-                text_y += line.ink_height + meta_gap
-        elif kind == "bars":
-            block_height = bar_height
-            bar_x = (width - len(modules) * module_dots) // 2
-            bar_box = (bar_x, y, bar_x + len(modules) * module_dots, y + bar_height)
-        else:
-            code_line.x = (width - round(code_line.width)) // 2
-            code_line.top = y
-        y += block_height
+    logo_box = divider_box = band_box = None
+    lines = []
+    if with_header:
+        if fields["logo"]:
+            logo_y = y + (header_height - logo_box_size[1]) // 2
+            logo_box = (margin_x, logo_y, margin_x + logo_box_size[0], logo_y + logo_box_size[1])
+        text_y = y + max(0, (header_height - header_ink) // 2)
+        for line in header_lines:
+            line.top = text_y
+            text_y += line.ink_height + header_gap
+        lines.extend(header_lines)
+        divider_box = (margin_x, y + header_height, width - margin_x, y + header_height + px(_C_DIVIDER))
+        y += header_height + px(_C_DIVIDER) + gap
+    if with_name:
+        band_height = name_line.ink_height + 2 * pad_y
+        band_box = (margin_x, y, width - margin_x, y + band_height)
+        name_line.x, name_line.top = margin_x + pad_x, y + pad_y
+        lines.append(name_line)
+        y += band_height + gap
+    for line in meta_lines:
+        line.x, line.top = margin_x, y
+        lines.append(line)
+        y += line.ink_height + gap
+    bar_x = (width - len(modules) * module_dots) // 2
+    bar_box = (bar_x, y, bar_x + len(modules) * module_dots, y + bar_height)
+    y += bar_height + gap
+    code_line.x, code_line.top = (width - round(code_line.width)) // 2, y
+    lines.append(code_line)
 
-    shown = tuple(k for k in ("brand", "notice", *_META_ORDER) if k in keep)
+    shown_meta = set(meta_keys)
+    shown = []
+    if with_header:
+        shown += (["brand"] if fields["logo"] else []) + [role for role, _ in fields["header"] if role != "lab"]
+    shown += [key for key, _ in fields["meta"] if key in shown_meta]
+    requested = (["brand"] if fields["logo"] else []) + [r for r, _ in fields["header"] if r != "lab"]
+    requested += [key for key, _ in fields["meta"]]
+    omitted = (["name"] if fields["name"] and not with_name else []) + [k for k in requested if k not in shown]
     return LabelLayout(
-        spec=spec, size=canvas,
-        lines=header_lines + name_lines + meta_lines + [code_line],
+        spec=spec, size=canvas, lines=lines,
         logo_box=logo_box, divider_box=divider_box, band_box=band_box, bar_box=bar_box,
         modules=modules, module_dots=module_dots, quiet_modules=quiet,
-        shown=shown, omitted=(), shortened=tuple(dict.fromkeys(shortened)), scale=scale,
+        shown=tuple(shown), omitted=tuple(omitted), shortened=tuple(dict.fromkeys(shortened)), scale=scale,
     )
 
 
@@ -963,31 +935,15 @@ def layout_label(code: str, spec: LabelSpec = None, *, canvas_size: tuple = None
                  description: str = None, notice: str = LABEL_NOTICE_TEXT,
                  category: str = None, location: str = None,
                  item_type: str = None) -> LabelLayout:
-    """Compone la etiqueta: conserva el contenido mas valioso que cabe a tamaño
-    legible y reporta lo omitido. Lanza ValueError si el codigo no es valido o
-    no cabe en la etiqueta."""
+    """Compone la etiqueta en el formato clasico ajustando solo el contenido
+    (ver arriba) y reporta lo acortado u omitido. Lanza ValueError si el
+    codigo no es valido o no cabe en la etiqueta."""
     code = (code or "").strip()
     validate_code_format(code)
     spec = spec or LabelSpec()
     canvas = tuple(canvas_size) if canvas_size else spec.canvas_size
-    fields = _label_fields(code, spec, description, notice, category, location, item_type)
-    available = _available_features(fields)
-    candidates = _candidate_sets(available)
-    for scale in (1.0, 0.9, 0.8, 0.7):
-        for keep in candidates:
-            try:
-                layout = _compose(fields, spec, canvas, keep, scale)
-            except _NoFit:
-                continue
-            requested = {k for k in available if k in LABEL_CONTENT_OPTIONS or k == "name"}
-            layout.omitted = tuple(
-                k for k in ("name", *LABEL_CONTENT_OPTIONS) if k in requested and k not in keep
-            )
-            return layout
-    raise ValueError(
-        f"La etiqueta de {spec.size_text} es demasiado pequeña para imprimir el código "
-        f"'{code}' de forma legible."
-    )
+    fields = _classic_fields(code, spec, description, notice, category, location, item_type)
+    return _compose_classic(fields, spec, canvas)
 
 
 def describe_omitted(layout: LabelLayout) -> list:
@@ -1025,7 +981,7 @@ def _paste_logo(canvas, box: tuple) -> None:
         return
     logo = logo.copy()
     logo.thumbnail((x1 - x0, y1 - y0), Image.Resampling.LANCZOS)
-    logo = logo.point(lambda value: 0 if value < 160 else 255)
+    logo = logo.point(lambda value: 0 if value < 192 else 255)
     canvas.paste(logo, (x0 + ((x1 - x0) - logo.width) // 2, y0 + ((y1 - y0) - logo.height) // 2))
 
 
@@ -1033,7 +989,8 @@ def render_label(layout: LabelLayout) -> Image.Image:
     width, height = layout.size
     canvas = Image.new("L", (width, height), color=255)
     draw = ImageDraw.Draw(canvas)
-    draw.fontmode = "1"  # glifos monocromos con hinting: nitidos a 203 dpi
+    # Letras suavizadas y luego umbralizadas a 1 bit, como el formato clasico:
+    # trazos con el mismo grosor de las etiquetas que el laboratorio ya usa.
     if layout.logo_box:
         _paste_logo(canvas, layout.logo_box)
     if layout.divider_box:

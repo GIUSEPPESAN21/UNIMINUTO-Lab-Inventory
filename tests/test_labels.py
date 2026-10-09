@@ -244,7 +244,7 @@ def test_professional_item_label_has_logo_header_product_metadata_and_divider():
     bx0, by0, bx1, _ = layout.band_box
     assert sum(rows[by0]) >= (bx1 - bx0) - 2  # banda negra del nombre
     assert layout.lines_for("name")[0].text == PRODUCT["name"]
-    assert "UBIC: Estantería 2 · Piso 1" in [line.text for line in layout.lines_for("meta")]
+    assert "UBIC: Estantería 2 · Piso 1" in " ".join(line.text for line in layout.lines_for("meta"))
 
 
 def test_brand_logo_asset_is_versioned_and_converts_to_monochrome():
@@ -256,19 +256,18 @@ def test_brand_logo_asset_is_versioned_and_converts_to_monochrome():
     assert 0 in logo.getdata()
 
 
-def test_thermal_typography_uses_legible_sizes_weight_and_tracking():
-    """Antes habia textos de 3,5-4,3 pt y 1 punto entre lineas. Ahora ningun
-    texto baja de ~5 pt y todos llevan espaciado entre letras."""
+def test_thermal_typography_keeps_the_classic_sizes_and_spacing():
+    """Formato clasico: titulo del laboratorio espaciado, nombre grande en la
+    banda y codigo legible mas grande; ningun texto baja de 9 puntos (~3,2 pt)."""
     layout = labels.layout_item_label(PRODUCT)
     dpi = labels.LABEL_DPI
-    assert layout.min_text_pt >= 5.0
-    for line in layout.lines:
-        assert line.pt(dpi) >= labels._STYLES[line.role].floor_pt
-        assert line.tracking > 0 or line.role == "code" and line.tracking >= 0
-    assert layout.lines_for("name")[0].pt(dpi) >= 7.0
-    assert layout.lines_for("code")[0].pt(dpi) >= 6.0
-    for role in ("lab", "notice", "name", "meta"):
-        assert labels._STYLES[role].tracking > 0
+    assert layout.min_text_pt >= 9 * 72 / dpi - 0.01
+    lab = layout.lines_for("lab")[0]
+    assert round(14 * layout.scale) - 2 <= lab.size <= round(14 * layout.scale)
+    assert lab.tracking == round(2 * layout.scale)  # el titulo conserva su espaciado
+    assert layout.lines_for("name")[0].pt(dpi) >= 5.0
+    assert layout.lines_for("code")[0].pt(dpi) >= 9.0
+    assert all(line.tracking == 0 for line in layout.lines_for("meta") + layout.lines_for("code"))
 
 
 @pytest.mark.parametrize(
@@ -305,7 +304,10 @@ def test_product_title_band_and_route_line_preserve_full_barcode():
 
     assert layout.band_box  # banda negra del nombre
     assert layout.lines_for("name")[0].text == "Microscopio binocular"
-    route = [line.text for line in layout.lines if line.text.startswith("RUTA:")]
+    route = [
+        chunk for line in layout.lines_for("meta")
+        for chunk in line.text.split(labels._C_META_SEPARATOR) if chunk.startswith("RUTA:")
+    ]
     assert route == ["RUTA: E2 › P1 › C01 › CJ02 › I003"]  # completa, nunca recortada
     assert scan["band_height"] >= 56
     assert scan["text"] == item["id"]

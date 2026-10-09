@@ -35,12 +35,13 @@ def _open():
     return at
 
 
-def test_label_tab_shows_saved_size_preview_and_what_was_omitted():
+def test_label_tab_shows_saved_size_and_a_preview_of_the_classic_format():
     at = _open()
     assert any("Configuración guardada: **50 × 25 mm · 203 dpi**" in c.value for c in at.caption)
+    assert any("formato de siempre" in c.value for c in at.caption)
     assert at.selectbox(key="label_cfg_preset").value == "50x25"
     assert {m.label for m in at.metric} >= {"Texto más pequeño", "Alto de las barras"}
-    assert any("no caben a un tamaño legible" in i.value for i in at.info)
+    assert at.image  # vista previa a resolucion real
     assert at.button(key="label_cfg_save").disabled  # nada que guardar todavia
 
 
