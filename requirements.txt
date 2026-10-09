@@ -3,7 +3,7 @@ pandas==2.3.3
 plotly==7.1.0
 openpyxl==3.1.2
 requests==2.32.3
-bcrypt==4.2.0
+bcrypt==5.0.0
 twilio==9.8.4
 Pillow==11.3.0
 python-barcode==0.16.1
