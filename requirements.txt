@@ -1,6 +1,6 @@
 streamlit==1.50.0
 pandas==2.3.3
-plotly==6.3.1
+plotly==7.1.0
 openpyxl==3.1.2
 requests==2.32.3
 bcrypt==4.2.0
