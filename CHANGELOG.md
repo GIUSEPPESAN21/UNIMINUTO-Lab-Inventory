@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.13.1 — La etiqueta vuelve a su formato de siempre
+
+### Cambiado
+- **Formato clásico de la etiqueta** (el de antes de v1.11, que el laboratorio
+  prefiere): logo con «LABORATORIO DE INGENIERÍA», tipo de activo y aviso; filete;
+  nombre en banda negra; ruta y datos; barras de 9 a 10 mm y código legible grande.
+  Se conservan el tamaño real configurable, el PDF que se imprime punto por punto y
+  la hoja de prueba.
+- **Solo se ajusta el contenido** para que no salga cortado: el texto baja hasta su
+  mínimo y luego pierde el espacio extra entre letras (el aviso completo cabe en
+  50 × 25 mm); la ruta, la ubicación y la categoría pasan a una segunda línea; si no
+  hay alto, se omite la categoría entera antes que partir una palabra; «…» solo como
+  último recurso. Con el inventario actual las 24 etiquetas salen completas.
+- Las letras vuelven a dibujarse suavizadas y umbralizadas a 1 bit: el mismo grosor
+  de las etiquetas anteriores.
+
 ## v1.13.0 — Interfaz simétrica con la paleta de UNIMINUTO
 
 ### Colores

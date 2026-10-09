@@ -138,8 +138,9 @@ def _spec_from_inputs(saved: LabelSpec):
         if columns[index % 3].checkbox(text, value=saved.shows(key), key=f"label_cfg_{key}")
     ]
     st.caption(
-        "El nombre, el código de barras y el código legible siempre se imprimen. Si algo no "
-        "cabe a un tamaño legible, se omite automáticamente en lugar de apretar las letras."
+        "La etiqueta conserva su formato de siempre (logo, banda negra con el nombre, ruta y "
+        "datos, barras y código) a escala del tamaño elegido. Solo se ajusta el contenido: si un "
+        "texto no cabe, se reduce o pasa a una segunda línea y, como último recurso, se acorta."
     )
     try:
         return LabelSpec(width, height, dpi, tuple(chosen)), None
@@ -170,7 +171,7 @@ def _render_preview(storage, spec: LabelSpec) -> None:
     omitted = labels.describe_omitted(layout)
     if omitted:
         st.info(
-            f"En {spec.size_text} no caben a un tamaño legible: **{', '.join(omitted)}**. "
+            f"En {spec.size_text} no caben sin cortar palabras: **{', '.join(omitted)}**. "
             "Usa una etiqueta más grande o desactiva otro contenido para darles espacio."
         )
     if "name" in layout.shortened:

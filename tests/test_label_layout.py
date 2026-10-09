@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Diseño adaptable de etiquetas: tamaño real configurable, piso de legibilidad,
-espacio visible entre bloques, contenido priorizado (se omite lo menos
-importante en vez de apretar las letras), PDF sin escalado, hoja de prueba con
+"""Etiquetas en el formato clasico del laboratorio a su tamaño real: la misma
+composicion de siempre, escalada; solo el contenido se ajusta para caber (sin
+cortes cuando hay alternativa). Tambien: PDF sin escalado, hoja de prueba con
 regla milimetrada y configuracion guardada en la base."""
 
 import io
@@ -66,113 +66,163 @@ def _blocks(layout):
     return blocks
 
 
-# --- Espaciado y margenes -------------------------------------------------------
+# --- Formato clasico: estructura y margenes ------------------------------------
 
 @pytest.mark.parametrize("size", PRESETS)
 @pytest.mark.parametrize("item", ITEMS, ids=[i["id"] for i in ITEMS])
-def test_blocks_never_touch_and_stay_inside_the_margins(size, item):
+def test_classic_blocks_keep_their_order_and_stay_inside_the_label(size, item):
+    """El formato de siempre: encabezado, filete, banda del nombre, datos,
+    barras y codigo, en ese orden, sin encimarse y dentro de la etiqueta."""
     spec = labels.LabelSpec(*size)
     layout = labels.layout_item_label(item, spec)
     width, height = spec.canvas_size
     blocks = _blocks(layout)
-
+    kinds = [kind for kind, _, _ in blocks]
+    order = ["header", "divider", "band", "meta", "bars", "code"]
+    assert [k for k in order if k in kinds] == list(dict.fromkeys(kinds))
     for (kind_a, _, end_a), (kind_b, start_b, _) in zip(blocks, blocks[1:]):
-        # Antes habia 1-2 puntos (0,1-0,25 mm) entre lineas; ahora >= 0,37 mm.
-        assert start_b - end_a >= 3, f"{kind_a} pegado a {kind_b} en {spec.size_text}"
-    assert blocks[0][1] >= _dots(1.4)
-    assert blocks[-1][2] <= height - _dots(1.4)
+        assert start_b >= end_a, f"{kind_a} encima de {kind_b} en {spec.size_text}"
+    assert blocks[0][1] >= 1 and blocks[-1][2] <= height - 1
     for line in layout.lines:
         x0, _, x1, _ = line.box
-        assert x0 >= _dots(1.4) - 1 and x1 <= width - _dots(1.4) + 1, line.text
-
-
-@pytest.mark.parametrize("size", PRESETS)
-def test_header_lines_keep_air_between_them(size):
-    layout = labels.layout_item_label(FULL_ITEM, labels.LabelSpec(*size))
-    header = [line for line in layout.lines if line.top < layout.divider_box[1]]
-    for first, second in zip(header, header[1:]):
-        assert second.top - (first.top + first.ink_height) >= 3
+        assert x0 >= 1 and x1 <= width - 1, line.text
 
 
 def test_pixels_confirm_blank_rows_between_text_blocks():
     """Comprobacion independiente del motor: en la imagen impresa hay filas
-    totalmente blancas entre cada bloque (nada se toca)."""
+    totalmente blancas entre los bloques de texto y las barras."""
     layout = labels.layout_item_label(ITEMS[1])
     img = labels.render_label(layout).convert("L")
     width = img.width
     blank = [all(img.getpixel((x, y)) > 127 for x in range(width)) for y in range(img.height)]
-    for (_, _, end_a), (_, start_b, _) in zip(_blocks(layout), _blocks(layout)[1:]):
+    blocks = [b for b in _blocks(layout) if b[0] in ("meta", "bars", "code")]
+    for (_, _, end_a), (_, start_b, _) in zip(blocks, blocks[1:]):
         assert any(blank[end_a:start_b]), "no hay una sola fila en blanco entre dos bloques"
 
 
-# --- Legibilidad --------------------------------------------------------------------
+def test_reference_label_keeps_the_classic_format():
+    """50 x 25 mm: logo + «LABORATORIO DE INGENIERÍA» / tipo / aviso, filete,
+    nombre en banda negra, ruta y datos, barras de 9-10 mm y codigo grande."""
+    layout = labels.layout_item_label(
+        {"id": "2-1-01-00-000", "name": "Contenedor 1", "item_type": "master",
+         "category": "Piezas Lego", "location": "Estantería- 2; Piso-1; Contenedor-1."},
+    )
+    assert layout.logo_box and layout.divider_box and layout.band_box
+    assert [line.text for line in layout.lines_for("lab")] == [labels.LABEL_INSTITUTION_TEXT]
+    assert [line.text for line in layout.lines_for("type")] == ["Contenedor Principal"]
+    assert [line.text for line in layout.lines_for("notice")] == [labels.LABEL_NOTICE_TEXT]
+    name = layout.lines_for("name")[0]
+    assert name.text == "Contenedor 1" and name.inverse
+    assert layout.lines_for("code")[0].text == "2-1-01-00-000"
+    assert 9.0 <= layout.bar_height_mm <= 10.5
+    # El encabezado va junto al logo y el titulo del laboratorio es el mas grande.
+    lab, kind, notice = layout.lines_for("lab")[0], layout.lines_for("type")[0], layout.lines_for("notice")[0]
+    assert lab.x > layout.logo_box[2] and lab.size > kind.size > notice.size
+    assert layout.lines_for("code")[0].size > name.size > lab.size
+
+
+# --- Solo se ajusta el contenido ---------------------------------------------------
+
+def test_content_is_adjusted_instead_of_cut():
+    """Antes el aviso y los datos salian cortados («NO RETIRAR SIN P…»,
+    «CAT…»). Ahora el aviso cabe sin el espacio extra entre letras y los datos
+    pasan a una segunda linea: nada termina en «…»."""
+    layout = labels.layout_item_label(
+        {"id": "2-1-01-00-000", "name": "Contenedor 1", "item_type": "master",
+         "category": "Piezas Lego", "location": "Estantería- 2; Piso-1; Contenedor-1."},
+    )
+    assert not any(line.text.endswith("…") for line in layout.lines)
+    assert layout.shortened == () and layout.omitted == ()
+    meta = [line.text for line in layout.lines_for("meta")]
+    assert len(meta) == 2
+    joined = labels._C_META_SEPARATOR.join(meta)
+    assert "RUTA: E2 › P1 › C01" in joined and "UBIC: Estantería- 2; Piso-1; Contenedor-1." in joined
+    assert "CAT: Piezas Lego" in joined
+    assert len({line.size for line in layout.lines_for("meta")}) == 1  # las dos lineas se ven iguales
+    # El titulo conserva su espaciado; solo el aviso, que no cabia, lo pierde.
+    assert layout.lines_for("lab")[0].tracking > 0
+    assert layout.lines_for("notice")[0].tracking == 0
+
+
+def test_data_drop_whole_items_before_cutting_a_word():
+    item = {"id": "2-1-01-02-003", "name": "Microscopio binocular", "item_type": "standalone",
+            "category": "Óptica", "location": "Estantería 2 · Piso 1"}
+    layout = labels.layout_item_label(item)
+    meta = [line.text for line in layout.lines_for("meta")]
+    assert meta == ["RUTA: E2 › P1 › C01 › CJ02 › I003  ·  UBIC: Estantería 2 · Piso 1"]
+    assert layout.omitted == ("category",) and layout.shortened == ()
+    assert "Categoría" in labels.describe_omitted(layout)
+    # Con mas alto, la categoria vuelve en una segunda linea.
+    taller = labels.layout_item_label(item, labels.LabelSpec(50, 30))
+    assert taller.omitted == () and len(taller.lines_for("meta")) == 2
+
+
+def test_a_long_name_shrinks_then_loses_spacing_and_only_then_is_shortened():
+    spec = labels.LabelSpec()
+    fits = labels.layout_label("LAB-MIC-01", spec, description="Microscopio óptico binocular")
+    assert fits.lines_for("name")[0].text == "Microscopio óptico binocular" and fits.shortened == ()
+    long_name = "Multímetro digital Fluke 115 True RMS con puntas de prueba y estuche rígido"
+    cut = labels.layout_label("LAB-MIC-01", spec, description=long_name)
+    name = cut.lines_for("name")[0]
+    assert name.text.endswith("…") and long_name.startswith(name.text[:-1].rstrip())
+    assert name.tracking == 0 and "name" in cut.shortened
+    assert name.size == max(round(12 * cut.scale), 9)
+
 
 @pytest.mark.parametrize("dpi", labels.SUPPORTED_DPI)
 @pytest.mark.parametrize("size", PRESETS)
-def test_no_text_is_printed_below_the_legibility_floor(size, dpi):
+def test_no_text_is_printed_below_the_classic_minimum(size, dpi):
+    """El formato clasico nunca imprime letras de menos de 9 puntos a 203 dpi
+    (~3,2 pt): en etiquetas mas grandes todo crece en proporcion."""
     spec = labels.LabelSpec(*size, dpi)
+    floor_pt = 9 * 72 / labels.LABEL_DPI
     for item in ITEMS:
         layout = labels.layout_item_label(item, spec)
-        for line in layout.lines:
-            assert line.pt(dpi) >= labels._STYLES[line.role].floor_pt, (item["id"], line)
-        assert layout.min_text_pt >= 5.0
-        assert layout.lines_for("name")[0].pt(dpi) >= 7.0
-        assert layout.lines_for("code")[0].pt(dpi) >= 6.0
+        assert layout.min_text_pt >= floor_pt - 0.1, (item["id"], spec.describe())
+        assert [line.text for line in layout.lines_for("code")] == [item["id"]]
 
 
 @pytest.mark.parametrize("size", PRESETS)
-def test_institutional_texts_and_codes_are_never_truncated(size):
+def test_institutional_texts_and_routes_are_never_truncated(size):
     spec = labels.LabelSpec(*size)
     for item in ITEMS:
         layout = labels.layout_item_label(item, spec)
-        assert [line.text for line in layout.lines_for("code")] == [item["id"]]
         for line in layout.lines_for("lab"):
             assert line.text == labels.LABEL_INSTITUTION_TEXT
         for line in layout.lines_for("notice"):
             assert line.text in (labels.LABEL_NOTICE_TEXT, labels.LABEL_NOTICE_SHORT_TEXT)
         routes = [
-            chunk for line in layout.lines
-            for chunk in line.text.split(labels._META_SEPARATOR) if chunk.startswith("RUTA:")
+            chunk for line in layout.lines_for("meta")
+            for chunk in line.text.split(labels._C_META_SEPARATOR) if chunk.startswith("RUTA:")
         ]
-        for route in routes:  # la ruta puede compartir linea, pero siempre va completa
+        for route in routes:
             assert route == labels._location_guide(item["id"])
 
 
-def test_long_notice_uses_the_short_variant_instead_of_an_ellipsis():
-    small = labels.layout_label("LAB-MIC-01", labels.LabelSpec(60, 40), description="Microscopio")
-    assert [line.text for line in small.lines_for("notice")] == [labels.LABEL_NOTICE_SHORT_TEXT]
-    wide = labels.layout_label("LAB-MIC-01", labels.LabelSpec(100, 50), description="Microscopio")
-    assert [line.text for line in wide.lines_for("notice")] == [labels.LABEL_NOTICE_TEXT]
-
-
-def test_bigger_labels_print_bigger_text_and_more_content():
+def test_bigger_labels_scale_the_same_format():
     small = labels.layout_item_label(FULL_ITEM, labels.LabelSpec(50, 25))
     big = labels.layout_item_label(FULL_ITEM, labels.LabelSpec(100, 50))
-    assert big.lines_for("code")[0].size > small.lines_for("code")[0].size
-    assert big.min_text_pt > small.min_text_pt
-    assert len(big.omitted) < len(small.omitted)
-    assert big.omitted == ()
-    assert "name" in small.shortened and "name" not in big.shortened
+    for role in ("lab", "name", "code"):
+        assert big.lines_for(role)[0].size == pytest.approx(2 * small.lines_for(role)[0].size, abs=2)
+    assert big.bar_height_mm == pytest.approx(2 * small.bar_height_mm, rel=0.15)
+    def roles(layout):
+        return [line.role for line in layout.lines if line.role != "meta"]
+    assert roles(big) == roles(small)
+    assert big.lines_for("meta") and small.lines_for("meta")
 
 
-def test_small_labels_omit_low_priority_content_and_say_so():
-    layout = labels.layout_item_label(FULL_ITEM, labels.LabelSpec(50, 25))
-    assert {"notice", "type", "category"} <= set(layout.omitted)
-    assert "brand" in layout.shown and "route" in layout.shown
-    names = labels.describe_omitted(layout)
-    assert "Categoría" in names and all(isinstance(n, str) and n for n in names)
+def test_tall_labels_center_the_format_vertically():
+    layout = labels.layout_item_label(FULL_ITEM, labels.LabelSpec(100, 150))
+    height = layout.size[1]
+    blocks = _blocks(layout)
+    top, bottom = blocks[0][1], height - blocks[-1][2]
+    assert abs(top - bottom) <= 0.1 * height
 
 
 @pytest.mark.parametrize("size", PRESETS)
 def test_brand_is_kept_on_every_preset(size):
     for item in ITEMS:
         assert "brand" in labels.layout_item_label(item, labels.LabelSpec(*size)).shown
-
-
-def test_long_names_wrap_instead_of_being_cut_when_there_is_room():
-    layout = labels.layout_item_label(FULL_ITEM, labels.LabelSpec(60, 40))
-    names = [line.text for line in layout.lines_for("name")]
-    assert len(names) == 2 and " ".join(names) == FULL_ITEM["name"]
 
 
 def test_content_can_be_switched_off():
@@ -211,7 +261,9 @@ def test_300dpi_png_declares_its_resolution():
 
 def test_code_too_long_for_a_narrow_label_is_reported_clearly():
     with pytest.raises(ValueError, match="no cabe"):
-        labels.layout_label("12345678901234567890", labels.LabelSpec(20, 15), description="X")
+        labels.layout_label("2-1-01-01-001", labels.LabelSpec(20, 15), description="X")
+    thin = labels.layout_label("12345678901234567890", labels.LabelSpec(20, 15), description="X")
+    assert any("muy finas" in note for note in thin.warnings)
 
 
 # --- Hoja de prueba ----------------------------------------------------------------

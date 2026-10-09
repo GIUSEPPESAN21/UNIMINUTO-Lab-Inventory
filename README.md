@@ -101,21 +101,22 @@ imprimir a tamaño real se copia punto por punto, sin remuestrear las barras. La
 pruebas lo verifican con el motor PDF de Chrome y Edge (PDFium), siguiendo su ruta de
 impresión en Windows, y con poppler.
 
-**Diseño adaptable y legible.** La composición se ajusta al tamaño elegido:
+**Formato clásico, contenido ajustado.** La etiqueta conserva el formato de siempre
+del laboratorio —logo con «LABORATORIO DE INGENIERÍA», tipo de activo y aviso; filete;
+nombre en banda negra; ruta y datos; Code 128 de 9 a 10 mm y código legible grande—,
+escalado al tamaño elegido. Solo se ajusta el contenido para que nada salga cortado:
 
-- Ningún texto se imprime por debajo de ~5 pt (antes había textos de 3,5 pt) y hay
-  espacio visible entre todos los bloques (antes, 1 punto entre líneas).
-- Las letras se rasterizan en monocromo con *hinting* y con espaciado entre letras
-  proporcional a su tamaño: trazos uniformes, sin el "empaste" del suavizado.
-- Si todo no cabe a tamaño legible, se omite primero lo menos importante (categoría,
-  tipo, aviso…) en vez de encoger y apretar las letras. La pestaña Etiquetas muestra
-  la vista previa y dice exactamente qué se omitió; cada contenido se puede activar o
-  desactivar. El nombre, el Code 128 y el código legible siempre se imprimen; el
-  código y la ruta nunca se recortan, y el aviso usa su versión corta («NO RETIRAR SIN
-  PRÉSTAMO») antes que cortarse.
-- En las etiquetas grandes el espacio extra se usa para mostrar **más** datos y
-  barras más altas, no solo letras más grandes. Un nombre largo pasa a dos líneas
-  cuando hay espacio.
+- Un texto que no cabe baja de tamaño hasta su mínimo; si aun así no cabe, pierde el
+  espacio extra entre letras (así el aviso completo «ACTIVO INSTITUCIONAL · NO RETIRAR
+  SIN PRÉSTAMO» cabe en 50 × 25 mm).
+- La ruta, la ubicación y la categoría pasan a una segunda línea antes que cortarse;
+  si no hay alto para dos líneas, se omite la categoría (y luego la ubicación) entera,
+  sin partir palabras. Solo como último recurso un texto se acorta con «…».
+- Ningún texto baja de 9 puntos de impresora a 203 dpi (~3,2 pt), el mínimo del
+  formato clásico; el código y la ruta nunca se recortan. La pestaña Etiquetas muestra
+  la vista previa y dice qué se omitió; cada contenido se puede activar o desactivar.
+- Las letras se dibujan suavizadas y luego se pasan a 1 bit, con el mismo grosor de
+  las etiquetas que el laboratorio ya usa.
 
 La etiqueta puede incluir el logotipo de UNIMINUTO, Laboratorio de Ingeniería, el aviso
 institucional, el nombre en una banda negra de alto contraste, la ruta física, la
@@ -315,7 +316,7 @@ core/
   permissions.py         Roles y comprobaciones de permiso centralizados
   storage.py             Capa de datos: Excel local (escritura atómica) + sync a GitHub
   auth.py                 Registro, login, reglas de rol
-  labels.py                Nomenclatura de tipos de item (UI) y etiquetas adaptables a su tamaño real (PNG/PDF/prueba)
+  labels.py                Nomenclatura de tipos de item (UI) y etiquetas en formato clásico a su tamaño real (PNG/PDF/prueba)
   ui.py                    Componentes visuales compartidos (encabezados, tarjetas, indicadores, línea de tiempo)
   traceability.py         Ruta verificable, comprobantes, líneas de tiempo y cadena de custodia
   inventory_suggestions.py Productos propuestos a partir de la descripción de un contenedor
