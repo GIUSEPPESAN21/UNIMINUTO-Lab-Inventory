@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.12.1 — Dependencias instalables otra vez
+
+### Corregido
+- **Pillow vuelve a 11.3.0.** La actualización a Pillow 12.3.0 dejaba los requisitos
+  sin solución (Streamlit 1.50 exige `pillow<12`): el CI fallaba al instalar y un
+  reinicio en Streamlit Cloud habría dejado la app caída. Dependabot ya no propone
+  Pillow 12 hasta que se actualice Streamlit.
+- **Contraseñas de más de 72 bytes con bcrypt 5.** bcrypt 5 las rechaza con un
+  error; la app las recorta a 72 bytes como hacía bcrypt 4, así que el registro y
+  el cambio de contraseña no fallan y los hashes ya guardados siguen siendo válidos.
+
+### Verificado
+- plotly 7.1.0, bcrypt 5.0.0, twilio 9.11.2, pytest-cov 7.1.0 y las acciones
+  `checkout`/`setup-python` v7: la suite completa pasa y los gráficos de Reportes se
+  ven bien.
+
 ## v1.12.0 — Interfaz propia, productos desde la descripción y trazabilidad
 
 ### Nuevo

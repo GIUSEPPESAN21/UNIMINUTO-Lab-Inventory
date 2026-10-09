@@ -24,6 +24,23 @@ def test_password_hash_roundtrip():
     assert not auth.verify_password("otra-clave", hashed)
 
 
+def test_password_longer_than_72_bytes_still_works():
+    # bcrypt 5 lanza ValueError con mas de 72 bytes; la app recorta como bcrypt 4.
+    long_password = "contraseña-muy-larga-" * 6  # > 72 bytes (la ñ ocupa 2)
+    hashed = auth.hash_password(long_password)
+    assert auth.verify_password(long_password, hashed)
+    assert not auth.verify_password("otra-clave", hashed)
+
+
+def test_hash_saved_by_bcrypt_4_with_a_long_password_still_verifies():
+    import bcrypt
+
+    long_password = "x" * 100
+    # Lo que guardaba bcrypt 4: el hash de los primeros 72 bytes.
+    legacy_hash = bcrypt.hashpw(long_password.encode("utf-8")[:72], bcrypt.gensalt()).decode("utf-8")
+    assert auth.verify_password(long_password, legacy_hash)
+
+
 def test_register_user_defaults_to_estudiante(storage):
     user, error = auth.register_user(
         storage, "Ana Perez", "ana@uniminuto.edu.co", "password123", "Ing. de Sistemas", "TI2024001"

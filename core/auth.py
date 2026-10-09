@@ -60,13 +60,23 @@ def is_institutional_email(email: str) -> bool:
     return domain.endswith(INSTITUTIONAL_EMAIL_SUFFIXES)
 
 
+# bcrypt solo usa los primeros 72 bytes de la contraseña. bcrypt 4 los recortaba
+# en silencio; desde bcrypt 5 una contraseña mas larga lanza ValueError. Se recorta
+# igual que antes para no romper el registro ni los hashes ya guardados.
+BCRYPT_MAX_BYTES = 72
+
+
+def _password_bytes(plain_password: str) -> bytes:
+    return plain_password.encode("utf-8")[:BCRYPT_MAX_BYTES]
+
+
 def hash_password(plain_password: str) -> str:
-    return bcrypt.hashpw(plain_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    return bcrypt.hashpw(_password_bytes(plain_password), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain_password: str, password_hash: str) -> bool:
     try:
-        return bcrypt.checkpw(plain_password.encode("utf-8"), password_hash.encode("utf-8"))
+        return bcrypt.checkpw(_password_bytes(plain_password), password_hash.encode("utf-8"))
     except Exception:
         return False
 
