@@ -71,7 +71,7 @@ def _button(at: AppTest, prefix: str, form: str = None):
                 if button.label.startswith(prefix) and (form is None or button.proto.form_id == form))
 
 
-def _scan(at: AppTest, request_id: str, code: str, button: str = "✅ Confirmar etiqueta", prefix="trace_route"):
+def _scan(at: AppTest, request_id: str, code: str, button: str = ":material/check_circle: Confirmar etiqueta", prefix="trace_route"):
     at.text_input(key=f"{prefix}_code_{request_id}").input(code)
     _button(at, button, form=f"{prefix}_form_{request_id}").click().run()
     assert not at.exception
@@ -83,9 +83,9 @@ def test_student_walks_the_route_scanning_each_label_and_gets_a_receipt(lab):
     text = _text(at)
     assert "Listas para retirar" in text and "Paso 1 de 5: Estantería 2" in text
 
-    _scan(at, rid, "2-1-02-00-000", "🏷️ Confirmar etiqueta")          # contenedor equivocado
+    _scan(at, rid, "2-1-02-00-000", ":material/label: Confirmar etiqueta")          # contenedor equivocado
     assert "Estás en el Contenedor 02; el tuyo es el 01" in _text(at)
-    _scan(at, rid, "2-1-01-00-000", "🏷️ Confirmar etiqueta")
+    _scan(at, rid, "2-1-01-00-000", ":material/label: Confirmar etiqueta")
     assert "Contenedor 01 verificado" in _text(at) and "Paso 4 de 5: Caja 01" in _text(at)
     assert lab["db"].get_trace_events() == []                            # nada escrito todavía
     _scan(at, rid, "2-1-01-01-000")
@@ -102,12 +102,12 @@ def test_student_walks_the_route_scanning_each_label_and_gets_a_receipt(lab):
 def test_shelf_step_can_be_confirmed_on_arrival(lab):
     rid = lab["request"]["id"]
     at = _open("trazabilidad", lab["student"])
-    _button(at, "📍 Ya estoy aquí").click().run()
+    _button(at, ":material/location_on: Ya estoy aquí").click().run()
     assert "Llegaste a Estantería 2" in _text(at) and "Paso 2 de 5: Piso 1" in _text(at)
-    _scan(at, rid, "2-1-01-01-001", "🏷️ Confirmar etiqueta")          # salta directo al producto
+    _scan(at, rid, "2-1-01-01-001", ":material/label: Confirmar etiqueta")          # salta directo al producto
     assert "Saltaste 2 etiquetas" in _text(at)
     assert lab["db"].get_trace_events() == []                            # parcial: no se guarda solo
-    _button(at, "💾 Guardar ruta con verificación parcial").click().run()
+    _button(at, ":material/save: Guardar ruta con verificación parcial").click().run()
     events = lab["db"].get_trace_events(request_id=rid)
     assert len(events) == 1 and '"scanned": 1' in events[0]["details"]
 
@@ -135,9 +135,9 @@ def test_professor_validates_the_receipt_and_leaves_a_record(lab):
     assert "Retiros con ruta verificada" in _text(at)
     receipt_input = next(t for t in at.text_input if t.label == "Comprobante")
     receipt_input.input(traceability.format_receipt(event["receipt"]).lower())
-    _button(at, "🔏 Validar comprobante").click().run()
+    _button(at, ":material/verified: Validar comprobante").click().run()
     assert "Comprobante válido: Ana Estudiante verificó la ruta a «Arduino UNO»" in _text(at)
-    _button(at, "✅ Registrar que validé").click().run()
+    _button(at, ":material/check_circle: Registrar que validé").click().run()
     assert not at.exception
     checks = db.get_trace_events(request_id=request["id"], event_type=traceability.EVENT_RECEIPT_CHECKED)
     assert len(checks) == 1 and checks[0]["actor_name"] == "Profe Gómez"
@@ -157,7 +157,7 @@ def test_professor_search_and_custody_show_the_whole_chain(lab):
 
     custody = next(t for t in at.text_input if t.label == "Código del producto")
     custody.input("2-1-01-01-001")
-    _button(at, "🔗 Ver cadena de custodia").click().run()
+    _button(at, ":material/link: Ver cadena de custodia").click().run()
     text = _text(at)
     assert "ruta E2 › P1 › C01 › CJ01 › I001" in text
     assert "Ruta verificada" in text and "Alta" in text and "aprobada" in text
@@ -171,7 +171,7 @@ def test_professor_moves_a_service_forward(lab):
     at = _open("trazabilidad", lab["prof"])
     _button(at, "▶️ Marcar en curso").click().run()
     assert "marcado como en curso" in _text(at)
-    _button(at, "📦 Marcar entregado").click().run()
+    _button(at, ":material/inventory_2: Marcar entregado").click().run()
     stages = [e["event_type"] for e in db.get_trace_events(request_id=service["id"])]
     assert stages == [traceability.EVENT_SERVICE_STARTED, traceability.EVENT_SERVICE_DELIVERED]
     assert db.get_service_request(service["id"])["status"] == "approved"
@@ -187,7 +187,7 @@ def test_checkout_in_escanear_is_linked_to_the_approved_request(lab):
     at = _open("escanear", lab["student"], scan_result=barcode.scan(db, "2-1-01-01-001"))
     assert "Tienes 1 solicitud(es) aprobada(s) de este producto" in _text(at)
     assert at.selectbox[0].value == request["id"]
-    _button(at, "✅ Confirmar salida").click().run()
+    _button(at, ":material/check_circle: Confirmar salida").click().run()
     assert not at.exception
 
     loans = db.get_open_loans_for_user(lab["student"]["id"])
@@ -205,11 +205,11 @@ def test_my_requests_tab_offers_the_route_and_escapes_user_text(lab):
                                          "item_name": "<img src=x onerror=alert(1)>", "quantity": 1}, lab["student"])
     db.update_service_request_status(hostile["id"], "approved", PROF_EMAIL)
     at = _open("solicitudes", lab["student"])
-    assert any(e.label == "🧭 Ruta y seguimiento" for e in at.expander)
+    assert any(e.label == ":material/explore: Ruta y seguimiento" for e in at.expander)
     html = " ".join(m.value for m in at.markdown)
     assert "<img src=x" not in html
     assert "&lt;img src=x onerror=alert(1)&gt;" in html
     assert "Aprobada · por retirar" in html
 
-    _scan(at, lab["request"]["id"], "2-1-01-00-000", "🏷️ Confirmar etiqueta", prefix="req_route")
+    _scan(at, lab["request"]["id"], "2-1-01-00-000", ":material/label: Confirmar etiqueta", prefix="req_route")
     assert "Contenedor 01 verificado" in _text(at)

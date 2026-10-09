@@ -454,7 +454,11 @@ def _load_cache() -> dict:
                     # keep_default_na=False + fillna: las celdas vacias llegan como "" (no
                     # como NaN, que rompia .strip() al editar items tras recargar el Excel)
                     # y un texto legitimo como "NA" o "None" ya no se convierte en nulo.
-                    df = xls.parse(sheet, dtype=str, keep_default_na=False).fillna("")
+                    # astype(object): desde pandas 3, dtype=str crea columnas de texto
+                    # estrictas que rechazan numeros (editar la cantidad de un item tras
+                    # reiniciar fallaba con TypeError); object conserva el comportamiento
+                    # de pandas 2 (cada celda leida sigue siendo texto).
+                    df = xls.parse(sheet, dtype=str, keep_default_na=False).fillna("").astype(object)
                     for col in cols:
                         if col not in df.columns:
                             df[col] = ""

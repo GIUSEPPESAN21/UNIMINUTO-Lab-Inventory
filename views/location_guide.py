@@ -13,7 +13,7 @@
 import streamlit as st
 
 from core import location, service_requests, traceability
-from core.ui import badge_html, section_title, stat_cards, timeline
+from core.ui import badge_html, material, section_title, stat_cards, timeline
 
 _CRUMB_TONES = {"done": "success", "inferred": "warning", "current": "info", "pending": "neutral"}
 _FEEDBACK = {"success": st.success, "warning": st.warning, "info": st.info, "danger": st.error}
@@ -53,7 +53,7 @@ def _static_route(checkpoints: list, item: dict, parent: dict = None) -> None:
     _breadcrumb([(point["short"], "pending") for point in checkpoints])
     labels = len([point for point in checkpoints if point.get("label_code")])
     st.caption(
-        f"{len(checkpoints)} puntos · {labels} con etiqueta 🏷️. Con una solicitud aprobada podrás "
+        f"{len(checkpoints)} puntos · {labels} con etiqueta :material/label:. Con una solicitud aprobada podrás "
         "confirmar cada etiqueta escaneándola y obtener un comprobante de tu recorrido."
     )
     timeline(traceability.checkpoint_steps(checkpoints))
@@ -67,7 +67,7 @@ def render_location_guide(item: dict, parent: dict = None, key_prefix: str = "lo
     storage = st.session_state.get("storage")
     checkpoints = _checkpoints_for(storage, item, parent)
     name = (item or {}).get("name") or "Producto"
-    with st.expander(f"🧭 Cómo llegar a {name}", expanded=False):
+    with st.expander(f":material/explore: Cómo llegar a {name}", expanded=False):
         _static_route(checkpoints, item, parent)
 
 
@@ -144,7 +144,7 @@ def _show_feedback(result: dict) -> None:
 def _page_link(page_key: str, label: str, icon: str) -> None:
     page = (st.session_state.get("pages") or {}).get(page_key)
     if page is not None:
-        st.page_link(page, label=label, icon=icon, use_container_width=True)
+        st.page_link(page, label=label, icon=material(icon), use_container_width=True)
 
 
 def render_route_record(event: dict, show_next_step: bool = False) -> None:
@@ -211,7 +211,7 @@ def render_verifiable_route(storage, request: dict, user: dict, key_prefix: str 
     if index is not None:
         point = route["checkpoints"][index]
         title = f"{point['title']} · {point['name']}" if point.get("name") and point["name"] != point["title"] else point["title"]
-        section_title(f"Paso {index + 1} de {stats['total']}: {title}", icon="📍", caption=point["hint"])
+        section_title(f"Paso {index + 1} de {stats['total']}: {title}", icon=":material/location_on:", caption=point["hint"])
     elif not stats["full"]:
         st.warning(
             f"Llegaste al producto, pero {stats['inferred']} etiqueta(s) quedaron sin escanear. "
@@ -230,18 +230,18 @@ def render_verifiable_route(storage, request: dict, user: dict, key_prefix: str 
             args = (storage, request, user, input_key)
             needs_label = index is None or bool(route["checkpoints"][index].get("label_code"))
             if needs_label:
-                st.form_submit_button("✅ Confirmar etiqueta", type="primary", use_container_width=True,
+                st.form_submit_button(":material/check_circle: Confirmar etiqueta", type="primary", use_container_width=True,
                                       on_click=_on_scan, args=args)
             else:
                 # El primer botón es el que dispara Enter (lector USB): confirmar etiqueta.
                 scan_col, arrive_col = st.columns(2)
-                scan_col.form_submit_button("🏷️ Confirmar etiqueta", use_container_width=True,
+                scan_col.form_submit_button(":material/label: Confirmar etiqueta", use_container_width=True,
                                             on_click=_on_scan, args=args)
-                arrive_col.form_submit_button("📍 Ya estoy aquí", type="primary", use_container_width=True,
+                arrive_col.form_submit_button(":material/location_on: Ya estoy aquí", type="primary", use_container_width=True,
                                               on_click=_on_arrival, args=args)
 
     if index is None and not stats["full"]:
-        if st.button("💾 Guardar ruta con verificación parcial", key=f"{key_prefix}_partial_{request_id}",
+        if st.button(":material/save: Guardar ruta con verificación parcial", key=f"{key_prefix}_partial_{request_id}",
                      use_container_width=True):
             result = {"ok": True, "tone": "success", "message": "", "completed": True}
             _save(storage, request, user, route, result)

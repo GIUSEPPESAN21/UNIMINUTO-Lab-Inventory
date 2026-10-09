@@ -5,8 +5,8 @@ import streamlit as st
 
 from core import auth, permissions
 from core.ui import (
-    ROLE_LABELS, card, card_header_html, empty_state, guard_role, initials, page_header, section_title,
-    stat_cards,
+    ROLE_LABELS, badge_html, card, card_header_html, empty_state, guard_role, initials, page_header,
+    section_title, stat_cards,
 )
 
 ROLES = ["estudiante", "profesor", "maestro"]
@@ -44,14 +44,17 @@ def _user_card(storage, user: dict, current_user: dict) -> None:
                 st.success(f"Rol de {user['full_name']} actualizado a {new_role}.")
                 st.rerun()
 
-        toggle_label = "🚫 Deshabilitar" if is_active else "✅ Habilitar"
-        if user["id"] != current_user["id"] and c4.button(
-            toggle_label, key=f"toggle_{user['id']}", use_container_width=True
-        ):
+        toggle_label = ":material/block: Deshabilitar" if is_active else ":material/check_circle: Habilitar"
+        if user["id"] == current_user["id"]:
+            # Nadie se deshabilita a si mismo: en su lugar, una pastilla que
+            # conserva la simetria de la fila.
+            c4.markdown(f'<div style="text-align:center">{badge_html("Tu cuenta", "info", "👤")}</div>',
+                        unsafe_allow_html=True)
+        elif c4.button(toggle_label, key=f"toggle_{user['id']}", use_container_width=True):
             storage.update_user(user["id"], {"status": "disabled" if is_active else "active"})
             st.rerun()
 
-        with st.expander("✏️ Corregir datos del usuario", expanded=False):
+        with st.expander(":material/edit: Corregir datos del usuario", expanded=False):
             with st.form(f"edit_user_{user['id']}"):
                 full_name = st.text_input("Nombre completo", value=user.get("full_name") or "")
                 student_id = st.text_input("ID de estudiante", value=user.get("student_id") or "")
@@ -89,10 +92,10 @@ def render():
         return
 
     page_header(
-        "Usuarios", icon="👥",
+        "Usuarios", icon=":material/group:",
         subtitle="Corrección de datos, roles, estados y lista blanca de profesores",
     )
-    tab_usuarios, tab_whitelist = st.tabs(["👥 Usuarios", "✅ Lista blanca de profesores"])
+    tab_usuarios, tab_whitelist = st.tabs([":material/group: Usuarios", ":material/check_circle: Lista blanca de profesores"])
 
     with tab_usuarios:
         st.caption(
@@ -107,7 +110,7 @@ def render():
             {"label": "Deshabilitados", "value": len([u for u in users if u.get("status") != "active"]),
              "icon": "🚫", "tone": "neutral"},
         ])
-        search = st.text_input("🔎 Buscar por nombre, correo o ID")
+        search = st.text_input(":material/search: Buscar por nombre, correo o ID")
         if search:
             value = search.lower()
             users = [
@@ -116,7 +119,7 @@ def render():
                 or value in (user.get("institutional_email") or "").lower()
                 or value in (user.get("student_id") or "").lower()
             ]
-        section_title(f"{len(users)} usuario(s)", icon="📇")
+        section_title(f"{len(users)} usuario(s)", icon=":material/contacts:")
         for user in users:
             _user_card(storage, user, current_user)
 
@@ -127,7 +130,7 @@ def render():
         )
         with st.form("add_whitelist_form", clear_on_submit=True):
             email = st.text_input("Correo institucional del profesor")
-            if st.form_submit_button("➕ Agregar a la lista blanca", type="primary"):
+            if st.form_submit_button(":material/add: Agregar a la lista blanca", type="primary"):
                 if not auth.is_institutional_email(email):
                     st.error("Ingresa un correo institucional válido (.edu o .edu.co).")
                 else:
@@ -136,13 +139,13 @@ def render():
                     st.rerun()
 
         emails = storage.get_whitelist()
-        section_title("Correos autorizados", icon="✅", caption=f"{len(emails)} correo(s) en la lista")
+        section_title("Correos autorizados", icon=":material/check_circle:", caption=f"{len(emails)} correo(s) en la lista")
         if not emails:
-            empty_state("La lista blanca está vacía.", icon="📭")
+            empty_state("La lista blanca está vacía.", icon=":material/inbox:")
         for email in emails:
             with card(f"wl_{email}"):
                 c1, c2 = st.columns([4, 1], vertical_alignment="center")
-                c1.markdown(card_header_html(email, icon="✉️"), unsafe_allow_html=True)
+                c1.markdown(card_header_html(email, icon=":material/mail:"), unsafe_allow_html=True)
                 if c2.button("Quitar", key=f"remove_wl_{email}", use_container_width=True):
                     storage.remove_from_whitelist(email)
                     st.rerun()

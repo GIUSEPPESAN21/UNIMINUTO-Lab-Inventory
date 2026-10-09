@@ -12,7 +12,7 @@ def render():
         "Inventario de Laboratorio UNIMINUTO",
         subtitle="Trazabilidad de equipos y materiales del laboratorio de ingeniería",
         eyebrow="Acerca del proyecto",
-        icon="🏢",
+        icon=":material/info:",
     )
 
     with st.container(border=True, key="lab_card_acerca_intro"):
@@ -23,7 +23,7 @@ def render():
             "dónde están y quién los tiene prestados**, sin depender de planillas sueltas."
         )
 
-    section_title("¿Cómo funciona?", icon="🧩", caption="Tres tipos de elementos organizan todo el inventario.")
+    section_title("¿Cómo funciona?", icon=":material/extension:", caption="Tres tipos de elementos organizan todo el inventario.")
     feature_cards([
         {"icon": "🗄️", "title": ITEM_TYPE_NAMES["master"],
          "text": "La caja, kit o gabinete físico que agrupa productos relacionados."},
@@ -34,7 +34,7 @@ def render():
          "text": "Un producto con su propio código, sin contenedor."},
     ])
 
-    section_title("Roles institucionales", icon="👥")
+    section_title("Roles institucionales", icon=":material/group:")
     feature_cards([
         {"icon": "🎓", "title": "Estudiante",
          "text": "Escanea, solicita salida y reingresa lo que él mismo tomó prestado."},
@@ -47,5 +47,5 @@ def render():
     st.info(
         "Para dudas sobre el uso del sistema o solicitudes de soporte, contacta al "
         "administrador del laboratorio (perfil maestro) desde tu programa académico.",
-        icon="💬",
+        icon=":material/chat:",
     )

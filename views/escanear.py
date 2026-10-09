@@ -27,12 +27,12 @@ def _render_pickup_notice(pickups: list, routes: dict) -> None:
     verified = [request for request in pickups if routes.get(request["id"])]
     if verified:
         st.success(
-            f"🧭 Tienes {len(pickups)} solicitud(es) aprobada(s) de este producto; "
+            f":material/explore: Tienes {len(pickups)} solicitud(es) aprobada(s) de este producto; "
             f"{len(verified)} con ruta verificada. Al confirmar la salida quedará enlazada."
         )
     else:
         st.info(
-            f"🧭 Tienes {len(pickups)} solicitud(es) aprobada(s) de este producto. Al confirmar la salida "
+            f":material/explore: Tienes {len(pickups)} solicitud(es) aprobada(s) de este producto. Al confirmar la salida "
             "quedará enlazada; si quieres, primero recorre la ruta verificable en Trazabilidad."
         )
 
@@ -44,7 +44,7 @@ def _render_label_download(item: dict):
         return
     pdf_col, png_col = st.columns(2)
     pdf_col.download_button(
-        f"🏷️ PDF {spec.size_text}", data=label_pdf,
+        f":material/label: PDF {spec.size_text}", data=label_pdf,
         file_name=f"etiqueta_{item['id']}.pdf", mime="application/pdf",
         help="Formato recomendado: mide exactamente lo mismo que la etiqueta",
         key=f"label_scan_pdf_{item['id']}", type="primary", use_container_width=True,
@@ -68,7 +68,7 @@ def _render_item_actions(item: dict, parent: dict = None):
     render_location_guide(item, parent, key_prefix=f"scan_guide_{item['id']}")
 
     if parent:
-        st.caption(f"🗄️ Pertenece al {ITEM_TYPE_NAMES['master']}: **{parent.get('name')}** (`{parent.get('id')}`)")
+        st.caption(f":material/shelves: Pertenece al {ITEM_TYPE_NAMES['master']}: **{parent.get('name')}** (`{parent.get('id')}`)")
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Disponibles", item["available"])
@@ -79,7 +79,7 @@ def _render_item_actions(item: dict, parent: dict = None):
     if item.get("description"):
         st.caption(item["description"])
 
-    st.markdown("##### 📤 Dar salida (checkout)")
+    st.markdown("##### :material/outbox: Dar salida (checkout)")
     pickups = traceability.pending_pickups(storage, user, item["id"])
     routes = {request["id"]: traceability.route_event_for(storage, request["id"]) for request in pickups}
     if pickups:
@@ -106,7 +106,7 @@ def _render_item_actions(item: dict, parent: dict = None):
             if with_date:
                 expected_date = st.date_input("Devolver antes de", value=datetime.now().date() + timedelta(days=7))
             notes = st.text_input("Notas (opcional)", placeholder="Motivo de uso, practica, proyecto...")
-            submitted = st.form_submit_button("✅ Confirmar salida", type="primary", use_container_width=True)
+            submitted = st.form_submit_button(":material/check_circle: Confirmar salida", type="primary", use_container_width=True)
 
             if submitted:
                 expected_dt = None
@@ -125,7 +125,7 @@ def _render_item_actions(item: dict, parent: dict = None):
                 else:
                     st.error(msg)
 
-    st.markdown("##### 📥 Reingresar (checkin)")
+    st.markdown("##### :material/move_to_inbox: Reingresar (checkin)")
     open_loans = storage.get_open_loans_for_item(item["id"])
     if user["role"] == "estudiante":
         open_loans = [l for l in open_loans if l["user_id"] == user["id"]]
@@ -134,7 +134,7 @@ def _render_item_actions(item: dict, parent: dict = None):
         st.info("No hay prestamos abiertos de este item para reingresar.")
     else:
         for loan in open_loans:
-            overdue_tag = " ⚠️ VENCIDO" if loans_core.is_overdue(loan) else ""
+            overdue_tag = " · :red[:material/warning: **VENCIDO**]" if loans_core.is_overdue(loan) else ""
             with st.container(border=True):
                 cc1, cc2 = st.columns([3, 1])
                 cc1.write(f"**{loan['user_name']}** ({loan['user_role']}) · {loan['quantity']} u.{overdue_tag}")
@@ -154,7 +154,7 @@ def _render_new_item_wizard(scanned_code: str):
 
     st.warning(f"El codigo `{scanned_code}` no existe todavia en el inventario.")
     if not barcode.is_valid_code(scanned_code):
-        st.caption(f"⚠️ Este codigo no cumple ningun formato valido. {barcode.FORMAT_HELP}")
+        st.caption(f":material/warning: Este codigo no cumple ningun formato valido. {barcode.FORMAT_HELP}")
 
     if user["role"] == "estudiante":
         st.info("Pide a un profesor o al administrador del laboratorio que registre este item.")
@@ -194,7 +194,7 @@ def _render_new_item_wizard(scanned_code: str):
             quantity = st.number_input("Cantidad inicial", min_value=0, step=1, value=1)
             min_alert = st.number_input("Umbral de alerta de disponibilidad", min_value=0, step=1, value=0)
 
-        submitted = st.form_submit_button("💾 Registrar item", type="primary", use_container_width=True)
+        submitted = st.form_submit_button(":material/save: Registrar item", type="primary", use_container_width=True)
 
         if submitted:
             code_to_save = (code_to_save or "").strip()
@@ -236,7 +236,7 @@ def _render_new_item_wizard(scanned_code: str):
 def render():
     storage = st.session_state.storage
 
-    page_header("Escanear", icon="🛰️", subtitle="Conecta tu lector USB o escribe el código manualmente")
+    page_header("Escanear", icon=":material/barcode_scanner:", subtitle="Conecta tu lector USB o escribe el código manualmente")
 
     with st.form("scan_form", clear_on_submit=True):
         code = st.text_input("Codigo de barras", placeholder="Escanea aqui...")
@@ -253,7 +253,7 @@ def render():
     notice = st.session_state.pop("scan_trace_notice", None)
     if notice:
         linked, message = notice
-        (st.success if linked else st.warning)(f"🧭 {message}")
+        (st.success if linked else st.warning)(f":material/explore: {message}")
 
     if not result:
         st.caption("Esperando escaneo...")
@@ -268,9 +268,9 @@ def render():
         _render_new_item_wizard(result["barcode"])
     elif result["status"] == "found_master":
         item = result["item"]
-        st.success(f"🗄️ {ITEM_TYPE_NAMES['master']}: **{item['name']}** (`{item['id']}`)")
+        st.success(f":material/shelves: {ITEM_TYPE_NAMES['master']}: **{item['name']}** (`{item['id']}`)")
         if result.get("parsed"):
-            st.caption(f"📖 {barcode.describe_parsed(result['parsed'])}")
+            st.caption(f":material/menu_book: {barcode.describe_parsed(result['parsed'])}")
         if item.get("description"):
             st.caption(item["description"])
         st.caption(f"Ubicacion: {item.get('location') or 'N/A'}")
@@ -285,8 +285,8 @@ def render():
                     _render_item_actions(child, parent=item)
     elif result["status"] == "found_item":
         item = result["item"]
-        st.success(f"✔️ Item encontrado: **{item['name']}** (`{item['id']}`)")
+        st.success(f":material/check: Item encontrado: **{item['name']}** (`{item['id']}`)")
         if result.get("parsed"):
-            st.caption(f"📖 {barcode.describe_parsed(result['parsed'])}")
+            st.caption(f":material/menu_book: {barcode.describe_parsed(result['parsed'])}")
         _render_label_download(item)
         _render_item_actions(item, parent=result.get("parent"))

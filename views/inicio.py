@@ -31,17 +31,17 @@ _ACTIONS = [
 
 
 def _quick_guide():
-    with st.expander("💡 Guía rápida: ¿cómo funciona este sistema?", expanded=False):
+    with st.expander(":material/lightbulb: Guía rápida: ¿cómo funciona este sistema?", expanded=False):
         st.markdown(f"""
         1. **{ITEM_TYPE_NAMES['master']}**: la caja o kit físico que agrupa varios productos.
         2. **{ITEM_TYPE_NAMES['child']}**: una subdivisión dentro de un Contenedor Principal
            para una característica concreta (ej. "Resistencias 220 Ω").
         3. **{ITEM_TYPE_NAMES['standalone']}**: un producto con su propio código, sin contenedor.
-        4. Ve a **🛰️ Escanear**, escribe o escanea el código con tu lector USB, y desde ahí puedes
+        4. Ve a **:material/barcode_scanner: Escanear**, escribe o escanea el código con tu lector USB, y desde ahí puedes
            **dar salida** (llevarte el producto prestado) o **reingresarlo** cuando lo devuelvas.
-        5. En **📝 Solicitudes** pide un producto o servicio; los responsables reciben correo si SMTP está configurado.
-        6. En **🗓️ Reservas** solicita una actividad o el laboratorio completo y consulta su aprobación.
-        7. En **📋 Préstamos** puedes ver en todo momento qué tienes prestado (o, si eres profesor
+        5. En **:material/edit_note: Solicitudes** pide un producto o servicio; los responsables reciben correo si SMTP está configurado.
+        6. En **:material/calendar_month: Reservas** solicita una actividad o el laboratorio completo y consulta su aprobación.
+        7. En **:material/assignment: Préstamos** puedes ver en todo momento qué tienes prestado (o, si eres profesor
            o del perfil maestro, quién tiene qué en todo el laboratorio).
         """)
 
@@ -106,7 +106,7 @@ def render():
         my_overdue = len([l for l in my_open_loans if loans_core.is_overdue(l)])
         stat_cards([
             {"label": "Items en catálogo", "value": len(items), "icon": "📦", "tone": "info"},
-            {"label": "Mis préstamos activos", "value": len(my_open_loans), "icon": "📋", "tone": "success"},
+            {"label": "Mis préstamos activos", "value": len(my_open_loans), "icon": "📋", "tone": "info"},
             {"label": "Vencidos (míos)", "value": my_overdue, "icon": "⚠️",
              "tone": "danger" if my_overdue else "neutral"},
         ])
@@ -115,7 +115,7 @@ def render():
         users = storage.get_all_users()
         stat_cards([
             {"label": "Items en catálogo", "value": len(items), "icon": "📦", "tone": "info"},
-            {"label": "Préstamos activos", "value": len(all_open), "icon": "📋", "tone": "success"},
+            {"label": "Préstamos activos", "value": len(all_open), "icon": "📋", "tone": "info"},
             {"label": "Vencidos", "value": len(overdue), "icon": "⚠️",
              "tone": "danger" if overdue else "neutral"},
             {"label": "Usuarios registrados", "value": len(users), "icon": "👥", "tone": "neutral"},
@@ -123,9 +123,9 @@ def render():
 
     if not items:
         st.info(
-            "🧪 El inventario todavía está vacío."
+            ":material/science: El inventario todavía está vacío."
             + (
-                " Ve a **📦 Inventario → Nuevo item** (o **Importar CSV masivo**) "
+                " Ve a **:material/inventory_2: Inventario → Nuevo item** (o **Importar CSV masivo**) "
                 "para registrar los primeros productos del laboratorio."
                 if role in ("profesor", "maestro")
                 else " Pídele a un profesor o al administrador del laboratorio que registre los primeros productos."
@@ -137,22 +137,23 @@ def render():
         {"page": pages.get(key), "label": label, "icon": icon, "description": description}
         for key, label, icon, description in _ACTIONS
     ]
-    col_actions, col_alerts = st.columns([1.7, 1], gap="large")
-    with col_actions:
-        section_title("Accesos rápidos", icon="⚡", caption="Lo que más se usa, a un clic.")
-        quick_actions(actions, columns=2)
-    with col_alerts:
-        rows = []
-        if items:
-            try:
-                rows = _alerts(user, items, storage.get_availability_map(), my_open_loans, overdue)
-            except Exception as e:
-                st.error(f"No se pudieron cargar las alertas: {e}")
-        section_title("Alertas", icon="🔔", caption=f"{len(rows)} aviso(s) activos" if rows else None)
-        if rows:
-            alert_list(rows)
-        else:
-            empty_state("Sin alertas por el momento.", "Todo está en orden en el laboratorio.", icon="✅")
+    rows = []
+    if items:
+        try:
+            rows = _alerts(user, items, storage.get_availability_map(), my_open_loans, overdue)
+        except Exception as e:
+            st.error(f"No se pudieron cargar las alertas: {e}")
+
+    # Una sola columna centrada: las alertas pendientes van primero (son lo que
+    # hay que atender); sin alertas, la confirmacion va despues de los accesos.
+    if rows:
+        section_title("Alertas", icon=":material/notifications:", caption=f"{len(rows)} aviso(s) activos")
+        alert_list(rows)
+    section_title("Accesos rápidos", icon=":material/bolt:", caption="Lo que más se usa, a un clic.")
+    quick_actions(actions, columns=4)
+    if not rows:
+        section_title("Alertas", icon=":material/notifications:")
+        empty_state("Sin alertas por el momento.", "Todo está en orden en el laboratorio.", icon=":material/check_circle:")
 
     st.markdown('<div style="height:0.75rem"></div>', unsafe_allow_html=True)
     _quick_guide()

@@ -5,6 +5,8 @@ Secrets de Streamlit (MASTER_EMAIL, etc.): la cuenta usada para el login se
 siembra directamente en el storage en memoria de la propia sesion de prueba,
 para que la suite sea 100% determinista tanto en local como en CI."""
 
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("streamlit.testing.v1")
@@ -13,16 +15,20 @@ from streamlit.testing.v1 import AppTest
 
 from core import auth
 
+# Ruta absoluta: desde Streamlit 1.65, AppTest.from_file resuelve las rutas
+# relativas desde el archivo de prueba (tests/), no desde la raiz del repo.
+APP_PATH = str(Path(__file__).resolve().parent.parent / "app.py")
+
 
 def test_login_screen_renders_without_exceptions():
-    at = AppTest.from_file("app.py")
+    at = AppTest.from_file(APP_PATH)
     at.run()
     assert not at.exception
     assert any("Inventario de Laboratorio" in md.value for md in at.markdown)
 
 
 def test_master_login_succeeds_and_shows_navigation():
-    at = AppTest.from_file("app.py")
+    at = AppTest.from_file(APP_PATH)
     at.run()
     assert not at.exception
 
@@ -48,7 +54,7 @@ def test_master_login_succeeds_and_shows_navigation():
 
 
 def test_student_self_registration_end_to_end():
-    at = AppTest.from_file("app.py")
+    at = AppTest.from_file(APP_PATH)
     at.run()
     assert not at.exception
 

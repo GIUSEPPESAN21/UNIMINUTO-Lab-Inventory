@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import streamlit as st
 
 from core import auth
-from core.ui import esc, footer, logo_data_uri
+from core.ui import esc, footer, icon_html, logo_data_uri
 
 PENDING_KEY = "pending_registration"
 
@@ -121,7 +121,7 @@ def _brand_panel() -> None:
         f'<div class="lab-auth-brand__logo"><img src="{logo}" alt="Logotipo de UNIMINUTO"></div>' if logo else ""
     )
     features = "".join(
-        f'<li><span aria-hidden="true">{icon}</span>{esc(text)}</li>'
+        f'<li><span aria-hidden="true">{icon_html(icon)}</span>{esc(text)}</li>'
         for icon, text in (
             ("🛰️", "Escanea códigos y registra salidas en segundos"),
             ("🗓️", "Reserva actividades o el laboratorio completo"),
@@ -160,7 +160,7 @@ def render():
                 if notice:
                     st.warning(notice)
 
-                tab_login, tab_register = st.tabs(["🔐 Iniciar sesión", "📝 Registrarme"])
+                tab_login, tab_register = st.tabs([":material/login: Iniciar sesión", ":material/person_add: Registrarme"])
 
                 with tab_login:
                     with st.form("login_form"):

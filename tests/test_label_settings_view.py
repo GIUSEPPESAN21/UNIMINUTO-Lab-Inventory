@@ -130,7 +130,7 @@ def test_scan_page_offers_labels_in_the_configured_size():
     assert not at.exception
     downloads = at.get("download_button")
     assert len(downloads) == 2
-    assert downloads[0].proto.label == "🏷️ PDF 100 × 50 mm"
+    assert downloads[0].proto.label == ":material/label: PDF 100 × 50 mm"
     assert downloads[1].proto.label == "PNG · solo archivo"
     assert "No lo imprimas desde la app Fotos" in downloads[1].proto.help
     assert any("100 × 50 mm · 203 dpi" in c.value for c in at.caption)

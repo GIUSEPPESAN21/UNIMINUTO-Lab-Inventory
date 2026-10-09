@@ -183,7 +183,7 @@ def _render_paper_info(spec: LabelSpec) -> None:
     """La medida que debe tener el papel del driver y del cuadro de impresión."""
     with st.container(border=True):
         st.markdown(
-            f"**🧾 Papel al imprimir: {spec.size_text} ({spec.inches_text}).** Define ese mismo "
+            f"**:material/receipt_long: Papel al imprimir: {spec.size_text} ({spec.inches_text}).** Define ese mismo "
             "tamaño («USER», definido por el usuario) en el driver de la impresora y elígelo en "
             "el cuadro de impresión del PDF. Si el cuadro muestra otra medida (por ejemplo "
             "«USER (50,8 × 50,8 mm)»), la etiqueta saldrá recortada o pequeña."
@@ -207,14 +207,14 @@ def render(storage, user: dict) -> None:
     save_col, test_col = st.columns(2)
     changed = spec != saved
     if save_col.button(
-        "💾 Guardar configuración", type="primary", disabled=not changed,
+        ":material/save: Guardar configuración", type="primary", disabled=not changed,
         use_container_width=True, key="label_cfg_save",
     ):
         labels.save_label_spec(storage, spec, actor_email=user.get("institutional_email", ""))
-        st.toast(f"Etiquetas configuradas a {spec.describe()}", icon="🏷️")
+        st.toast(f"Etiquetas configuradas a {spec.describe()}", icon=":material/label:")
         st.rerun()
     test_col.download_button(
-        "🖨️ Hoja de prueba de impresión (PDF)",
+        ":material/print: Hoja de prueba de impresión (PDF)",
         data=labels.generate_calibration_pdf_bytes(spec),
         file_name=f"prueba_impresion_{spec.width_mm:g}x{spec.height_mm:g}mm.pdf",
         mime="application/pdf", use_container_width=True, key="label_cfg_test",
@@ -226,7 +226,7 @@ def render(storage, user: dict) -> None:
             "Hay cambios sin guardar: la vista previa y la hoja de prueba ya los usan, pero las "
             f"etiquetas del inventario siguen en {saved.describe()} hasta que guardes."
         )
-    with st.expander("🖨️ Cómo imprimir a tamaño real, paso a paso", expanded=saved == LabelSpec()):
+    with st.expander(":material/print: Cómo imprimir a tamaño real, paso a paso", expanded=saved == LabelSpec()):
         st.markdown(PRINT_GUIDE)
-    with st.expander("🔎 Mi etiqueta sale mal: qué significa cada caso"):
+    with st.expander(":material/search: Mi etiqueta sale mal: qué significa cada caso"):
         st.markdown(SYMPTOMS_GUIDE)

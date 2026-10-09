@@ -13,11 +13,11 @@ def render():
     storage = st.session_state.storage
     user = st.session_state.user
 
-    page_header("Mi perfil", icon="👤", subtitle="Tus datos y seguridad de la cuenta")
+    page_header("Mi perfil", icon=":material/person:", subtitle="Tus datos y seguridad de la cuenta")
 
     col_info, col_security = st.columns([1.15, 1], gap="large")
     with col_info:
-        section_title("Datos de la cuenta", icon="🪪")
+        section_title("Datos de la cuenta", icon=":material/badge:")
         with card("perfil_datos"):
             role = user["role"]
             st.markdown(
@@ -35,7 +35,7 @@ def render():
             ])
 
     with col_security:
-        section_title("Cambiar contraseña", icon="🔒", caption="Usa al menos 8 caracteres.")
+        section_title("Cambiar contraseña", icon=":material/lock:", caption="Usa al menos 8 caracteres.")
         with st.form("change_password_form", clear_on_submit=True):
             current_pw = st.text_input("Contraseña actual", type="password")
             new_pw = st.text_input("Nueva contraseña", type="password")

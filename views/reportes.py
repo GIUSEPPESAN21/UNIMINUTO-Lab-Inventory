@@ -10,7 +10,10 @@ import streamlit as st
 from core import data_quality
 from core import loans as loans_core
 from core import permissions, reports
-from core.ui import badge_html, empty_state, esc, guard_role, page_header, section_title, stat_cards
+from core.ui import (
+    BRAND_BLUE, CHART_COLORS, badge_html, empty_state, esc, guard_role, icon_html, material, page_header,
+    section_title, stat_cards,
+)
 
 _PENDING_KEY = "dq_pending"      # correccion esperando confirmacion: {"key", "fixes"}
 _FLASH_KEY = "dq_flash"          # resultado de la ultima correccion aplicada
@@ -25,9 +28,11 @@ _SUBTLE = 'style="color: var(--subtle-text-color); font-size: 0.85rem;"'
 
 
 def _transparent(fig):
-    """Gráfica sin fondo propio: hereda el fondo claro u oscuro de la app."""
+    """Gráfica sin fondo propio (hereda el fondo claro u oscuro de la app), con
+    la leyenda centrada debajo para que la figura quede simétrica."""
     fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      margin=dict(l=10, r=10, t=10, b=10), font=dict(family="Inter, sans-serif"))
+                      margin=dict(l=10, r=10, t=10, b=10), font=dict(family="Inter, sans-serif"),
+                      legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.08, yanchor="top"))
     return fig
 
 
@@ -37,7 +42,7 @@ def render():
     if not guard_role(st.session_state.user, permissions.MANAGER_ROLES, "los Reportes"):
         return
 
-    page_header("Reportes", icon="📊", subtitle="Analítica de uso y salud del inventario")
+    page_header("Reportes", icon=":material/bar_chart:", subtitle="Analítica de uso y salud del inventario")
 
     try:
         items = storage.get_all_items(include_retired=True)
@@ -48,7 +53,7 @@ def render():
         items, users, all_loans = [], [], []
 
     tab1, tab_health, tab2, tab3 = st.tabs(
-        ["📈 Uso del laboratorio", "🩺 Salud del inventario", "⚠️ Vencidos", "📥 Exportar base de datos"]
+        [":material/trending_up: Uso del laboratorio", ":material/monitor_heart: Salud del inventario", ":material/warning: Vencidos", ":material/download: Exportar base de datos"]
     )
 
     with tab1:
@@ -63,37 +68,37 @@ def render():
 
         col_a, col_b = st.columns(2)
         with col_a:
-            section_title("Salidas por día", icon="📅", caption="Últimos 30 días")
+            section_title("Salidas por día", icon=":material/event:", caption="Últimos 30 días")
             df_daily = reports.loans_per_day(all_loans)
             if df_daily.empty:
                 empty_state("Sin salidas registradas", "Aquí verás las salidas de los últimos 30 días.",
-                            icon="📅")
+                            icon=":material/event:")
             else:
-                fig = px.bar(df_daily, x="Fecha", y="Salidas", color_discrete_sequence=["#1565C0"])
+                fig = px.bar(df_daily, x="Fecha", y="Salidas", color_discrete_sequence=[BRAND_BLUE])
                 st.plotly_chart(_transparent(fig), use_container_width=True)
         with col_b:
-            section_title("Ítems activos por categoría", icon="🗂️")
+            section_title("Ítems activos por categoría", icon=":material/folder_open:")
             df_cat = reports.items_by_category(items)
             if df_cat.empty:
-                empty_state("Sin ítems activos", "Registra productos para ver su distribución.", icon="🗂️")
+                empty_state("Sin ítems activos", "Registra productos para ver su distribución.", icon=":material/folder_open:")
             else:
                 fig2 = px.pie(df_cat, names="Categoria", values="Items", hole=0.55,
-                              color_discrete_sequence=["#1565C0", "#26A69A", "#F2B705", "#E65100", "#7E57C2"])
+                              color_discrete_sequence=CHART_COLORS)
                 st.plotly_chart(_transparent(fig2), use_container_width=True)
 
         top_items = reports.most_borrowed_items(all_loans)
         top_users = reports.top_users_by_loans(all_loans)
         col_c, col_d = st.columns(2)
         with col_c:
-            section_title("Ítems más prestados", icon="🏆")
+            section_title("Ítems más prestados", icon=":material/emoji_events:")
             if top_items.empty:
-                empty_state("Todavía no hay préstamos", icon="🏆")
+                empty_state("Todavía no hay préstamos", icon=":material/emoji_events:")
             else:
                 st.dataframe(top_items, use_container_width=True, hide_index=True)
         with col_d:
-            section_title("Usuarios con más préstamos", icon="👤")
+            section_title("Usuarios con más préstamos", icon=":material/person:")
             if top_users.empty:
-                empty_state("Todavía no hay préstamos", icon="👤")
+                empty_state("Todavía no hay préstamos", icon=":material/person:")
             else:
                 st.dataframe(top_users, use_container_width=True, hide_index=True)
 
@@ -103,7 +108,7 @@ def render():
     with tab2:
         overdue = loans_core.get_overdue_loans(storage)
         if not overdue:
-            empty_state("No hay préstamos vencidos", "Todo se ha devuelto a tiempo.", icon="✅")
+            empty_state("No hay préstamos vencidos", "Todo se ha devuelto a tiempo.", icon=":material/check_circle:")
         for loan in overdue:
             st.error(
                 f"**{loan['item_name']}** x{loan['quantity']} · prestado a {loan['user_name']} "
@@ -111,15 +116,15 @@ def render():
             )
 
     with tab3:
-        section_title("Descarga completa de la base de datos", icon="📥",
+        section_title("Descarga completa de la base de datos", icon=":material/download:",
                       caption="Un Excel con ítems, usuarios (sin contraseñas) y préstamos.")
-        if st.button("📥 Generar Excel", type="primary"):
+        if st.button(":material/download: Generar Excel", type="primary"):
             buf = reports.export_full_database(items, users, all_loans)
             st.session_state["export_buffer"] = buf
 
         if "export_buffer" in st.session_state:
             st.download_button(
-                "⬇️ Descargar Excel",
+                ":material/download: Descargar Excel",
                 data=st.session_state["export_buffer"],
                 file_name=f"Inventario_UNIMINUTO_Export_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -128,12 +133,12 @@ def render():
 
 
 # ---------------------------------------------------------------------------
-# 🩺 Salud del inventario
+# Salud del inventario
 # ---------------------------------------------------------------------------
 
 def _render_health(storage, user: dict, items: list) -> None:
     section_title(
-        "Salud del inventario", icon="🩺",
+        "Salud del inventario", icon=":material/monitor_heart:",
         caption="Revisión automática de códigos, jerarquía, ubicaciones, nombres, cantidades y contenido. "
                 "Nada se modifica sin tu confirmación.",
     )
@@ -155,10 +160,10 @@ def _render_health(storage, user: dict, items: list) -> None:
 
     if not summary["items"]:
         empty_state("El inventario está vacío",
-                    "Cuando registres productos, aquí verás su revisión de calidad.", icon="📦")
+                    "Cuando registres productos, aquí verás su revisión de calidad.", icon=":material/inventory_2:")
         return
     if not findings:
-        empty_state("Todo en orden", "No se encontraron problemas en el inventario.", icon="✅")
+        empty_state("Todo en orden", "No se encontraron problemas en el inventario.", icon=":material/check_circle:")
         return
 
     merged = data_quality.merge_fixes(findings)
@@ -171,13 +176,13 @@ def _render_health(storage, user: dict, items: list) -> None:
         group = grouped.get(severity) or []
         if not group:
             continue
-        title = f"{data_quality.SEVERITY_ICONS[severity]} {_GROUP_TITLES[severity]} ({len(group)})"
+        title = f"{material(data_quality.SEVERITY_ICONS[severity])} {_GROUP_TITLES[severity]} ({len(group)})"
         with st.expander(title, expanded=severity != data_quality.SEVERITY_INFO):
             for finding in group:
                 _render_finding(storage, user, finding)
 
     st.download_button(
-        "⬇️ Descargar hallazgos (CSV)", data=_findings_csv(findings),
+        ":material/download: Descargar hallazgos (CSV)", data=_findings_csv(findings),
         file_name=f"salud_inventario_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
         mime="text/csv", key="dq_download", width="stretch",
     )
@@ -197,17 +202,17 @@ def _render_finding(storage, user: dict, finding) -> None:
             rows = "".join(f"<li>{esc(detail)}</li>" for detail in finding.details)
             st.markdown(f'<ul style="margin: 0.25rem 0 0.25rem 1rem;">{rows}</ul>', unsafe_allow_html=True)
         if finding.suggestion:
-            st.markdown(f"<div {_SUBTLE}>💡 {esc(finding.suggestion)}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div {_SUBTLE}>{icon_html('💡')} {esc(finding.suggestion)}</div>", unsafe_allow_html=True)
         if finding.fix:
             fixes = {finding.item_id: {**finding.fix, "item_name": finding.item_name}}
-            _render_fix_controls(storage, user, finding.key, fixes, button_label=f"🛠️ {finding.fix['label']}")
+            _render_fix_controls(storage, user, finding.key, fixes, button_label=f":material/build: {finding.fix['label']}")
 
 
 def _render_bulk_fixes(storage, user: dict, merged: dict) -> None:
     changes = sum(len(fix["changes"]) for fix in merged.values())
     with st.container(border=True):
         st.markdown(
-            f"**🛠️ Correcciones seguras disponibles:** {changes} cambio(s) en {len(merged)} ítem(s)."
+            f"**:material/build: Correcciones seguras disponibles:** {changes} cambio(s) en {len(merged)} ítem(s)."
         )
         st.markdown(
             f"<div {_SUBTLE}>Solo cambian textos que se deducen sin ambigüedad: la ubicación desde el código, "
@@ -234,7 +239,7 @@ def _render_fix_controls(storage, user: dict, key: str, fixes: dict, button_labe
     st.markdown("**Revisa el cambio antes de guardarlo:**")
     st.markdown(_diff_html(pending["fixes"]), unsafe_allow_html=True)
     confirm_col, cancel_col = st.columns(2)
-    if confirm_col.button("✅ Confirmar y guardar", key=f"dq_confirm_{key}", type="primary",
+    if confirm_col.button(":material/check_circle: Confirmar y guardar", key=f"dq_confirm_{key}", type="primary",
                           width="stretch"):
         with st.spinner("Guardando correcciones..."):
             applied, errors = _apply_fixes(storage, user, pending["fixes"])

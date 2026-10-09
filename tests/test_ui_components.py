@@ -91,6 +91,58 @@ def test_logo_is_served_from_the_repository_assets():
     assert uri.startswith("data:image/png;base64,") and len(uri) > 1000
 
 
+def test_symbol_is_a_square_crop_of_the_logo_for_small_sizes():
+    from PIL import Image
+
+    with Image.open(ui.SYMBOL_PATH) as symbol:
+        assert symbol.mode == "RGBA" and symbol.width == symbol.height >= 128
+
+
+# --- Iconos Material y rejillas simetricas --------------------------------------------
+
+@pytest.mark.parametrize("icon, expected", [
+    ("📦", "inventory_2"), ("🗓️", "calendar_month"), ("🗓", "calendar_month"), ("👨‍🏫", "co_present"),
+    (":material/home:", "home"), ("🦄", None), ("", None), (None, None), (":material/:", None),
+])
+def test_material_name_maps_emojis_and_shortcodes(icon, expected):
+    assert ui.material_name(icon) == expected
+
+
+def test_material_shortcode_for_native_widgets_keeps_unknown_icons():
+    assert ui.material("✅") == ":material/check_circle:"
+    assert ui.material(":material/save:") == ":material/save:"
+    assert ui.material("🦄") == "🦄"
+    assert ui.material(None) == ""
+
+
+def test_icon_html_renders_a_monochrome_symbol_and_escapes_everything():
+    assert ui.icon_html("📍") == '<span class="lab-ms" aria-hidden="true">location_on</span>'
+    assert ui.icon_html("🦄") == "🦄"
+    assert "<script>" not in ui.icon_html(":material/<script>:") + ui.icon_html("<script>")
+    assert "&lt;script&gt;" in ui.icon_html(":material/<script>:")
+
+
+@pytest.mark.parametrize("total, per_row, rows", [
+    (7, 4, [4, 3]), (5, 4, [3, 2]), (6, 3, [3, 3]), (9, 4, [3, 3, 3]), (4, 4, [4]), (1, 4, [1]), (0, 4, []),
+])
+def test_balanced_rows_spread_cards_evenly(total, per_row, rows):
+    assert ui.balanced_rows(total, per_row) == rows
+    assert sum(rows) == total and all(r <= per_row for r in rows)
+
+
+def test_centered_columns_pad_a_short_row_with_two_equal_spacers(monkeypatch):
+    calls = []
+
+    def fake_columns(spec, **kwargs):
+        calls.append(spec)
+        return list(range(len(spec) if isinstance(spec, list) else spec))
+
+    monkeypatch.setattr(ui.st, "columns", fake_columns)
+    assert ui.centered_columns(2, 3) == [1, 2]
+    assert ui.centered_columns(3, 3) == [0, 1, 2]
+    assert calls == [[0.5, 1, 1, 0.5], 3]
+
+
 def test_card_uses_a_styled_key_with_optional_tone(monkeypatch):
     calls = []
     monkeypatch.setattr(ui.st, "container", lambda **kwargs: calls.append(kwargs))
@@ -136,6 +188,20 @@ def test_every_component_escapes_user_text_when_rendered():
     assert rendered.count(">N/A<") == 2          # valores vacios y nulos
 
 
+def _stats_script():
+    from core import ui
+
+    ui.stat_cards([{"label": str(n), "value": n, "icon": "📦"} for n in range(5)])
+
+
+def test_stat_grid_tells_the_stylesheet_how_many_cards_it_has():
+    at = AppTest.from_function(_stats_script)
+    at.run()
+    rendered = " ".join(m.value for m in at.markdown)
+    assert "lab-stat-grid lab-stat-grid--n5" in rendered
+    assert rendered.count('class="lab-ms"') == 5
+
+
 def test_quick_actions_without_pages_render_nothing():
     at = AppTest.from_function(_render_all_script)
     at.run()
@@ -178,6 +244,31 @@ def test_stylesheet_respects_reduced_motion_and_disabled_buttons():
     assert "@media (prefers-reduced-motion: reduce)" in CSS
     assert ".stButton > button:disabled" in CSS
     assert "cursor: not-allowed" in CSS
+
+
+def test_stylesheet_uses_the_uniminuto_palette_without_mixing_gold_into_blue():
+    assert "--lab-brand-blue: #003698" in CSS and "--lab-brand-gold: #FFCE00" in CSS
+    # El amarillo nunca se mezcla en degradados con el azul (da verde oliva).
+    for gradient in re.findall(r"(?:linear|radial)-gradient\([^;]*", CSS):
+        assert "brand-gold" not in gradient and "255, 206, 0" not in gradient and "FFCE00" not in gradient.upper()
+    assert ".lab-ms" in CSS and "Material Symbols Rounded" in CSS
+
+
+def test_native_theme_uses_the_palette_in_light_and_dark_without_forcing_one():
+    import tomllib
+
+    config = tomllib.loads((Path(__file__).resolve().parent.parent / ".streamlit" / "config.toml").read_text("utf-8"))
+    theme = config["theme"]
+    # Sin "base": la app sigue la preferencia claro/oscuro del sistema.
+    assert "base" not in theme
+    assert theme["light"]["primaryColor"] == "#003698"
+    assert theme["dark"]["primaryColor"] and theme["dark"]["backgroundColor"] != theme["light"]["backgroundColor"]
+    assert theme["chartCategoricalColors"][:2] == ui.CHART_COLORS[:2]
+
+
+def test_stylesheet_styles_tabs_of_old_and_new_streamlit():
+    assert '[data-baseweb="tab"]' in CSS                  # Streamlit 1.50 (BaseWeb)
+    assert '[data-testid="stTab"]' in CSS and '[role="tablist"]' in CSS   # Streamlit 1.65 (react-aria)
 
 
 def test_stylesheet_has_visible_focus_and_no_scripts_or_foreign_hosts():

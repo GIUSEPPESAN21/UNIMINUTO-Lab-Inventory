@@ -6,6 +6,8 @@ del acceso (del que dependen las pruebas de seguridad)."""
 
 from datetime import datetime, timedelta, timezone
 
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("streamlit.testing.v1")
@@ -14,6 +16,10 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 
 from core import auth, loans as loans_core  # noqa: E402
 from core.storage import LabStorage  # noqa: E402
+
+# Ruta absoluta: desde Streamlit 1.65, AppTest.from_file resuelve las rutas
+# relativas desde el archivo de prueba (tests/), no desde la raiz del repo.
+APP_PATH = str(Path(__file__).resolve().parent.parent / "app.py")
 
 ACTOR = "admin@uniminuto.edu.co"
 EVIL = "<img src=x onerror=alert(1)>"
@@ -139,7 +145,7 @@ def test_users_view_renders_cards_for_master(lab):
 # --- login y barra lateral (app completa) ---------------------------------------------
 
 def test_login_keeps_field_order_and_local_branding():
-    at = AppTest.from_file("app.py")
+    at = AppTest.from_file(APP_PATH)
     at.run()
     assert not at.exception
     assert [w.label for w in at.text_input[:2]] == ["Correo institucional", "Contraseña"]
@@ -150,7 +156,7 @@ def test_login_keeps_field_order_and_local_branding():
 
 
 def test_sidebar_shows_user_card_and_logout_still_works():
-    at = AppTest.from_file("app.py")
+    at = AppTest.from_file(APP_PATH)
     at.run()
     storage = at.session_state["storage"]
     storage.create_user("Laura Gómez", "laura@uniminuto.edu.co", auth.hash_password(PASSWORD), "estudiante",

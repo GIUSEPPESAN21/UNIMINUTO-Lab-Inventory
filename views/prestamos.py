@@ -22,7 +22,7 @@ def _loan_row(storage, loan: dict, user: dict, key_prefix: str):
         card_header(
             f"{loan['item_name']} ×{loan['quantity']}",
             subtitle=f"Prestado a: {loan['user_name']} ({loan['user_role']})",
-            icon="📦",
+            icon=":material/inventory_2:",
             badges=[status],
         )
         c1, c3 = st.columns([3, 1], vertical_alignment="center")
@@ -50,7 +50,7 @@ def render():
     storage = st.session_state.storage
     user = st.session_state.user
 
-    page_header("Préstamos", icon="📋", subtitle="Salidas y reingresos del laboratorio")
+    page_header("Préstamos", icon=":material/assignment:", subtitle="Salidas y reingresos del laboratorio")
 
     if user["role"] == "estudiante":
         loans = storage.get_open_loans_for_user(user["id"])
@@ -60,15 +60,15 @@ def render():
             {"label": "Vencidos", "value": overdue_count, "icon": "⏰",
              "tone": "danger" if overdue_count else "success"},
         ])
-        section_title("Mis préstamos", icon="📋")
+        section_title("Mis préstamos", icon=":material/assignment:")
         if not loans:
             empty_state("No tienes préstamos activos.", "Cuando registres una salida desde Escanear aparecerá aquí.",
-                        icon="📭")
+                        icon=":material/inbox:")
         for loan in loans:
             _loan_row(storage, loan, user, "mine")
         return
 
-    tab_activos, tab_historial = st.tabs(["📋 Préstamos activos", "🗂️ Historial completo"])
+    tab_activos, tab_historial = st.tabs([":material/assignment: Préstamos activos", ":material/history: Historial completo"])
 
     with tab_activos:
         loans = storage.get_all_loans(status="out")
@@ -79,7 +79,7 @@ def render():
              "tone": "danger" if overdue_count else "success"},
         ])
         if not loans:
-            empty_state("No hay préstamos activos.", "Todo el material está en el laboratorio.", icon="✅")
+            empty_state("No hay préstamos activos.", "Todo el material está en el laboratorio.", icon=":material/check_circle:")
         for loan in loans:
             _loan_row(storage, loan, user, "active")
 
@@ -87,13 +87,13 @@ def render():
         all_loans = storage.get_all_loans()
         returned = [l for l in all_loans if l.get("status") == "returned"]
         if not returned:
-            empty_state("Aún no hay préstamos devueltos en el historial.", icon="🗂️")
+            empty_state("Aún no hay préstamos devueltos en el historial.", icon=":material/folder_open:")
         for loan in returned:
             with card(f"loan_hist_{loan['id']}"):
                 card_header(
                     f"{loan['item_name']} ×{loan['quantity']}",
                     subtitle=f"{loan['user_name']} ({loan['user_role']})",
-                    icon="📦",
+                    icon=":material/inventory_2:",
                     badges=[{"text": "Devuelto", "tone": "success", "icon": "✅"}],
                 )
                 st.caption(

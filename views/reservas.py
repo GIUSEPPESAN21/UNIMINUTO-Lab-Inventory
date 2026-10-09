@@ -42,7 +42,7 @@ def _reservation_card(storage, row: dict, user: dict, allow_cancel=True, key_pre
             badges=[_status_badge(status)],
         )
         c1, c2 = st.columns([3, 1], vertical_alignment="center")
-        c1.caption(f"👥 {row.get('attendees')} asistente(s) · Solicita: {row.get('requester_name')}")
+        c1.caption(f":material/group: {row.get('attendees')} asistente(s) · Solicita: {row.get('requester_name')}")
         c1.write(row.get("purpose") or "Sin propósito")
         if row.get("review_notes"):
             c1.caption(f"Respuesta: {row['review_notes']}")
@@ -60,12 +60,12 @@ def render():
     reviewer = user.get("role") in reservations.REVIEWER_ROLES
 
     page_header(
-        "Reservas", icon="🗓️",
+        "Reservas", icon=":material/calendar_month:",
         subtitle="Solicita una actividad o el laboratorio completo y evita cruces de horario",
     )
-    titles = ["➕ Nueva reserva", "📅 Mis reservas"]
+    titles = [":material/add: Nueva reserva", ":material/event: Mis reservas"]
     if reviewer:
-        titles.append("✅ Gestionar")
+        titles.append(":material/fact_check: Gestionar")
     tabs = st.tabs(titles)
 
     with tabs[0]:
@@ -107,7 +107,7 @@ def render():
     with tabs[1]:
         mine = storage.get_reservations(user_id=user["id"])
         if not mine:
-            empty_state("Todavía no tienes reservas.", "Solicita una en la pestaña Nueva reserva.", icon="🗓️")
+            empty_state("Todavía no tienes reservas.", "Solicita una en la pestaña Nueva reserva.", icon=":material/calendar_month:")
         for row in mine:
             _reservation_card(storage, row, user, key_prefix="mine")
 
@@ -120,12 +120,12 @@ def render():
                  "tone": "warning" if pending else "success"},
                 {"label": "Aprobadas", "value": len(approved), "icon": "✅", "tone": "info"},
             ])
-            section_title("Por revisar", icon="📝")
+            section_title("Por revisar", icon=":material/edit_note:")
             if not pending:
-                empty_state("No hay reservas pendientes.", icon="✅")
+                empty_state("No hay reservas pendientes.", icon=":material/check_circle:")
             for row in pending:
                 with st.expander(
-                    f"⏳ {row.get('activity')} · {_local(row.get('start_at'))} · {row.get('requester_name')}",
+                    f":material/hourglass_top: {row.get('activity')} · {_local(row.get('start_at'))} · {row.get('requester_name')}",
                     expanded=False,
                 ):
                     st.write(row.get("purpose"))
@@ -136,8 +136,8 @@ def render():
                     with st.form(f"review_res_{row['id']}"):
                         notes = st.text_input("Observación para el solicitante")
                         c1, c2 = st.columns(2)
-                        approve = c1.form_submit_button("✅ Aprobar", type="primary", use_container_width=True)
-                        reject = c2.form_submit_button("⛔ Rechazar", use_container_width=True)
+                        approve = c1.form_submit_button(":material/check_circle: Aprobar", type="primary", use_container_width=True)
+                        reject = c2.form_submit_button(":material/block: Rechazar", use_container_width=True)
                         if approve or reject:
                             decision = reservations.STATUS_APPROVED if approve else reservations.STATUS_REJECTED
                             ok, message = reservations.review_reservation(
@@ -147,7 +147,7 @@ def render():
                             if ok:
                                 st.rerun()
 
-            section_title("Próximas reservas aprobadas", icon="📅")
+            section_title("Próximas reservas aprobadas", icon=":material/event:")
             if not approved:
                 st.caption("No hay reservas aprobadas.")
             for row in approved:
