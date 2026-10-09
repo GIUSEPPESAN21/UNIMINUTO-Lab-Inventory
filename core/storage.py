@@ -64,6 +64,13 @@ SHEET_COLUMNS = {
     "settings": [
         "key", "value", "updated_by", "updated_at",
     ],
+    # Trazabilidad (core/traceability.py): ruta verificada, retiro, validacion
+    # de comprobante y avance de servicios. `user_id` es el dueño de la
+    # solicitud; `actor_*`, quien registro el evento; `details`, JSON.
+    "trace_events": [
+        "id", "event_type", "request_id", "item_id", "loan_id", "user_id",
+        "actor_id", "actor_name", "actor_email", "receipt", "details", "created_at",
+    ],
 }
 
 _cached_dfs = None
@@ -1482,3 +1489,34 @@ class LabStorage:
                 df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
             dfs["settings"] = df
             _write_and_sync(dfs)
+
+    # ------------------------------------------------------------------
+    # TRAZABILIDAD (eventos; ver core/traceability.py)
+    # ------------------------------------------------------------------
+
+    def add_trace_event(self, event: dict) -> dict:
+        """Agrega UN evento de trazabilidad (una escritura = un commit). Solo se
+        guardan las columnas conocidas; `details` debe venir ya como texto JSON."""
+        columns = SHEET_COLUMNS["trace_events"]
+        row = {column: "" for column in columns}
+        row.update({key: "" if value is None else str(value) for key, value in event.items() if key in columns})
+        row["id"] = _new_id()
+        row["created_at"] = row["created_at"] or _now_str()
+        with _db_write():
+            dfs = _read_excel()
+            dfs["trace_events"] = pd.concat([dfs["trace_events"], pd.DataFrame([row])], ignore_index=True)
+            _write_and_sync(dfs)
+        return dict(row)
+
+    @firestore_retry
+    def get_trace_events(self, request_id: str = None, item_id: str = None, user_id: str = None,
+                         event_type: str = None, loan_id: str = None, receipt: str = None) -> list:
+        """Eventos que cumplen TODOS los filtros dados, del más antiguo al más reciente."""
+        df = _read_excel("trace_events")["trace_events"]
+        filters = {"request_id": request_id, "item_id": item_id, "user_id": user_id,
+                   "event_type": event_type, "loan_id": loan_id, "receipt": receipt}
+        for column, value in filters.items():
+            if value is not None:
+                df = df[df[column] == value]
+        rows = [_clean_nan(row.to_dict()) for _, row in df.iterrows()]
+        return sorted(rows, key=lambda row: row.get("created_at") or "")
