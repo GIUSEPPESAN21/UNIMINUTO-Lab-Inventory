@@ -7,6 +7,11 @@
 # [theme.dark], disponibles desde Streamlit 1.46): así la app sigue la
 # preferencia claro/oscuro del sistema en lugar de fijar un solo tema.
 
+[client]
+# Sin menú ⋮ ni opciones de desarrollador para nadie (style.css oculta además
+# los controles que añade Streamlit Community Cloud).
+toolbarMode = "minimal"
+
 [theme]
 font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
 # Letra base un poco mas grande que la de fabrica (16 px): como todo el diseño
