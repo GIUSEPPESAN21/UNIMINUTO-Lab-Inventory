@@ -211,6 +211,39 @@ Lego tienen rutas especiales; códigos libres/heredados usan `location`.
   completarla (hoja `trace_events`). Registrar la salida en Escanear enlaza el
   préstamo con la solicitud aprobada. Un estudiante solo ve sus propios registros.
 
+### Chips NFC (Chips NFC)
+
+Cada producto o ubicación puede llevar un chip NFC (etiquetas NTAG; se recomienda **NTAG215**,
+y *anti-metal* sobre estantes metálicos). El chip guarda **una URL** como
+`https://<tu-app>/escanear?nfc=2-1-01-01-001&s=K7Q2MX9AB0`: al acercar el teléfono se abre la app
+en el navegador, sin instalar nada (Android; iPhone XS o posterior; no se usa Web NFC).
+
+- **Prueba de presencia.** Cada toque guarda un evento `nfc_tap` (persona, código y hora) en
+  `trace_events`. Si la persona no ha iniciado sesión, el toque espera y se registra al entrar;
+  `?nfc=` se borra de la URL tras procesarlo y el mismo chip tocado dos veces en un minuto cuenta
+  una vez. La app muestra el producto como en Escanear.
+- **Ruta verificable.** Un toque confirma el punto de control de su etiqueta (método
+  «Chip NFC tocado») igual que escanear el código de barras, y completa el comprobante habitual.
+- **Firma.** Con `NFC_SECRET` en los Secrets, cada URL lleva `&s=<firma>` (HMAC-SHA256 truncado a
+  10 caracteres) y la app rechaza URL sin firma, alteradas o inventadas. Configúralo **antes** de
+  grabar los chips: si lo cambias, hay que regrabarlos. Sin `NFC_SECRET` las URL van sin firma.
+  `APP_URL` fija la dirección pública que se graba (por omisión, la dirección con la que se abrió
+  la app).
+- **Inventario con el teléfono** (profesor/maestro, página *Chips NFC*). Se abre un conteo (todo,
+  una estantería o un contenedor); cada chip tocado, o código escrito/escaneado, marca el producto
+  como verificado, con la cantidad contada opcional. Se ve el avance, lo que falta y las
+  diferencias respecto a lo que debería haber en el estante (total − en préstamo). Al cerrar se
+  guarda un resumen (`count_closed`). **Contar no cambia cantidades**: solo el maestro puede
+  aplicar ajustes, uno por uno y con confirmación explícita, y quedan en el historial del producto.
+- **Grabar un chip con NFC Tools** (gratuita, Android e iPhone): en *Chips NFC → Grabar etiquetas*
+  elige el producto y copia su URL; en NFC Tools ve a **Escribir → Agregar un registro →
+  URL/URI**, pega la URL, toca **Escribir** y acerca el chip. Prueba el chip acercando de nuevo el
+  teléfono (debe abrir la app y aparecer como «Probado»). Bloquear el chip es opcional y
+  permanente: hazlo solo tras probarlo.
+- El registro de chips (grabado, probado, retirado) y los conteos viven en la hoja `trace_events`
+  (eventos `nfc_tap`, `nfc_tag_written`, `nfc_tag_removed`, `count_started`, `count_mark`,
+  `count_closed`); no hay hojas nuevas.
+
 ### Generar productos desde la descripción
 
 En **📦 Inventario**, cada Contenedor Principal con descripción ofrece
@@ -319,6 +352,8 @@ core/
   labels.py                Nomenclatura de tipos de item (UI) y etiquetas en formato clásico a su tamaño real (PNG/PDF/prueba)
   ui.py                    Componentes visuales compartidos (encabezados, tarjetas, indicadores, línea de tiempo)
   traceability.py         Ruta verificable, comprobantes, líneas de tiempo y cadena de custodia
+  nfc.py                   Chips NFC: URL y firma de cada chip, toques, ruta por NFC y registro de chips
+  inventory_count.py      Inventario con el teléfono: conteos, avance, diferencias y ajustes del maestro
   inventory_suggestions.py Productos propuestos a partir de la descripción de un contenedor
   data_quality.py         Auditoría de calidad del inventario y correcciones seguras
   barcode.py              Validación/lectura de codigos (GLIOPS V3) y resolución de escaneo
@@ -331,7 +366,7 @@ core/
 views/
   login.py, inicio.py, escanear.py, inventario.py, solicitudes.py, trazabilidad.py,
   reservas.py, location_guide.py, label_settings.py, perfil.py, prestamos.py, usuarios.py,
-  reportes.py, acerca_de.py
+  reportes.py, acerca_de.py, nfc.py (página Chips NFC), nfc_tap.py (toque con ?nfc=)
 tests/                  Pruebas unitarias de core/* (pytest, sin tocar Excel/GitHub)
 .github/workflows/ci.yml Integración continua: sintaxis + pruebas en cada push/PR
 ```
@@ -417,6 +452,10 @@ Para correo automático configura `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`,
 maestros activos. Nunca subas credenciales al repositorio. SMTP es opcional:
 su ausencia no impide guardar una solicitud o reserva (pero sin SMTP no se puede
 verificar el correo de un profesor: ver *Seguridad del registro*).
+
+Para los chips NFC: `APP_URL` (dirección pública de la app, p. ej.
+`https://mi-laboratorio.streamlit.app`) y `NFC_SECRET` (secreto para firmar las URL de los
+chips; opcional pero recomendado). Ver *Chips NFC*.
 
 Opcionales de seguridad (valores por defecto entre paréntesis):
 `LOGIN_MAX_ATTEMPTS` (5), `LOGIN_LOCKOUT_MINUTES` (5) y `SESSION_TIMEOUT_MINUTES` (720).
