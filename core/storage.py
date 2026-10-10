@@ -595,7 +595,31 @@ def _row_to_service_request(row: pd.Series) -> dict:
     )
 
 
-VALID_ITEM_TYPES = ("master", "child", "standalone")
+VALID_ITEM_TYPES = ("master", "child", "standalone", "location")
+LOCATION_TYPE = "location"  # estanteria, piso, mesa o zona (ver core/places.py)
+
+
+def _validate_location_data(parent_id: str, df_items: pd.DataFrame, custom_id: str, is_new: bool) -> None:
+    """Reglas de una ubicacion: su codigo es de ubicacion (nunca el de un
+    contenedor o producto) y, si esta dentro de otra, esa otra es una ubicacion
+    compatible (un piso en su estanteria). La jerarquia se fija al crearla."""
+    if not is_new:
+        return
+    barcode.validate_location_code(custom_id)
+    if not parent_id:
+        return
+    if parent_id == custom_id:
+        raise ValueError("Una ubicacion no puede estar dentro de si misma.")
+    parent_rows = df_items[df_items["id"] == parent_id]
+    if parent_rows.empty:
+        raise ValueError(f"La ubicacion '{parent_id}' no existe.")
+    if parent_rows.iloc[0]["item_type"] != LOCATION_TYPE:
+        raise ValueError(f"'{parent_id}' no es una ubicacion (estanteria, piso, mesa o zona).")
+    if parent_rows.iloc[0]["status"] == "retired":
+        raise ValueError(f"La ubicacion '{parent_id}' esta dada de baja.")
+    problem = barcode.location_parent_problem(custom_id, parent_id)
+    if problem:
+        raise ValueError(problem)
 
 
 def _validate_item_data(data: dict, df_items: pd.DataFrame, custom_id: str, is_new: bool = False) -> None:
@@ -603,6 +627,10 @@ def _validate_item_data(data: dict, df_items: pd.DataFrame, custom_id: str, is_n
     parent_id = str(data.get("parent_id") or "").strip()
     if parent_id.lower() in ("nan", "none"):  # celdas nulas heredadas de Excel
         parent_id = ""
+
+    if item_type == LOCATION_TYPE:
+        _validate_location_data(parent_id, df_items, custom_id, is_new)
+        return
 
     if is_new:
         barcode.validate_code_format(custom_id)
@@ -666,6 +694,17 @@ def _cascade_ids(df_items: pd.DataFrame, item_id: str) -> list:
     rows = df_items[df_items["id"] == item_id]
     if not rows.empty and rows.iloc[0]["item_type"] == "master":
         ids.extend(df_items[df_items["parent_id"] == item_id]["id"].tolist())
+    elif not rows.empty and rows.iloc[0]["item_type"] == LOCATION_TYPE:
+        # Una ubicacion arrastra las ubicaciones que contiene (los pisos de una
+        # estanteria...), a cualquier profundidad. Los productos no se tocan.
+        pending = [item_id]
+        while pending:
+            current = pending.pop()
+            inner = df_items[(df_items["parent_id"] == current) & (df_items["item_type"] == LOCATION_TYPE)]
+            for child_id in inner["id"].tolist():
+                if child_id not in ids:
+                    ids.append(child_id)
+                    pending.append(child_id)
     return ids
 
 
@@ -810,6 +849,9 @@ class LabStorage:
 
             old_quantity = int(float(existing["quantity"])) if existing is not None and str(existing["quantity"]).strip() not in ("", "nan") else 0
             new_quantity = int(data.get("quantity", 0) or 0)
+            min_stock_alert = data.get("min_stock_alert", 0)
+            if item_type == LOCATION_TYPE:
+                new_quantity = min_stock_alert = 0  # una ubicacion no tiene stock: nunca se presta
             quantity_delta = new_quantity - old_quantity if existing is not None else new_quantity
 
             history_type = "Alta" if is_new else "Ajuste"
@@ -825,7 +867,7 @@ class LabStorage:
                 "unit": data.get("unit", "unidad"),
                 "quantity": new_quantity,
                 "location": data.get("location", ""),
-                "min_stock_alert": data.get("min_stock_alert", 0),
+                "min_stock_alert": min_stock_alert,
                 "status": data.get("status", "active"),
                 "created_by": data.get("created_by", actor_email),
                 "updated_at": _now_str(),
@@ -887,6 +929,7 @@ class LabStorage:
                     # Codigo liberado por una baja anterior: se reutiliza como item nuevo.
                     _purge_item_records(dfs, _cascade_ids(df_items, custom_id), actor_email)
                     df_items, df_hist = dfs["items"], dfs["item_history"]
+                no_stock = item_type == LOCATION_TYPE  # una ubicacion no tiene stock
                 row = {
                     "id": custom_id,
                     "name": name,
@@ -895,9 +938,9 @@ class LabStorage:
                     "item_type": item_type,
                     "parent_id": parent_id,
                     "unit": str(raw.get("unit", "unidad") or "unidad"),
-                    "quantity": int(float(raw.get("quantity", 0) or 0)),
+                    "quantity": 0 if no_stock else int(float(raw.get("quantity", 0) or 0)),
                     "location": str(raw.get("location", "") or ""),
-                    "min_stock_alert": int(float(raw.get("min_stock_alert", 0) or 0)),
+                    "min_stock_alert": 0 if no_stock else int(float(raw.get("min_stock_alert", 0) or 0)),
                     "status": "active",
                     "created_by": actor_email,
                     "updated_at": _now_str(),
@@ -943,6 +986,8 @@ class LabStorage:
             if item_type == "master":
                 children_ids = df_items[df_items["parent_id"] == item_id]["id"].tolist()
                 ids_to_retire.extend(children_ids)
+            elif item_type == LOCATION_TYPE:
+                ids_to_retire = _cascade_ids(df_items, item_id)  # con las ubicaciones que contiene
 
             open_for_these = df_loans[df_loans["item_id"].isin(ids_to_retire) & (df_loans["status"] == "out")]
             if not open_for_these.empty:
@@ -1007,7 +1052,7 @@ class LabStorage:
                     "closed_loans": 0, "open_requests": 0}
         ids = _cascade_ids(df_items, item_id)
         loans = df_loans[df_loans["item_id"].isin(ids)]
-        return {
+        impact = {
             "exists": True,
             "contained_items": len(ids) - 1,
             "open_loans": int((loans["status"] == "out").sum()),
@@ -1016,6 +1061,9 @@ class LabStorage:
                 (df_req["item_id"].isin(ids) & df_req["status"].isin(("pending", "approved"))).sum()
             ),
         }
+        if df_items[df_items["id"] == item_id].iloc[0]["item_type"] == LOCATION_TYPE:
+            impact["item_type"] = LOCATION_TYPE  # lo contenido son ubicaciones, no productos
+        return impact
 
     @firestore_retry
     def item_code_in_use(self, code: str) -> bool:
@@ -1583,6 +1631,8 @@ class LabStorage:
                 try:
                     quantity = whole(raw.get("quantity", 0), "Cantidad")
                     min_alert = whole(raw.get("min_stock_alert", 0), "Umbral de alerta")
+                    if item_type == LOCATION_TYPE:
+                        quantity = min_alert = 0  # una ubicacion no tiene stock
                     lookup = df_items
                     if parent_id in batch_types:
                         # Contenedor creado antes en esta misma tanda (va primero en la busqueda).

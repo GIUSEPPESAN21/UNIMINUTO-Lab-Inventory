@@ -61,7 +61,8 @@ def render():
             {"label": "Préstamos históricos", "value": len(all_loans), "icon": "📋", "tone": "info"},
             {"label": "Duración promedio de un préstamo",
              "value": f"{reports.average_loan_duration_hours(all_loans):.1f} h".replace(".", ","), "icon": "⏱️"},
-            {"label": "Ítems activos", "value": len([i for i in items if i.get("status") == "active"]),
+            {"label": "Ítems activos",
+             "value": len([i for i in items if i.get("status") == "active" and i.get("item_type") != "location"]),
              "icon": "📦", "tone": "success"},
         ])
         import plotly.express as px

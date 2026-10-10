@@ -12,6 +12,7 @@ from core import barcode, labels, loans as loans_core, notifications, traceabili
 from core.labels import ITEM_TYPE_BY_CHOICE, ITEM_TYPE_CHOICES, ITEM_TYPE_HELP, ITEM_TYPE_NAMES
 from core.ui import page_header
 from views.code_input import render_code_input
+from views import ubicaciones
 from views.location_guide import render_location_guide
 
 
@@ -264,6 +265,10 @@ def render():
         if result.get("retired"):
             st.caption("Su código quedó libre: puedes registrarlo de nuevo como un item nuevo.")
             _render_new_item_wizard(result["barcode"])
+    elif result["status"] == "found_location" or (result["status"] == "not_found" and result.get("place")):
+        ubicaciones.render_scan_result(
+            storage, st.session_state.user, result, labels.load_label_spec(storage), render_label=_render_label_download,
+        )
     elif result["status"] == "not_found":
         _render_new_item_wizard(result["barcode"])
     elif result["status"] == "found_master":

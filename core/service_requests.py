@@ -32,6 +32,8 @@ def validate_request(storage, request_type: str, item_id: str = "", quantity=1,
             raise ValueError("Selecciona un producto activo del inventario.")
         if item.get("item_type") == "master":
             raise ValueError("Solicita un producto, no un Contenedor Principal.")
+        if item.get("item_type") == "location":
+            raise ValueError("Solicita un producto, no una ubicación (estantería, piso, mesa o zona).")
         try:
             quantity = int(quantity)
         except (TypeError, ValueError):

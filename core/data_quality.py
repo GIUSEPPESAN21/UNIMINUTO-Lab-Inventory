@@ -40,7 +40,8 @@ FIELD_LABELS = {
     "inventario": "Inventario",
 }
 
-VALID_ITEM_TYPES = ("master", "child", "standalone")
+VALID_ITEM_TYPES = ("master", "child", "standalone", "location")
+LOCATION_TYPE = "location"  # estanteria, piso, mesa o zona (ver core/places.py)
 VALID_STATUSES = ("active", "retired")
 
 # Nivel de codigo GLIOPS esperado para cada tipo (igual que views/code_input.py).
@@ -53,6 +54,7 @@ _TYPE_NAMES = {
     "master": "Contenedor Principal",
     "child": "Contenedor de Característica",
     "standalone": "Ítem Individual",
+    "location": "Ubicación",
 }
 _LEVEL_NAMES = {
     barcode.LEVEL_CONTAINER: "contenedor",
@@ -571,7 +573,7 @@ def audit_items(items: list, include_retired: bool = False) -> list:
     _audit_names(audited, add)
     _audit_categories(audited, add)
 
-    active = [i for i in audited if i["status"] != "retired"]
+    active = [i for i in audited if i["status"] != "retired" and _text(i.get("item_type")) != LOCATION_TYPE]
     if active:
         lendable = [i for i in active if _text(i.get("item_type")) != "master" and (_as_int(i.get("quantity")) or 0) > 0]
         if not lendable:
@@ -592,6 +594,10 @@ def _audit_item(item: dict, by_id: dict, children_of: dict, add) -> None:
     location = _text(item.get("location"))
     description = _text(item.get("description"))
     status = item["status"]
+
+    if item_type == LOCATION_TYPE:
+        _audit_place(item, code, raw_id, parent_id, by_id, name, description, add)
+        return
 
     # --- codigo ---
     parsed = None
@@ -720,6 +726,74 @@ def _audit_item(item: dict, by_id: dict, children_of: dict, add) -> None:
         _audit_master_contents(item, code, description, children_of.get(code, []), by_id, add)
 
 
+def _audit_place(item, code, raw_id, parent_id, by_id, name, description, add) -> None:
+    """Reglas de una ubicacion (estanteria, piso, mesa o zona): su codigo es de
+    ubicacion, solo puede estar dentro de otra ubicacion compatible y no tiene
+    stock. No se le exige ubicacion escrita ni categoria: el codigo ES el lugar."""
+    if not code:
+        add(SEVERITY_ERROR, "missing_id", item, "id", "La ubicación no tiene código.",
+            "Elimínala y regístrala de nuevo desde Inventario → Ubicaciones.")
+    else:
+        if raw_id != code:
+            add(SEVERITY_ERROR, "id_whitespace", item, "id",
+                f"El código '{raw_id}' tiene espacios al inicio o al final: el escáner no lo encontrará.",
+                "Vuelve a registrarla con el código sin espacios.")
+        try:
+            barcode.validate_location_code(code)
+        except ValueError as exc:
+            add(SEVERITY_WARNING, "code_format", item, "id",
+                f"El código {code} no es un código de ubicación: {exc}",
+                "Regístrala de nuevo desde Inventario → Ubicaciones con un código de ubicación.")
+
+    parent = by_id.get(parent_id) if parent_id else None
+    if parent_id:
+        if parent_id == code:
+            add(SEVERITY_ERROR, "self_parent", item, "parent_id", "La ubicación figura dentro de sí misma.",
+                "Elimínala y regístrala de nuevo.")
+        elif parent is None:
+            add(SEVERITY_WARNING, "missing_parent", item, "parent_id",
+                f"La ubicación que la contiene ({parent_id}) no existe.",
+                "Registra esa ubicación con el mismo código o vuelve a registrar esta.")
+        elif _text(parent.get("item_type")) != LOCATION_TYPE:
+            add(SEVERITY_ERROR, "parent_not_location", item, "parent_id",
+                f"Está dentro de {parent_id}, que no es una ubicación.",
+                "Una ubicación solo puede estar dentro de otra ubicación (estantería, piso, mesa o zona).")
+        else:
+            problem = barcode.location_parent_problem(code, parent_id)
+            if problem:
+                add(SEVERITY_WARNING, "location_parent", item, "parent_id", problem,
+                    "Revisa en qué ubicación está registrada.")
+            elif parent["status"] == "retired" and item["status"] != "retired":
+                add(SEVERITY_WARNING, "parent_retired", item, "parent_id",
+                    f"La ubicación que la contiene ({parent_id}) está dada de baja pero esta sigue activa.",
+                    "Elimina esta ubicación o vuelve a registrar la que la contiene.")
+
+    quantity = _as_int(item.get("quantity"))
+    if quantity is None or quantity != 0:
+        add(SEVERITY_INFO, "location_quantity", item, "quantity",
+            f"Tiene cantidad '{_text(item.get('quantity'))}', pero una ubicación no tiene stock.",
+            "La cantidad de una ubicación no se usa: los productos que guarda tienen la suya.")
+
+    # El nombre no debe contradecir el codigo ("Estantería 3" con el código de la 2).
+    place = barcode.location_code(code)
+    if place and name.strip():
+        found = parse_location_text(name, compact=False)["fields"]
+        conflicts = [(level, found[level], place[level]) for level in ("estanteria", "piso", "mesa")
+                     if level in found and level in place and found[level] != place[level]]
+        if conflicts:
+            add(SEVERITY_WARNING, "name_code_mismatch", item, "name",
+                f"El nombre menciona {_describe_conflicts(conflicts)}.",
+                "Corrige el nombre para que coincida con la etiqueta.")
+
+    typos = find_typos(description)
+    if typos:
+        add(SEVERITY_INFO, "description_typo", item, "description",
+            "Posibles errores de digitación en la descripción: "
+            + ", ".join(f"'{wrong}' → '{right}'" for wrong, right in typos) + ".",
+            "Corrígelos para que las búsquedas encuentren la ubicación.",
+            fix=_fix("Corregir la descripción", item, {"description": fix_typos(description, typos)}))
+
+
 def _audit_location(item, code, parsed, parent, location, add) -> None:
     status = item["status"]
     structured = parsed if parsed and parsed.get("format") in _STRUCTURED_FORMATS else None
@@ -830,9 +904,10 @@ def _audit_names(items: list, add) -> None:
             add(SEVERITY_INFO, "generic_name", item, "name",
                 "El nombre no dice qué guarda el contenedor.",
                 f"Un nombre como «{example}» ayuda a encontrarlo en búsquedas y etiquetas.")
-        groups[(_text(item.get("parent_id")).strip(), normalize_text(name))].append(item)
+        is_place = _text(item.get("item_type")) == LOCATION_TYPE
+        groups[(_text(item.get("parent_id")).strip(), normalize_text(name), is_place)].append(item)
 
-    for (parent, _), group in groups.items():
+    for (parent, _, _), group in groups.items():
         if len(group) > 1:
             codes = ", ".join(i["id"] for i in group)
             where = f"dentro de {parent}" if parent else "fuera de contenedores"
@@ -848,8 +923,9 @@ def _audit_categories(items: list, add) -> None:
     for item in items:
         category = _text(item.get("category"))
         if not category.strip():
-            add(SEVERITY_INFO, "missing_category", item, "category", "No tiene categoría.",
-                "Asigna una categoría para agruparlo en los reportes y filtros.")
+            if _text(item.get("item_type")) != LOCATION_TYPE:  # una ubicacion no necesita categoria
+                add(SEVERITY_INFO, "missing_category", item, "category", "No tiene categoría.",
+                    "Asigna una categoría para agruparlo en los reportes y filtros.")
             continue
         spellings[normalize_text(category)][category] += 1
 

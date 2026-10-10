@@ -24,7 +24,7 @@ from core.ui import (
     badge_html, centered_columns, empty_state, esc, guard_role, icon_html, page_header, section_title, stat_cards,
     timeline,
 )
-from views import label_settings
+from views import label_settings, ubicaciones
 from views.code_input import render_code_input
 
 ALL = "Todos"
@@ -50,7 +50,13 @@ def _delete_warning(impact: dict) -> str:
         "Eliminar es **permanente**: se borran el item, su historial y sus préstamos ya devueltos, "
         "y su código queda libre para registrarse de nuevo."
     ]
-    if impact.get("contained_items"):
+    if impact.get("item_type") == "location":
+        if impact.get("contained_items"):
+            parts.append(
+                f"Al ser una ubicación, también se eliminarán las {impact['contained_items']} ubicación(es) que "
+                "contiene (los productos guardados en ella no se tocan)."
+            )
+    elif impact.get("contained_items"):
         parts.append(
             f"Al ser un {ITEM_TYPE_NAMES['master']}, también se eliminarán los "
             f"{impact['contained_items']} item(s) que contiene."
@@ -80,7 +86,7 @@ def _edit_item_form(storage, item: dict, user: dict):
         location = st.text_input("Ubicacion", value=item.get("location", ""))
 
         quantity, min_alert = item.get("quantity", 0), item.get("min_stock_alert", 0)
-        if item.get("item_type") != "master":
+        if item.get("item_type") not in ("master", "location"):
             quantity = st.number_input("Cantidad total", value=int(item.get("quantity", 0)), min_value=0, step=1)
             min_alert = st.number_input("Umbral de alerta", value=int(item.get("min_stock_alert", 0)), min_value=0, step=1)
 
@@ -483,7 +489,8 @@ def _render_catalog(storage, user: dict, spec) -> None:
         st.success(f":material/auto_awesome: {result}")
 
     try:
-        items = storage.get_all_items()
+        # Las ubicaciones (estanterias, pisos, mesas) tienen su propia pestaña: no son productos.
+        items = [i for i in storage.get_all_items() if i.get("item_type") != "location"]
     except Exception as e:
         st.error(f"Error al cargar el inventario: {e}")
         items = []
@@ -523,7 +530,9 @@ def _render_catalog(storage, user: dict, spec) -> None:
     search = f1.text_input("Buscar por nombre, categoria, codigo o ubicacion", key="inv_search")
     categories = sorted({i.get("category") for i in items if i.get("category")})
     category = f2.selectbox("Categoria", [ALL] + categories, key="inv_category")
-    item_type = f3.selectbox("Tipo", [ALL] + list(ITEM_TYPE_LABELS.values()), key="inv_type")
+    item_type = f3.selectbox(
+        "Tipo", [ALL] + [label for key, label in ITEM_TYPE_LABELS.items() if key != "location"], key="inv_type",
+    )
     f4, f5, f6 = st.columns([3, 2, 2])
     top_locations = sorted({
         i.get("location") for i in masters + loose if i.get("location")
@@ -724,8 +733,9 @@ def render():
             _edit_item_form(storage, item, user)
         return
 
-    tab_catalogo, tab_nuevo, tab_import, tab_etiquetas = st.tabs(
-        [":material/list_alt: Catalogo", ":material/add: Nuevo item", ":material/upload_file: Importar CSV masivo", ":material/print: Etiquetas"]
+    tab_catalogo, tab_nuevo, tab_import, tab_etiquetas, tab_ubicaciones = st.tabs(
+        [":material/list_alt: Catalogo", ":material/add: Nuevo item", ":material/upload_file: Importar CSV masivo",
+         ":material/print: Etiquetas", ":material/map: Ubicaciones"]
     )
     label_spec = labels.load_label_spec(storage)
 
@@ -740,3 +750,6 @@ def render():
 
     with tab_import:
         _render_import(storage, user)
+
+    with tab_ubicaciones:
+        ubicaciones.render(storage, user, label_spec)
