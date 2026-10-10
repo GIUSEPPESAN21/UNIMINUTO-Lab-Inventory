@@ -57,6 +57,28 @@
 - Mensajes de error SMTP más claros (credenciales, conexión, remitente) sin revelar
   ningún secreto.
 
+### Fotos de los objetos
+- **Foto de cada objeto con la cámara del celular**, para reconocerlo y para la
+  trazabilidad: acción **📷 Foto** en las tarjetas del Inventario (última foto +
+  tomar o subir otra), **galería** en el editor (más reciente primero, con fecha,
+  autor, tipo y nota; el maestro puede eliminar) y, en **Escanear**, la última foto
+  del objeto para todos los roles y «Foto de estado (opcional)» para profesor y
+  maestro al dar salida o reingresar. Tipos: registro, estado e inventario.
+- **Privacidad y peso:** se aplica la orientación EXIF, se eliminan todos los
+  metadatos (GPS incluido), se reduce a 1024 px y se guarda como JPEG de calidad ~75
+  (objetivo < 150 KB), con miniatura de 256 px.
+- **Almacenamiento:** en el mismo repositorio privado de la base
+  (`fotos/<código>/<fecha>.jpg`, API de contenidos de GitHub con los mismos secretos;
+  `GITHUB_PHOTOS_DIR` opcional). Nueva hoja `item_photos` (migración automática de
+  las bases existentes). Sin GitHub, las fotos quedan en el disco con una advertencia.
+  Descargas con caché (`st.cache_data` + disco) y en paralelo; los errores de red no
+  tumban la página.
+- **Trazabilidad:** eventos `photo_added` / `photo_deleted` en la cadena de custodia.
+- Nuevos `core/photos.py` y `views/photo_panel.py`; cambios aditivos en
+  `core/storage.py`, `core/traceability.py`, `views/inventario.py` y
+  `views/escanear.py`. Eliminar un ítem quita sus fotos del índice. Ver README
+  («Fotos de los objetos») por el tamaño del repositorio.
+
 ## v1.13.1 — La etiqueta vuelve a su formato de siempre
 
 ### Cambiado

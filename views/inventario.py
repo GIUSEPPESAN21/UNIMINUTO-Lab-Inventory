@@ -24,7 +24,7 @@ from core.ui import (
     badge_html, centered_columns, empty_state, esc, guard_role, icon_html, page_header, section_title, stat_cards,
     timeline,
 )
-from views import label_settings
+from views import label_settings, photo_panel
 from views.code_input import render_code_input
 
 ALL = "Todos"
@@ -124,6 +124,8 @@ def _edit_item_form(storage, item: dict, user: dict):
         if cancel:
             st.session_state.editing_item_id = None
             st.rerun()
+
+    photo_panel.render_gallery(storage, user, item)
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +262,7 @@ def _product_card(item: dict, available: int, spec, show_type: bool = False) -> 
         st.caption(_stock_line(item, available))
         if item.get("location"):
             st.caption(f":material/location_on: {item.get('location')}")
+        photo_panel.photo_popover(item)
         edit_col, label_col = st.columns(2)
         _edit_button(edit_col, item, ":material/edit: Editar")
         _label_popover(label_col, item, spec, ":material/label: Etiqueta")
@@ -286,6 +289,8 @@ def _item_row(item: dict, available: int, spec) -> None:
         info.markdown(_title_html(item) + f'<div style="margin-top:0.35rem;">{badges}</div>', unsafe_allow_html=True)
         stock.caption(" · ".join(filter(None, [item.get("category") or "Sin categoría", item.get("location")])))
         stock.caption(_stock_line(item, available))
+        with stock:
+            photo_panel.photo_popover(item)
         _edit_button(edit_col, item)
         _label_popover(label_col, item, spec)
 
@@ -323,6 +328,7 @@ def _container_card(storage, user, master: dict, children: list, availability: d
     generador de productos."""
     with st.container(border=True):
         _container_header(master, children, availability, suggested)
+        photo_panel.photo_popover(master)
         has_description = bool((master.get("description") or "").strip())
         is_open = st.session_state.get(GENERATOR_KEY) == master["id"]
         edit_col, label_col, gen_col = st.columns([1, 1, 3])

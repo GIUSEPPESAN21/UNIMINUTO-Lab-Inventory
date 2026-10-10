@@ -211,6 +211,48 @@ Lego tienen rutas especiales; códigos libres/heredados usan `location`.
   completarla (hoja `trace_events`). Registrar la salida en Escanear enlaza el
   préstamo con la solicitud aprobada. Un estudiante solo ve sus propios registros.
 
+### Fotos de los objetos (📷)
+
+Cada objeto (contenedor, caja o ítem) puede tener fotos tomadas con la cámara del
+celular, para reconocerlo y dejar constancia de su estado en la cadena de custodia.
+
+- **Dónde:** en **📦 Inventario**, cada tarjeta tiene una acción **📷 Foto** (se
+  abre sin recargar el catálogo: muestra la última foto y permite tomar o subir
+  otra); en **✏️ Editar** hay una **galería** (la más reciente primero, con fecha,
+  autor, tipo y nota; el **maestro** puede eliminar). En **Escanear**, al encontrar
+  un objeto se muestra su última foto a cualquier rol (ayuda a reconocerlo) y
+  profesor/maestro pueden agregar una **foto de estado** al dar salida o reingresar
+  (opcional). Agregan fotos profesor y maestro; el estudiante solo las ve.
+- **Tipos:** `registro` (al dar de alta), `estado` (salida/reingreso) e
+  `inventario` (conteo). Se puede escribir una nota.
+- **Cámara:** `st.camera_input` (interruptor «Usar la cámara aquí») o subir un
+  JPG/PNG; en el celular, «Subir foto» también abre la cámara.
+- **Privacidad y peso:** antes de guardar se aplica la orientación de la cámara,
+  se **eliminan todos los metadatos** (EXIF, ubicación GPS, modelo del teléfono,
+  comentarios), se reduce a **1024 px** de lado largo y se guarda como JPEG de
+  calidad ~75 (normalmente 30–120 KB; si una foto pesa más de 150 KB se baja la
+  calidad/resolución). La miniatura de 256 px se genera al mostrarla y no se guarda.
+- **Dónde se guardan:** en el **mismo repositorio privado** de la base de datos,
+  en `fotos/<código>/<AAAAMMDDTHHMMSSZ>-<azar>.jpg` (API de contenidos de GitHub,
+  mismos `GITHUB_TOKEN`/`GITHUB_REPO`; carpeta configurable con `GITHUB_PHOTOS_DIR`).
+  El índice está en la hoja `item_photos` (`id, item_id, path, sha, taken_by,
+  taken_at, kind, note`) del Excel. Subir una foto = un commit de la imagen + una
+  escritura de la base (índice y evento juntos). Si la subida falla no se registra
+  nada y se puede reintentar; **sin GitHub** las fotos quedan en el disco del
+  servidor con una advertencia (se pierden al reiniciar, como la base).
+- **Lectura:** cada foto se descarga de GitHub una sola vez por servidor (caché de
+  Streamlit + copia en disco); las galerías descargan en paralelo y las miniaturas
+  salen de esa copia. El contenido de **📷 Foto** solo se ejecuta si está abierto.
+- **Trazabilidad:** agregar o eliminar una foto registra un evento `photo_added` /
+  `photo_deleted` que aparece en la **cadena de custodia** del producto («Foto
+  agregada · quién · tipo · nota»).
+- **Tamaño del repositorio:** ~60–100 KB por foto implican unas 10–15 mil fotos por
+  GB; GitHub recomienda repositorios por debajo de 1 GB (límite duro de 100 GB y
+  100 MB por archivo). Conviene 1–3 fotos por objeto, no una por movimiento. Eliminar
+  una foto (maestro) la borra del árbol, pero el historial de git conserva el binario:
+  para recuperar espacio hay que reescribir el historial del repositorio de datos.
+  Eliminar un ítem quita sus fotos del índice y deja los JPEG en el repositorio.
+
 ### Generar productos desde la descripción
 
 En **📦 Inventario**, cada Contenedor Principal con descripción ofrece
@@ -293,8 +335,8 @@ contraseña**. La hoja `users` suma las columnas `must_change_password` y
 | Rol | Puede |
 |---|---|
 | Estudiante | Escanear, solicitar productos/servicios, reservar y gestionar sus préstamos/solicitudes |
-| Profesor | Todo lo anterior + alta/edición/baja de ítems, aprobar solicitudes/reservas, ver préstamos y reportes |
-| Maestro | Todo lo anterior + corregir usuarios, roles/estados, restablecer contraseñas, lista blanca y exportación |
+| Profesor | Todo lo anterior + alta/edición/baja de ítems, agregar fotos de los objetos, aprobar solicitudes/reservas, ver préstamos y reportes |
+| Maestro | Todo lo anterior + eliminar fotos, corregir usuarios, roles/estados, restablecer contraseñas, lista blanca y exportación |
 
 **Seguridad del registro:** nadie elige su rol al registrarse. Toda cuenta nace
 `estudiante`; solo nace `profesor` si su correo está en la lista blanca
@@ -354,6 +396,7 @@ core/
   labels.py                Nomenclatura de tipos de item (UI) y etiquetas en formato clásico a su tamaño real (PNG/PDF/prueba)
   ui.py                    Componentes visuales compartidos (encabezados, tarjetas, indicadores, línea de tiempo)
   traceability.py         Ruta verificable, comprobantes, líneas de tiempo y cadena de custodia
+  photos.py               Fotos de los objetos: limpieza de la imagen, GitHub/disco, índice y caché
   inventory_suggestions.py Productos propuestos a partir de la descripción de un contenedor
   data_quality.py         Auditoría de calidad del inventario y correcciones seguras
   barcode.py              Validación/lectura de codigos (GLIOPS V3) y resolución de escaneo
@@ -366,7 +409,7 @@ core/
   reports.py              Analítica y exportación a Excel
 views/
   login.py, inicio.py, escanear.py, inventario.py, solicitudes.py, trazabilidad.py,
-  reservas.py, location_guide.py, label_settings.py, perfil.py, prestamos.py, usuarios.py,
+  reservas.py, location_guide.py, label_settings.py, photo_panel.py, perfil.py, prestamos.py, usuarios.py,
   reportes.py, correos.py (pestaña de Reportes), acerca_de.py
 tests/                  Pruebas unitarias de core/* (pytest, sin tocar Excel/GitHub)
 .github/workflows/ci.yml Integración continua: sintaxis + pruebas en cada push/PR
@@ -445,7 +488,8 @@ debe subirse al repositorio).
 El `GITHUB_TOKEN` debe ser un *fine-grained personal access token* con acceso
 **únicamente** al repositorio `UNIMINUTO-Lab-Database` y permiso
 "Contents: Read and write". No reutilices tokens con acceso a otros
-repositorios.
+repositorios. Las fotos de los objetos usan este mismo token y repositorio
+(carpeta `fotos/`, ver *Fotos de los objetos*).
 
 Para correo automático configura `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`,
 `SMTP_PASSWORD`, `SMTP_FROM_EMAIL` y TLS/SSL en Secrets (ver *Correos

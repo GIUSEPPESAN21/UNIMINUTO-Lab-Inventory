@@ -82,6 +82,12 @@ SHEET_COLUMNS = {
         "id", "event_type", "subject", "recipients", "recipient_count", "status",
         "error", "reference", "actor_email", "created_at",
     ],
+    # Fotos de los objetos (core/photos.py): indice de las fotos de cada item.
+    # `path` es la ruta del JPEG en el repositorio de datos (fotos/<codigo>/...),
+    # `sha` el blob de git de ese archivo y `kind` registro | estado | inventario.
+    "item_photos": [
+        "id", "item_id", "path", "sha", "taken_by", "taken_at", "kind", "note",
+    ],
 }
 
 NOTIFICATION_LOG_LIMIT = 500
@@ -230,14 +236,16 @@ def _is_github_configured() -> bool:
     return True
 
 
-def _github_request(method: str, url: str, attempts: int = 3, **kwargs):
+def _github_request(method: str, url: str, attempts: int = 3, session=None, **kwargs):
     """Llamada a la API de GitHub con reintentos ante fallos transitorios de red
     o respuestas 429/5xx (esperas de 1 s y 2 s). Los demas codigos HTTP se
-    devuelven tal cual para que el llamador los interprete."""
+    devuelven tal cual para que el llamador los interprete. `session` (opcional)
+    es un requests.Session u objeto con `.request` (las fotos lo usan en pruebas)."""
     last_exc = None
+    client = session or requests
     for attempt in range(attempts):
         try:
-            resp = requests.request(method, url, headers=_github_headers(), **kwargs)
+            resp = client.request(method, url, headers=_github_headers(), **kwargs)
         except requests.RequestException as exc:
             last_exc = exc
         else:
@@ -704,6 +712,12 @@ def _purge_item_records(dfs: dict, ids: list, actor_email: str = "") -> dict:
     dfs["items"] = df_items[~df_items["id"].isin(ids)].reset_index(drop=True)
     dfs["item_history"] = df_hist[~df_hist["item_id"].isin(ids)].reset_index(drop=True)
     dfs["loans"] = df_loans[~df_loans["item_id"].isin(ids)].reset_index(drop=True)
+    if "item_photos" in dfs:
+        # Las fotos salen del indice (si el codigo se reutiliza, el objeto nuevo no
+        # hereda fotos ajenas). Los JPEG siguen en el repositorio de datos.
+        df_photos = dfs["item_photos"]
+        counts["photos"] = int(df_photos["item_id"].isin(ids).sum())
+        dfs["item_photos"] = df_photos[~df_photos["item_id"].isin(ids)].reset_index(drop=True)
 
     if open_requests.any():
         now = _now_str()
@@ -1677,3 +1691,75 @@ class LabStorage:
             _write_and_sync(dfs)
             logger.info(f"{len(rows)} item(s) creados en una sola escritura por {actor_email or 'sistema'}.")
         return [row["id"] for row in rows]
+
+    # ------------------------------------------------------------------
+    # FOTOS DE LOS OBJETOS (indice; los JPEG viven en el repo, ver core/photos.py)
+    # ------------------------------------------------------------------
+
+    def add_item_photo(self, photo: dict, trace_event: dict = None) -> dict:
+        """Agrega UNA foto al indice `item_photos` y, si se da, su evento de
+        trazabilidad, en la MISMA escritura (un solo commit). Solo se guardan las
+        columnas conocidas. ValueError si el item no existe."""
+        columns = SHEET_COLUMNS["item_photos"]
+        row = {column: "" for column in columns}
+        row.update({key: "" if value is None else str(value) for key, value in photo.items() if key in columns})
+        row["id"] = row["id"] or _new_id()
+        row["taken_at"] = row["taken_at"] or _now_str()
+        if not row["item_id"] or not row["path"]:
+            raise ValueError("La foto necesita el codigo del item y la ruta del archivo.")
+        event_row = _trace_event_row(trace_event) if trace_event else None
+        with _db_write():
+            dfs = _read_excel()
+            if dfs["items"][dfs["items"]["id"] == row["item_id"]].empty:
+                raise ValueError("El item no existe.")
+            dfs["item_photos"] = pd.concat([dfs["item_photos"], pd.DataFrame([row])], ignore_index=True)
+            if event_row:
+                dfs["trace_events"] = pd.concat([dfs["trace_events"], pd.DataFrame([event_row])], ignore_index=True)
+            _write_and_sync(dfs)
+        return dict(row)
+
+    @firestore_retry
+    def get_item_photos(self, item_id: str) -> list:
+        """Fotos de un item, la mas reciente primero."""
+        df = _read_excel("item_photos")["item_photos"]
+        rows = [_clean_nan(row.to_dict()) for _, row in df[df["item_id"] == item_id].iterrows()]
+        return sorted(rows, key=lambda row: row.get("taken_at") or "", reverse=True)
+
+    @firestore_retry
+    def get_item_photo(self, photo_id: str):
+        df = _read_excel("item_photos")["item_photos"]
+        rows = df[df["id"] == photo_id]
+        return None if rows.empty else _clean_nan(rows.iloc[0].to_dict())
+
+    def get_photo_counts(self) -> dict:
+        """{item_id: numero de fotos} en una sola pasada y sin copiar la hoja: el
+        catalogo lo consulta en cada tarjeta."""
+        df = _load_cache()["item_photos"]
+        return {str(item_id): int(count) for item_id, count in df["item_id"].value_counts().items()}
+
+    def delete_item_photo(self, photo_id: str, trace_event: dict = None):
+        """Quita una foto del indice (y registra su evento) en una sola escritura.
+        Devuelve la fila eliminada o None si no existia."""
+        event_row = _trace_event_row(trace_event) if trace_event else None
+        with _db_write():
+            dfs = _read_excel()
+            df = dfs["item_photos"]
+            rows = df[df["id"] == photo_id]
+            if rows.empty:
+                return None
+            removed = _clean_nan(rows.iloc[0].to_dict())
+            dfs["item_photos"] = df[df["id"] != photo_id].reset_index(drop=True)
+            if event_row:
+                dfs["trace_events"] = pd.concat([dfs["trace_events"], pd.DataFrame([event_row])], ignore_index=True)
+            _write_and_sync(dfs)
+        return removed
+
+
+def _trace_event_row(event: dict) -> dict:
+    """Fila de `trace_events` con las mismas reglas que LabStorage.add_trace_event."""
+    columns = SHEET_COLUMNS["trace_events"]
+    row = {column: "" for column in columns}
+    row.update({key: "" if value is None else str(value) for key, value in event.items() if key in columns})
+    row["id"] = _new_id()
+    row["created_at"] = row["created_at"] or _now_str()
+    return row
