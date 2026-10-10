@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.14.0 — (en preparación)
+## v1.14.0 — Correos, contraseñas, fotos, chips NFC, ubicaciones y generador más preciso
 
 ### Restablecer contraseñas
 - **Usuarios → 🔑 Restablecer contraseña** en la tarjeta de cada estudiante y
