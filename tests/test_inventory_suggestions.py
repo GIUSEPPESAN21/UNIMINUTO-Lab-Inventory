@@ -924,6 +924,293 @@ def test_proposals_expose_the_new_fields_without_changing_the_editor_columns():
 
 
 # ---------------------------------------------------------------------------
+# Prosa y «Titulo: explicacion» (Contenedores 4 y 5 de la base real)
+# ---------------------------------------------------------------------------
+
+C4_DESC = ("El Contenedor 4 almacena un inventario de piezas de construcción y prototipado distribuido en diferentes empaques:\n"
+"Placas base de construcción verdes (múltiples unidades): Paquete que contiene varias plataformas base de cimentación para ensamblajes.   "
+"Caja de bloques básicos, marcos de puertas y ventanas: Organizador con piezas arquitectónicas, bloques de construcción estándar y elementos translúcidos.   "
+"Bolsa de placas de unión en cruz: Paquete con soportes estructurales púrpuras para uniones perpendiculares.   "
+"Bolsa de llantas y neumáticos: Paquete con ruedas de goma de diferentes tamaños y rines plásticos.   "
+"Bolsa de pines y conectores técnicos: Paquete con ejes y pasadores de fricción negros para ensamblajes mecánicos.   "
+"Caja de piezas decorativas, conos y ojos impresos: Organizador con elementos de detalle, piezas cilíndricas y componentes con expresiones faciales.   "
+"Caja de piezas curvas, arcos y bloques con pendiente: Organizador enfocado en cuñas, rampas y elementos estructurales redondeados.   "
+"Caja de soportes angulares y paneles translúcidos: Organizador con piezas de modificación de dirección (brackets), placas de unión y bloques transparentes.   "
+"Caja de losetas lisas y piezas planas: Organizador con componentes geométricos sin pines superiores (tiles) y cuartos de círculo.   "
+"Caja de botones redondos (studs) y piezas translúcidas pequeñas: Organizador exclusivo para piezas circulares de un solo pin, en su mayoría transparentes o de colores neón.")
+C5_DESC = ("El Contenedor 5 está compuesto por una gran caja organizadora de plástico transparente equipada con múltiples divisiones internas. "
+"Este estuche está destinado de manera exclusiva al almacenamiento de bloques de construcción estándar de forma rectangular, los cuales se encuentran rigurosamente clasificados por color dentro de cada compartimento. "
+"El inventario muestra una amplia variedad cromática, agrupando por separado las piezas sólidas en tonos como azul claro, magenta, café oscuro, azul oscuro, gris, beige, negro, blanco, rosa claro y lila (junto a un par de piezas aisladas en verde lima). "
+"De esta manera, este contenedor consolida un banco de bloques estructurales básicos, organizado visualmente para facilitar la selección rápida de piezas según la paleta de colores requerida para cualquier ensamblaje, todas las piezas son 2x1.")
+C4 = {"id": "2-1-04-00-000", "name": "Contenedor 4", "category": "Piezas Lego", "item_type": "master",
+      "location": "Estantería- 2; Piso-1; Contenedor-4.", "status": "active", "quantity": 0, "description": C4_DESC}
+C5 = {"id": "2-1-05-00-000", "name": "Contenedor 5", "category": "Piezas Lego", "item_type": "master",
+      "location": "Estantería- 2; Piso-1; Contenedor-5.", "status": "active", "quantity": 0, "description": C5_DESC}
+
+C4_TITLES = [
+    "Placas base de construcción verdes",
+    "Caja de bloques básicos, marcos de puertas y ventanas",
+    "Bolsa de placas de unión en cruz",
+    "Bolsa de llantas y neumáticos",
+    "Bolsa de pines y conectores técnicos",
+    "Caja de piezas decorativas, conos y ojos impresos",
+    "Caja de piezas curvas, arcos y bloques con pendiente",
+    "Caja de soportes angulares y paneles translúcidos",
+    "Caja de losetas lisas y piezas planas",
+    "Caja de botones redondos (studs) y piezas translúcidas pequeñas",
+]
+C4_FEATURES = [
+    "Paquete de plataformas base de cimentación",
+    "Organizador de piezas arquitectónicas",
+    "Paquete de soportes estructurales púrpuras",
+    "Paquete de ruedas de goma de diferentes tamaños y rines plásticos",
+    "Paquete de ejes y pasadores de fricción negros",
+    "Organizador de elementos de detalle, piezas cilíndricas",
+    "Organizador de cuñas, rampas y elementos estructurales redondeados",
+    "Organizador de piezas de modificación de dirección, placas de unión",
+    "Organizador de componentes geométricos sin pines superiores",
+    "Organizador de piezas circulares de un solo pin",
+]
+# Los 11 hijos que ya existen en la base: nombre (con variantes de puntuacion) y fragmento guardado.
+C4_CHILDREN = [
+    ("2-1-04-02-000", "Placas base de construcción verdes (múltiples unidades)", "Placas base de construcción verdes"),
+    ("2-1-04-04-000", "Caja de bloques básicos, marcos de puertas y ventanas",
+     "Caja de bloques básicos, marcos de puertas y ventanas"),
+    ("2-1-04-05-000", "Bolsa de placas de unión en cruz", "Bolsa de placas de unión en cruz"),
+    ("2-1-04-06-000", "Bolsa de llantas y neumáticos.", "Bolsa de llantas y neumáticos"),
+    ("2-1-04-08-000", "Bolsa de pines y conectores técnicos", "Bolsa de pines y conectores técnicos"),
+    ("2-1-04-10-000", "Caja de piezas decorativas conos y ojos impresos",
+     "Caja de piezas decorativas, conos y ojos impresos"),
+    ("2-1-04-12-000", "Caja de piezas curvas, arcos y bloques con pendiente.",
+     "Caja de piezas curvas, arcos y bloques con pendiente"),
+    ("2-1-04-14-000", "Caja de soportes angulares y paneles translucidos",
+     "Caja de soportes angulares y paneles translúcidos"),
+    ("2-1-04-16-000", "Caja de losetas lisas y piezas planas", "Caja de losetas lisas y piezas planas"),
+    ("2-1-04-18-000", "Caja de botones redondos (studs) y piezas translúcidas pequeñas",
+     "Caja de botones redondos (studs) y piezas translúcidas pequeñas"),
+    # Renombrado por completo: solo se reconoce por el fragmento de la descripcion con que se creo.
+    ("2-1-04-20-000", "Ruedas varias", "Paquete con ruedas de goma de diferentes tamaños y rines plásticos"),
+]
+C5_COLORS = ["azul claro", "magenta", "café oscuro", "azul oscuro", "gris", "beige", "negro", "blanco", "rosa claro",
+             "lila"]
+
+
+def c4_children(count=None):
+    """Los hijos de C4 tal como los dejo el generador: sin padre en `items` no hay GLIOPS que validar."""
+    rows = C4_CHILDREN[:count]
+    return [{"id": code, "name": name, "parent_id": C4["id"], "item_type": "child", "status": "active",
+             "description": sug.build_payload({"code": code, "name": name, "quantity": 0, "source": fragment},
+                                              C4)["description"]} for code, name, fragment in rows]
+
+
+def test_container_4_title_explanation_gives_one_product_per_title():
+    result = sug.parse_description(C4_DESC, context="Piezas Lego Contenedor 4")
+    entries = result["entries"]
+    assert [e["name"] for e in entries] == C4_TITLES
+    assert [e["feature"] for e in entries] == C4_FEATURES
+    assert result["warnings"] == [] and result["unparsed"] == []
+    assert all(e["quantity"] is None and e["confidence"] == "alta" and e["selected"] for e in entries)
+    # Nunca la frase de explicacion como nombre, ni la introduccion, ni parentesis de cantidad o sin cerrar.
+    for entry in entries:
+        assert len(entry["name"]) <= sug.MAX_TITLE_CHARS and entry["name"].count("(") == entry["name"].count(")")
+        assert "múltiples" not in entry["name"] and not entry["name"].endswith((".", ":"))
+        assert len(entry["feature"]) <= sug.MAX_FEATURE_LENGTH and entry["feature"][0].isupper()
+    assert not any("almacena" in e["name"] or "Contenedor 4" in e["name"] for e in entries)
+    assert "sin una cantidad exacta" in entries[0]["notes"][0] and "múltiples unidades" in entries[0]["notes"][0]
+    assert [e["kind"] for e in entries] == [sug.KIND_PRODUCT] + [sug.KIND_BOX] * 9
+    assert entries[1]["source"].startswith("Caja de bloques básicos, marcos de puertas y ventanas: Organizador con")
+
+
+def test_container_4_is_empty_when_its_ten_or_eleven_children_already_exist():
+    items = [C4, *c4_children()]
+    result = sug.suggest_products(C4, items)
+    assert result["proposals"] == [] and result["warnings"] == [] and result["unparsed"] == []
+    assert [e["name"] for e in result["existing"]] == C4_TITLES
+    assert result["existing"][3]["id"] in ("2-1-04-06-000", "2-1-04-20-000")
+    # El renombrado solo se reconoce por el fragmento: sin el hijo "Bolsa de llantas", sigue contando.
+    without = [child for child in items if child.get("id") != "2-1-04-06-000"]
+    assert sug.suggest_products(C4, without)["proposals"] == []
+    # Sin el fragmento tampoco hay duplicado si el nombre coincide ni al reves.
+    only_fragment = [dict(child, name="Otro") for child in c4_children()]
+    assert [p["name"] for p in sug.suggest_products(C4, [C4, *only_fragment])["proposals"]] == []
+
+
+def test_container_4_only_proposes_what_is_missing():
+    result = sug.suggest_products(C4, [C4, *c4_children(3)])
+    assert [p["name"] for p in result["proposals"]] == C4_TITLES[3:]
+    assert [e["existing_name"] for e in result["existing"]] == [c[1] for c in C4_CHILDREN[:3]]
+    assert [p["code"] for p in result["proposals"]][:2] == ["2-1-04-06-000", "2-1-04-07-000"]
+
+
+def test_container_5_prose_gives_one_product_per_color():
+    result = sug.parse_description(C5_DESC, context="Piezas Lego Contenedor 5")
+    entries = result["entries"]
+    assert [e["name"] for e in entries] == [f"Pieza Lego 2x1 {color}" for color in C5_COLORS] + [
+        "Pieza Lego 2x1 verde lima"]
+    assert [e["feature"] for e in entries][:2] == ["2x1 azul claro", "2x1 magenta"]
+    assert [e["confidence"] for e in entries] == ["alta"] * 10 + ["media"]
+    assert [e["quantity"] for e in entries] == [None] * 10 + [2]
+    assert all(e["selected"] for e in entries) and result["warnings"] == [] and result["unparsed"] == []
+    assert "un par de piezas aisladas en verde lima" in " ".join(entries[-1]["notes"])
+    # Nada de oraciones: ni la caja organizadora, ni «Este estuche...», ni «De esta manera...».
+    for entry in entries:
+        assert len(entry["name"]) <= sug.MAX_NAME_CHARS and len(entry["name"].split()) <= sug.MAX_NAME_WORDS
+        assert not any(w in fold_text(entry["name"]) for w in ("estuche", "organizador", "manera", "inventario"))
+
+
+def fold_text(text):
+    return sug.fold(text)
+
+
+def test_container_5_suggestions_use_the_container_brand_and_are_pending_count():
+    result = sug.suggest_products(C5, [C5])
+    assert len(result["proposals"]) == 11 and result["existing"] == []
+    assert [p["code"] for p in result["proposals"]][:2] == ["2-1-05-01-000", "2-1-05-02-000"]
+    assert [p["quantity"] for p in result["proposals"]] == [0] * 10 + [2]
+    assert [p["pending_count"] for p in result["proposals"]] == [True] * 10 + [False]
+    again = sug.suggest_products(C5, [C5, {"id": "2-1-05-01-000", "name": "Pieza Lego 2x1 azul claro",
+                                          "parent_id": C5["id"], "status": "active"}])
+    assert len(again["proposals"]) == 10 and again["existing"][0]["existing_name"] == "Pieza Lego 2x1 azul claro"
+
+
+# (id, descripcion, contexto, [(nombre, caracteristica, cantidad, confianza)], avisos)
+PROSE_CASES = [
+    ("titulo_una_linea", 'Resistencias de carbón (varias unidades): Paquete con resistencias de distintos valores para prácticas. Cables jumper: Bolsa con cables macho-hembra de 20 cm para protoboard.', '', [
+        ('Resistencias de carbón', 'Paquete de resistencias de distintos valores', None, "alta"),
+        ('Cables jumper', 'Bolsa de cables macho-hembra de 20 cm', None, "alta"),
+    ], 0),
+    ("titulo_cantidades", 'Tornillos M3 (200 unidades): Bolsa con tornillos de acero para ensamblajes mecánicos.\nTuercas M3 (150 unidades): Bolsa con tuercas hexagonales para tornillos de acero.', '', [
+        ('Tornillos M3', 'Bolsa de tornillos de acero', 200, "alta"),
+        ('Tuercas M3', 'Bolsa de tuercas hexagonales', 150, "alta"),
+    ], 0),
+    ("titulo_con_introduccion", 'El estante guarda herramientas de taller:\nEstuche de herramientas (3): Organizador con destornilladores, pinzas y alicates para electrónica.   Multímetro digital: Equipo para medir voltaje y corriente en circuitos.', '', [
+        ('Estuche de herramientas', 'Organizador de destornilladores, pinzas y alicates', 3, "alta"),
+        ('Multímetro digital', 'Equipo para medir voltaje y corriente en circuitos', None, "alta"),
+    ], 0),
+    ("titulo_parentesis_suelto", 'Cables USB (tipo A: Paquete con cables de datos para impresoras y escáneres.   Adaptadores HDMI): Bolsa con adaptadores de video para pantallas externas.', '', [
+        ('Cables USB tipo A', 'Paquete de cables de datos', None, "alta"),
+        ('Adaptadores HDMI', 'Bolsa de adaptadores de video', None, "alta"),
+    ], 0),
+    ("prosa_colores_en_caja", 'Caja con bloques 2x4 clasificados en colores: rojo, azul oscuro, verde y amarillo.', '', [
+        ('Bloque 2x4 rojo', '2x4 rojo', None, "alta"),
+        ('Bloque 2x4 azul oscuro', '2x4 azul oscuro', None, "alta"),
+        ('Bloque 2x4 verde', '2x4 verde', None, "alta"),
+        ('Bloque 2x4 amarillo', '2x4 amarillo', None, "alta"),
+    ], 0),
+    ("prosa_bloques_colores", 'Los bloques son 2x2 y vienen en colores como rojo, azul y verde.', 'Piezas Lego', [
+        ('Bloque Lego 2x2 rojo', '2x2 rojo', None, "alta"),
+        ('Bloque Lego 2x2 azul', '2x2 azul', None, "alta"),
+        ('Bloque Lego 2x2 verde', '2x2 verde', None, "alta"),
+    ], 0),
+    ("prosa_tonos_medida_global", 'Las piezas están organizadas por tonos: amarillo, naranja, café claro y gris oscuro; todas las piezas miden 1x4.', 'Piezas Lego', [
+        ('Pieza Lego 1x4 amarillo', '1x4 amarillo', None, "alta"),
+        ('Pieza Lego 1x4 naranja', '1x4 naranja', None, "alta"),
+        ('Pieza Lego 1x4 café claro', '1x4 café claro', None, "alta"),
+        ('Pieza Lego 1x4 gris oscuro', '1x4 gris oscuro', None, "alta"),
+    ], 0),
+    ("prosa_par_de_piezas", 'El contenedor tiene una gran caja con divisiones. Las piezas son de distintos colores como rojo y azul, todas son 2x2 (más un par de piezas sueltas en dorado).', 'Piezas Lego', [
+        ('Caja gran con divisiones', 'Gran', None, "baja"),
+        ('Pieza Lego 2x2 rojo', '2x2 rojo', None, "alta"),
+        ('Pieza Lego 2x2 azul', '2x2 azul', None, "alta"),
+        ('Pieza Lego 2x2 dorado', '2x2 dorado', 2, "media"),
+    ], 0),
+    ("prosa_colores_sin_medida", 'El inventario muestra bloques en tonos como verde, lila y rosa claro.', '', [
+        ('Bloque verde', 'Verde', None, "media"),
+        ('Bloque lila', 'Lila', None, "media"),
+        ('Bloque rosa claro', 'Rosa claro', None, "media"),
+    ], 0),
+    ("prosa_solo_descripcion", 'Este contenedor guarda material de laboratorio. De esta manera, el contenedor consolida un banco de piezas.', '', [
+    ], 0),
+    ("prosa_y_lista", 'Este contenedor guarda material de laboratorio. Contiene resistencias de 220 ohm x50.', '', [
+        ('Resistencia de 220 Ω', '220 Ω', 50, "alta"),
+    ], 0),
+    ("prosa_oracion_ambigua", 'El inventario muestra tornillos, tuercas y arandelas de varios tamaños.', '', [
+        ('Tornillo', '', None, "baja"),
+        ('Tuerca', '', None, "baja"),
+        ('Arandela de tamaños', '', None, "baja"),
+    ], 0),
+    ("nombre_largo_recortado", 'Caja de organización para tornillos tuercas arandelas pernos remaches clavos y resortes de acero', '', [
+        ('Caja de organización para tornillos tuercas arandelas pernos', 'Caja', None, "baja"),
+    ], 0),
+    ("oracion_con_verbo_en_medio", 'Hay una caja que es muy grande y pesada con tornillos sueltos de todo tipo.', '', [
+        ('Caja que es muy grande y pesada', 'Caja', None, "baja"),
+    ], 0),
+]
+
+
+@pytest.mark.parametrize("case_id, text, context, expected, warnings", PROSE_CASES,
+                         ids=[case[0] for case in PROSE_CASES])
+def test_prose_and_title_explanation_variants(case_id, text, context, expected, warnings):
+    result = sug.parse_description(text, context=context)
+    got = [(e["name"], e["feature"], e["quantity"], e["confidence"]) for e in result["entries"]]
+    assert got == expected
+    assert len(result["warnings"]) == warnings
+    for entry in result["entries"]:
+        assert entry["selected"] == (entry["confidence"] != "baja")
+        assert entry["confidence"] == "alta" or entry["notes"]
+        assert len(entry["name"]) <= sug.MAX_TITLE_CHARS and entry["name"].count("(") == entry["name"].count(")")
+
+
+def test_a_name_is_never_a_long_sentence():
+    [box] = sug.parse_description("Caja de organización para tornillos tuercas arandelas pernos remaches clavos y "
+                                  "resortes de acero")["entries"]
+    assert len(box["name"].split()) <= 8 and len(box["name"]) <= 60 and not box["selected"]
+    assert "resortes de acero" in " ".join(box["notes"]) and "se acortó" in " ".join(box["notes"])
+    for text in ("Este estuche está destinado al almacenamiento de bloques", "De esta manera, el contenedor sirve",
+                 "Está compuesto por piezas lisas", "Todas las piezas son rojas", "Cada pieza es distinta"):
+        assert sug.parse_description(text)["entries"] == [], text
+
+
+def test_prose_around_a_real_list_does_not_change_the_list():
+    plain = sug.parse_description(C1["description"], context="Piezas Lego")["entries"]
+    wrapped = sug.parse_description("Este contenedor guarda piezas de construcción. " + C1["description"],
+                                    context="Piezas Lego")["entries"]
+    assert [e["name"] for e in wrapped] == [e["name"] for e in plain]
+
+
+@pytest.mark.parametrize("title, expected", [
+    ("Placas verdes (múltiples unidades)", ("Placas verdes", None)),
+    ("Placas verdes (x10)", ("Placas verdes", 10)),
+    ("Placas verdes (15 uds)", ("Placas verdes", 15)),
+    ("Placas verdes (studs) y bases (cantidad: 4)", ("Placas verdes (studs) y bases", 4)),
+    ("Cables USB (tipo A", ("Cables USB tipo A", None)),
+    ("Adaptadores HDMI)", ("Adaptadores HDMI", None)),
+    ("Pinzas ((largas)", ("Pinzas (largas)", None)),
+])
+def test_titles_drop_quantity_parentheses_and_balance_the_rest(title, expected):
+    entry = sug._titled_entry(title, "Paquete con piezas para pruebas de laboratorio.")
+    assert (entry["name"], entry["quantity"]) == expected
+    assert entry["name"].count("(") == entry["name"].count(")")
+
+
+def test_a_colon_after_a_verb_or_a_short_list_is_not_a_title():
+    assert _names("Contiene: Piezas Lego de pines 4x2 - 2x2", context="") == [
+        "Pieza Lego con pines 4x2", "Pieza Lego con pines 2x2"]
+    entries = sug.parse_description("Caja grande: Piezas lego 2x2 y 4x2 lisas")["entries"]
+    assert [(e["name"], e["inside"]) for e in entries][0] == ("Caja grande", "")
+    assert len(entries) == 3 and entries[1]["inside"] == "Caja grande"
+
+
+def test_names_match_ignores_punctuation_parentheses_and_accents_but_not_figures():
+    match = sug.names_match
+    assert match("Placas base de construcción verdes", "Placas base de construcción verdes (múltiples unidades)")
+    assert match("Caja de piezas decorativas, conos y ojos", "Caja de piezas decorativas conos y ojos.")
+    assert match("Caja de soportes translúcidos", "caja de soportes translucidos")
+    assert not match("Pieza Lego lisa 2x2", "Pieza Lego lisa 2x4")
+    assert not match("Resistencia de 220 Ω", "Resistencia de 330 Ω")
+    assert not match("Bolsa de pines y conectores técnicos", "Bolsa de ejes y conectores técnicos")
+    assert not match("Caja con tornillos (M3)", "Caja con tornillos (M4)")
+    assert not match("", "Caja")
+
+
+def test_the_source_fragment_is_read_back_from_the_child_description():
+    payload = sug.build_payload({"code": "2-1-04-02-000", "name": "X", "quantity": 0,
+                                 "source": "Piezas de «Lego» (2x2)"}, C4)
+    assert sug.child_source_fragment(payload) == "Piezas de «Lego» (2x2)"
+    assert sug.child_source_fragment({"description": "Otra cosa"}) == "" and sug.child_source_fragment({}) == ""
+
+
+# ---------------------------------------------------------------------------
 # Codigos, ubicacion y productos que ya existen
 # ---------------------------------------------------------------------------
 

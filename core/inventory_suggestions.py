@@ -918,6 +918,7 @@ def _split_parts(text: str, remarks=()) -> list:
 def _keep_as_written(word: str) -> bool:
     """Siglas cortas (USB, LED, EV3), medidas y mezclas (NodeMCU) se respetan tal cual."""
     return (any(ch.isdigit() for ch in word) or (1 < len(word) <= 4 and word.isupper())
+            or (len(word) == 1 and word.isupper() and word not in "YOEU")      # «tipo C», «clase B»
             or any(ch.isupper() for ch in word[1:]) and not word.isupper())
 
 
@@ -1023,7 +1024,9 @@ def _analyze_subject(subject: str) -> dict:
         if hit and hit[2]:
             info["fixes"].append((token, hit[2]))
             info["fuzzy"] = info["fuzzy"] or hit[3]
-        if kind in ("char", "brand") or (kind in ("noun", "box") and not verbatim and info["noun"] is None):
+        complement = preposition is not None and bool(info["groups"])    # «Paquete con placas»: placas no es el nucleo
+        if kind in ("char", "brand") or (kind in ("noun", "box") and not verbatim and info["noun"] is None
+                                         and not complement):
             preposition, group, conjunction = None, None, None
             if kind == "brand":
                 shown = _BRANDS[hit[1]]
@@ -1192,7 +1195,13 @@ class _Parser:
         """Agrega la entrada. Notas: cantidad, motivos de duda, aclaraciones y,
         si va dentro de una caja, donde esta. La confianza sale de los motivos."""
         notes = list(entry["notes"])
-        for _, note in list(flags) + [(None, t) for t in tail]:
+        flags = list(flags)
+        if _too_long(entry["name"]):
+            # Un nombre nunca debe ser una oracion: se acorta y se deja el texto completo en la nota.
+            flags.append((CONFIDENCE_LOW, f"El nombre era una frase larga (parece una oración, no un producto) y "
+                                          f"se acortó; el texto era «{entry['name']}»."))
+            entry["name"] = _short_name(entry["name"])
+        for _, note in flags + [(None, t) for t in tail]:
             if note not in notes:
                 notes.append(note)
         inside = self.inside_for(part)
@@ -1210,6 +1219,9 @@ class _Parser:
     def handle(self, part):
         clean = part["clean"]
         measures = _find_measures(clean, bare_k=self.bare_k(clean))
+        if not measures and _starts_prose(clean):
+            self.last_free = None
+            return                       # «Este estuche...», «De esta manera...»: prosa, no un producto
         quantity = _find_quantity(clean, measures)
         remainder = _remove_spans(clean, quantity["spans"] if quantity else [])
         previous = self.entries[-1] if self.entries else None
@@ -1477,6 +1489,458 @@ class _Parser:
                           f"Se interpretó «{original}» como «{fixed}»."))
 
 
+# ---------------------------------------------------------------------------
+# Prosa y «Titulo: explicacion»
+# ---------------------------------------------------------------------------
+
+# Una oracion de prosa no es una lista de productos: se descarta o solo se
+# aprovechan sus colores y su medida global («todas las piezas son 2x1»).
+_PROSE_FIRST = {"este", "esta", "estos", "estas", "ese", "esa", "esos", "esas", "esto", "eso", "asi", "cada"}
+_CONTENT_VERBS = {"contiene", "contienen", "incluye", "incluyen", "almacena", "almacenan", "guarda", "guardan"}
+_PROSE_FINITE = {
+    "esta", "estan", "es", "son", "fue", "fueron", "muestra", "muestran", "consolida", "consolidan", "permite",
+    "permiten", "facilita", "facilitan", "sirve", "sirven", "agrupa", "agrupan", "ofrece", "ofrecen", "presenta",
+    "presentan", "compone", "componen", "destina", "destinan", "utiliza", "utilizan", "corresponde",
+    "corresponden", "reune", "reunen", "representa", "representan", "equivale", "conforma", "conforman",
+}
+_COLOR_WORDS = {
+    "azul", "verde", "rojo", "roja", "amarillo", "amarilla", "naranja", "morado", "morada", "violeta", "lila",
+    "rosa", "rosado", "rosada", "magenta", "cafe", "marron", "gris", "negro", "negra", "blanco", "blanca", "beige",
+    "turquesa", "cian", "celeste", "dorado", "dorada", "plateado", "plateada", "transparente", "translucido",
+    "neon", "fucsia", "vinotinto", "crema", "salmon", "lima", "oliva", "mostaza", "guinda", "granate", "purpura",
+    "anaranjado", "caqui", "arena", "multicolor", "aqua", "coral", "lavanda", "durazno", "terracota",
+}
+_COLOR_MODIFIERS = {"claro", "clara", "oscuro", "oscura", "brillante", "intenso", "pastel", "metalico", "metalica",
+                    "fluorescente", "fosforescente", "profundo", "suave", "palido"}
+_NUMBER_WORDS = {"un": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5, "seis": 6, "siete": 7, "ocho": 8,
+                 "nueve": 9, "diez": 10, "par": 2, "pareja": 2}
+_COLOR_MARKER_RE = re.compile(r"\b(?:tonos|tonalidades|colores)\b(?:\s+como|\s+de|\s*:)?\s*:?\s*", re.IGNORECASE)
+_EXTRA_COLOR_RE = re.compile(
+    r"(?:junto\s+a|adem[aá]s\s+de|m[aá]s)\s+(?P<q>un\s+par|una\s+pareja|dos|tres|cuatro|cinco|seis|siete|ocho"
+    r"|nueve|diez|\d+|una|un)\s+(?:de\s+)?(?:(?:piezas|bloques|unidades|fichas)\s+)?(?:(?:aisladas?|sueltas?|extras?)\s+)?"
+    r"(?:en|de)\s+(?:color\s+|tono\s+)?(?P<color>[^\W\d_]+(?:\s+[^\W\d_]+){0,2})",
+    re.IGNORECASE,
+)
+_GLOBAL_DIM_RE = re.compile(
+    r"\b(?:todas|todos|cada)\b[^.;\n]{0,60}?\b(?:son|miden|mide|tienen|tiene|es|de|medida(?:\s+de)?)\s+(?:de\s+)?(?=\d)",
+    re.IGNORECASE,
+)
+_GLOBAL_NOUN_RE = re.compile(r"\b(?:todas|todos)\s+(?:las|los)\s+(\w+)|\bcada\s+(\w+)", re.IGNORECASE)
+
+# «Titulo: explicacion»: un producto por titulo; la explicacion solo aporta la caracteristica.
+_RECORD_SPLIT = re.compile(
+    r"\n+|(?<=[.!?])\s{2,}|(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚÑ¿¡][^:.\n]{2,160}:\s+[A-ZÁÉÍÓÚÑ¿¡])")
+_TITLED_RE = re.compile(r"^(?P<title>[^:.\n]{3,160}?)\s*:\s+(?P<expl>[A-ZÁÉÍÓÚÑ¿¡][^\n]{14,})$")
+_QTY_PAREN_WORDS = {
+    "multiples", "multiple", "varias", "varios", "muchas", "muchos", "algunas", "algunos", "diversas", "diversos",
+    "unidades", "unidad", "und", "uds", "ud", "piezas", "pieza", "pzs", "cantidad", "aprox", "aproximadamente",
+    "x", "total", "stock", "disponibles", "disponible", "de",
+}
+_QUANTIFIERS = {"varias", "varios", "unas", "unos", "algunas", "algunos", "diversas", "diversos", "distintas",
+                "distintos", "multiples", "muchas", "muchos"}
+_FEATURE_LINK_RE = re.compile(
+    r"^(?P<head>[^\W\d_]+)\s+(?P<link>que\s+(?:contiene|incluye|guarda|almacena)|enfocado\s+en|exclusivo\s+para"
+    r"|dedicado\s+a|destinado\s+a|especial\s+para|con|de)\s+(?P<rest>.+)$",
+    re.IGNORECASE,
+)
+MAX_FEATURE_LENGTH = 70
+MAX_NAME_WORDS = 8
+MAX_NAME_CHARS = 60
+MAX_TITLE_CHARS = 80
+
+
+def _words(text: str) -> list:
+    return fold(text).split()
+
+
+def _starts_prose(text: str) -> bool:
+    """La parte abre como prosa («Este estuche...», «De esta manera...»): no es un producto."""
+    words = [w.strip(",;:()") for w in _words(_collapse(text))[:3]]
+    if not words:
+        return False
+    first, second = words[0], words[1] if len(words) > 1 else ""
+    return (first in _PROSE_FIRST
+            or (first == "de" and second in ("este", "esta", "ese", "esa", "esto"))
+            or (first == "por" and second in ("esto", "ello", "lo"))
+            or (first in ("todas", "todos") and second in ("las", "los"))
+            or (first == "en" and second in ("resumen", "general", "total", "conclusion"))
+            or (first in ("los", "las", "lo") and second in ("cuales", "cual")))
+
+
+def _has_finite_verb(text: str) -> bool:
+    return any(w.strip(",;:().") in _PROSE_FINITE for w in _words(text))
+
+
+def _color_phrase(tokens: list):
+    """Color de 1 a 3 palabras («azul claro», «verde lima») o None."""
+    if not 1 <= len(tokens) <= 3:
+        return None
+    keys = [fold(t) for t in tokens]
+    if all(k in _COLOR_WORDS or k in _COLOR_MODIFIERS for k in keys) and any(k in _COLOR_WORDS for k in keys):
+        return " ".join(t.lower() for t in tokens)
+    return None
+
+
+def _extract_colors(sentence: str) -> list:
+    """Colores de una lista del tipo «en tonos como azul claro, magenta y lila»."""
+    marker = _COLOR_MARKER_RE.search(sentence)
+    if not marker:
+        return []
+    tail = re.split(r"[(.]", sentence[marker.end():], maxsplit=1)[0]
+    colors = []
+    for item in re.split(r",|;|\s+y\s+|\s+e\s+|\s+o\s+", tail):
+        tokens = re.findall(r"[^\W\d_]+", item)
+        color = _color_phrase(tokens)
+        if color is None:
+            break
+        if color not in colors:
+            colors.append(color)
+    return colors if len(colors) >= 2 else []
+
+
+def _extract_extra_colors(sentence: str) -> list:
+    """«junto a un par de piezas aisladas en verde lima» -> [("verde lima", 2, texto)]."""
+    found = []
+    for match in _EXTRA_COLOR_RE.finditer(sentence):
+        tokens = re.findall(r"[^\W\d_]+", match.group("color"))
+        while tokens and _color_phrase(tokens) is None:
+            tokens.pop()
+        color = _color_phrase(tokens) if tokens else None
+        if color is None:
+            continue
+        q = fold(match.group("q"))
+        quantity = int(q) if q.isdigit() else _NUMBER_WORDS.get(q.split()[-1], 1)
+        found.append((color, quantity, _collapse(match.group(0))))
+    return found
+
+
+def _extract_global_dimension(sentence: str):
+    """(medida, sustantivo) de «todas las piezas son 2x1» o (None, None)."""
+    match = _GLOBAL_DIM_RE.search(sentence)
+    if not match:
+        return None, None
+    for measure in _find_measures(sentence[match.end():match.end() + 24]):
+        if measure["family"] == "dim" and measure["start"] == 0:
+            noun_match = _GLOBAL_NOUN_RE.search(sentence)
+            word = (noun_match.group(1) or noun_match.group(2)) if noun_match else ""
+            hit = _resolve(word) if word else None
+            return measure, (hit[1] if hit and hit[0] == "noun" else None)
+    return None, None
+
+
+def _sentence_noun(sentence: str, before: int):
+    """Ultimo sustantivo conocido de la oracion antes de la posicion `before`."""
+    found = None
+    for word in _WORD_RE.findall(sentence[:before]):
+        hit = _resolve(word)
+        if hit and hit[0] == "noun":
+            found = hit[1]
+    return found
+
+
+def _split_sentences(text: str) -> list:
+    sentences = []
+    for line in re.split(r"\n+", text):
+        sentences.extend(s.strip() for s in re.split(r"(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚÑ¿¡])", line) if s.strip())
+    return sentences
+
+
+def _is_container_subject(sentence: str) -> bool:
+    """«El Contenedor 5 esta compuesto por ...»: habla del contenedor, no de un producto."""
+    words = re.findall(r"[^\W\d_]+", sentence)[:3]
+    for word in words:
+        key = fold(word)
+        if key in ("el", "este", "nuestro", "la"):
+            continue
+        return len(key) >= 8 and difflib.SequenceMatcher(None, key, _CONTAINER_WORD).ratio() >= 0.85
+    return False
+
+
+def _subject_then_verb(sentence: str) -> bool:
+    """«El inventario muestra ...», «Esta caja es ...»: sujeto y verbo de prosa al inicio."""
+    tokens = [fold(w) for w in re.findall(r"[^\W\d_]+", sentence)
+              if fold(w) not in ("el", "la", "los", "las", "un", "una", "unos", "unas")][:3]
+    return "que" not in tokens and any(t in _PROSE_FINITE for t in tokens)
+
+
+def _after_prose_verb(sentence: str) -> str:
+    """«El inventario muestra tornillos y tuercas» -> «tornillos y tuercas»;
+    «El Contenedor 3 tiene una caja con puertas» -> «una caja con puertas»."""
+    words = list(re.finditer(r"[^\W\d_]+", sentence))[:5]
+    for match in words:
+        key = fold(match.group(0))
+        if key in _PROSE_FINITE or key in _STARTER_WORDS:
+            return sentence[match.end():].strip(" ,:")
+    return sentence
+
+
+def _container_describes_a_box(sentence: str) -> bool:
+    """«El contenedor tiene una gran caja con divisiones»: la caja es el propio
+    contenedor, no un producto (si es un producto, el usuario la marca)."""
+    if not _is_container_subject(sentence) or _find_measures(sentence):
+        return False
+    rest = _after_prose_verb(sentence)
+    verb = next((fold(m.group(0)) for m in re.finditer(r"[^\W\d_]+", sentence)
+                 if fold(m.group(0)) in _PROSE_FINITE or fold(m.group(0)) in _STARTER_WORDS), "")
+    if rest == sentence or verb in _CONTENT_VERBS:
+        return False
+    return any((_resolve(w) or ("",))[0] == "box" for w in re.findall(r"[^\W\d_]+", rest)[:3])
+
+
+def _analyze_sentence(sentence: str) -> dict:
+    colors = _extract_colors(sentence)
+    own_measures = [m for m in _find_measures(sentence) if m["family"] == "dim"]
+    starts = _starts_prose(sentence)
+    finite = _has_finite_verb(sentence)
+    container = _is_container_subject(sentence) and len(sentence.split()) >= 10 and not own_measures
+    marker = _COLOR_MARKER_RE.search(sentence)
+    box_container = _container_describes_a_box(sentence)
+    dim, dim_noun = _extract_global_dimension(sentence)
+    return {
+        "text": sentence, "colors": colors, "extra_colors": _extract_extra_colors(sentence) if colors else [],
+        "own_dim": own_measures[0] if len(own_measures) == 1 else None, "global_dim": dim, "dim_noun": dim_noun,
+        "noun": _sentence_noun(sentence, marker.start()) if marker else None,
+        "marker": sentence[marker.start():].split("(")[0].strip(" .") if marker else "",
+        "starts": starts, "prose": bool(colors) or starts or finite or container or box_container,
+        "discard": starts or container,
+    }
+
+
+def _color_entries(info: dict, dim, noun_key, default_brand: str) -> list:
+    """Un producto por color: «Pieza Lego 2x1 azul claro»."""
+    noun_display, _ = _NOUNS.get(noun_key or "pieza", _NOUNS["pieza"])
+    brand = default_brand if (noun_key or "pieza") in _PIECE_NOUNS and (dim is None or dim["unitless"]) else ""
+    base = [noun_display] + ([brand] if brand else []) + ([dim["text"]] if dim else [])
+    entries = []
+    excerpt = _shorten(info["marker"], 100)
+    todo = [(c, None, "") for c in info["colors"]] + list(info["extra_colors"])
+    for color, quantity, mention in todo:
+        flags, notes = [], []
+        if dim is None:
+            flags.append((CONFIDENCE_MEDIUM, "La descripción no dice la medida de estas piezas: complétala en el nombre."))
+        if dim is not None and dim["zero"]:
+            flags.append((CONFIDENCE_LOW, f"Revisar medida: «{dim['text']}» tiene una dimensión 0, que no existe; "
+                                          f"probablemente es «{dim['guess']}»."))
+        if dim is not None and dim["oversize"]:
+            flags.append((CONFIDENCE_LOW, f"Revisar medida: «{dim['text']}» supera {MAX_DIMENSION} en un lado."))
+        if mention:
+            flags.append((CONFIDENCE_MEDIUM, f"Aparece como «{mention}»: son pocas piezas aparte; "
+                                             "confirma la cantidad y el color."))
+            notes.append(f"Cantidad tomada de la descripción ({quantity}).")
+        name = _collapse(" ".join(base + [color]))
+        entry = _entry(KIND_PIECE, name, (dim["text"] + " " if dim else "") + color, f"{color} — {excerpt}",
+                       quantity, notes)
+        entry["notes"] += [n for _, n in flags]
+        entry["confidence"] = _level(flags)
+        entry["selected"] = entry["confidence"] != CONFIDENCE_LOW
+        entry["feature"] = entry["feature"][:1].upper() + entry["feature"][1:]
+        entries.append(entry)
+    return entries
+
+
+def _cap_phrase(text: str, limit: int) -> str:
+    """Acorta en un limite natural (coma, «y», espacio) sin partir palabras ni dejar conectores colgando."""
+    text = _collapse(text)
+    if len(text) > limit:
+        cut = text[:limit]
+        best = max(cut.rfind(", "), cut.rfind(" y "), cut.rfind(" o "))
+        text = cut[:best] if best >= 20 else cut[:cut.rfind(" ")] if " " in cut else cut
+    words = text.rstrip(" ,;:.").split()
+    while words and fold(words[-1]) in _STOPWORDS:
+        words.pop()
+    return " ".join(words)
+
+
+def _too_long(name: str) -> bool:
+    words = len(name.split())
+    return (words > MAX_NAME_WORDS and len(name) > MAX_NAME_CHARS) or len(name) > 80 or words > 14
+
+
+def _short_name(name: str) -> str:
+    words = name.split()[:MAX_NAME_WORDS]
+    return _cap_phrase(" ".join(words), MAX_NAME_CHARS)
+
+
+def _feature_from_explanation(expl: str) -> str:
+    """Caracteristica corta a partir de la explicacion: «Paquete que contiene
+    varias plataformas base de cimentacion para ensamblajes» -> «Paquete de
+    plataformas base de cimentacion»."""
+    text = _collapse(re.sub(r"\([^()]*\)", " ", expl)).rstrip(" .")
+    text = re.sub(r"\s+([,;])", r"\1", text)
+    match = _FEATURE_LINK_RE.match(text)
+    if match:
+        rest = match.group("rest")
+        words = rest.split()
+        while words and fold(words[0]) in _QUANTIFIERS:
+            words.pop(0)
+        rest = " ".join(words)
+        if not fold(match.group("link")).endswith(("para", " a")):
+            rest = re.split(r"\s+para\s+", rest, maxsplit=1)[0]
+        text = f"{match.group('head')} de {rest}"
+    else:
+        text = " ".join(text.split()[:10])
+    return _cap_phrase(text, MAX_FEATURE_LENGTH)
+
+
+def _strip_quantity_parens(title: str):
+    """(titulo sin parentesis de cantidad, cantidad o None, texto del parentesis o "")."""
+    quantity, mention = None, ""
+
+    def drop(match):
+        nonlocal quantity, mention
+        tokens = re.findall(r"[a-z]+|\d+", fold(match.group(1)))
+        digits = [t for t in tokens if t.isdigit()]
+        if tokens and all(t.isdigit() or t in _QTY_PAREN_WORDS for t in tokens):
+            mention = _collapse(match.group(1))
+            if digits:
+                quantity = int(digits[0])
+            return " "
+        return match.group(0)
+
+    cleaned = re.sub(r"\(([^()]*)\)", drop, title)
+    return _collapse(cleaned), quantity, mention
+
+
+def _balance_parentheses(text: str) -> str:
+    """Quita los parentesis sueltos para que el nombre quede balanceado."""
+    stack, loose = [], set()
+    for index, ch in enumerate(text):
+        if ch == "(":
+            stack.append(index)
+        elif ch == ")":
+            if stack:
+                stack.pop()
+            else:
+                loose.add(index)
+    loose.update(stack)
+    return _collapse("".join(" " if i in loose else ch for i, ch in enumerate(text)))
+
+
+def _titled_entry(title: str, expl: str) -> dict:
+    cleaned, quantity, mention = _strip_quantity_parens(title)
+    cleaned = _balance_parentheses(cleaned).strip(" ,;:-")
+    name = _sentence_case(cleaned)
+    notes, flags = [], []
+    if quantity is not None:
+        notes.append(f"Cantidad tomada de la descripción ({quantity}).")
+    elif mention:
+        notes.append(f"La descripción dice «{mention}» sin una cantidad exacta: cuéntalas y escribe la cantidad.")
+    if len(name) > MAX_TITLE_CHARS:
+        flags.append((CONFIDENCE_LOW, f"El título es muy largo: se acortó; el original era «{name}»."))
+        name = _cap_phrase(name, MAX_TITLE_CHARS)
+        name = _balance_parentheses(name)
+    kind = KIND_BOX if _is_box(cleaned) else KIND_PRODUCT
+    if kind == KIND_BOX:
+        notes.append("Caja física: en Cantidad registra las piezas que contiene (o 1 si cuentas la caja).")
+    notes += [n for _, n in flags]
+    entry = _entry(kind, name, _feature_from_explanation(expl), _shorten(f"{title.strip()}: {expl.strip()}", 240),
+                   quantity, notes)
+    entry["confidence"] = _level(flags)
+    entry["selected"] = entry["confidence"] != CONFIDENCE_LOW
+    entry["origins"] = [title, expl, f"{title}: {expl}"]
+    return entry
+
+
+def _titled_records(text: str):
+    """Lista [("titulo", titulo, explicacion) | ("otro", texto)] si el texto esta en
+    formato «Titulo: explicacion», o None."""
+    records = [r.strip() for r in _RECORD_SPLIT.split(text) if r and r.strip()]
+    result, titled = [], 0
+    for record in records:
+        match = _TITLED_RE.match(record)
+        if match:
+            title, expl = match.group("title").strip(), match.group("expl").strip()
+            first = fold(_first_word(title))
+            if (len(title.split()) <= 14 and len(expl.split()) >= 6 and first not in _STARTER_WORDS
+                    and not _starts_prose(title) and not _has_finite_verb(title)
+                    and not _measure_only(title)):
+                result.append(("titulo", title, expl))
+                titled += 1
+                continue
+        result.append(("otro", record))
+    known = titled == 1 and len(records) <= 3 and any(
+        r[0] == "titulo" and _first_kind(r[1]) in ("noun", "box") and not _find_measures(r[2]) for r in result)
+    return result if titled >= 2 or known else None
+
+
+def _prose_like(text: str) -> bool:
+    return (len(text.split()) >= 8 or text.rstrip().endswith(":") or _starts_prose(text) or _has_finite_verb(text))
+
+
+def _run_plain(text: str, default_brand: str):
+    parser = _Parser(default_brand)
+    prepared, remarks, notices = _prepare(text)
+    parser.run(_split_parts(prepared, remarks))
+    return parser.entries, parser.unparsed, notices
+
+
+def _interpret_plain(text: str, default_brand: str):
+    """Listas de productos y prosa: lo que es prosa se descarta o solo aporta colores y la medida global."""
+    sentences = _split_sentences(text)
+    analyzed = [_analyze_sentence(s) for s in sentences]
+    if not any(a["prose"] for a in analyzed):
+        return _run_plain(text, default_brand)
+    global_dim = next((a["global_dim"] for a in analyzed if a["global_dim"]), None)
+    global_noun = next((a["dim_noun"] for a in analyzed if a["dim_noun"]), None)
+    entries, unparsed, notices, buffer = [], [], {"filler": False, "truncated": False}, []
+
+    def flush():
+        if buffer:
+            found, bad, seen = _run_plain("\n".join(buffer), default_brand)
+            entries.extend(found)
+            unparsed.extend(bad)
+            notices["filler"] = notices["filler"] or seen["filler"]
+            buffer.clear()
+
+    for info in analyzed:
+        if not info["prose"]:
+            buffer.append(info["text"])
+            continue
+        flush()
+        if info["colors"]:
+            dim = info["own_dim"] or global_dim
+            noun = info["noun"] or global_noun
+            entries.extend(_color_entries(info, dim, noun, default_brand))
+        elif info["discard"] or info["global_dim"]:
+            continue                       # describe el contenedor o solo da la medida global
+        else:
+            found, bad, _ = _run_plain(_after_prose_verb(info["text"]), default_brand)
+            for entry in found:            # una oracion ambigua nunca se marca sola
+                entry["notes"].append("Viene de una oración que parece descripción, no de una lista de productos: "
+                                      "revisa si es un producto.")
+                entry["confidence"], entry["selected"] = CONFIDENCE_LOW, False
+            entries.extend(found)
+            unparsed.extend(bad)
+    flush()
+    return entries, unparsed, notices
+
+
+def _interpret(raw: str, default_brand: str):
+    text = unicodedata.normalize("NFKC", raw).replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"[   \t]", " ", text)
+    records = _titled_records(text)
+    if records is None:
+        return _interpret_plain(text, default_brand)
+    entries, unparsed, notices, buffer = [], [], {"filler": False, "truncated": False}, []
+
+    def flush():
+        if buffer:
+            found, bad, seen = _interpret_plain("\n".join(buffer), default_brand)
+            entries.extend(found)
+            unparsed.extend(bad)
+            notices["filler"] = notices["filler"] or seen["filler"]
+            buffer.clear()
+
+    for record in records:
+        if record[0] == "titulo":
+            flush()
+            entries.append(_titled_entry(record[1], record[2]))
+        elif not _prose_like(record[1]):
+            buffer.append(record[1])        # lo demas (introduccion, prosa) no es un producto
+    flush()
+    return entries, unparsed, notices
+
+
 def parse_description(text, context: str = "") -> dict:
     """Interpreta la descripcion de un contenedor.
 
@@ -1488,11 +1952,11 @@ def parse_description(text, context: str = "") -> dict:
     en la que el texto dice que esta. `context` (categoria y nombre del
     contenedor) solo aporta la marca. Nunca lanza excepciones."""
     try:
-        default_brand = _context_brand(text, context)
-        prepared, remarks, notices = _prepare(text)
-        parser = _Parser(default_brand)
-        parser.run(_split_parts(prepared, remarks))
-        entries, unparsed = parser.entries, parser.unparsed
+        raw = "" if _is_missing(text) else str(text)
+        default_brand = _context_brand(raw, context)
+        truncated = len(raw) > MAX_TEXT_LENGTH
+        entries, unparsed, notices = _interpret(raw[:MAX_TEXT_LENGTH], default_brand)
+        notices["truncated"] = truncated
     except Exception:  # noqa: BLE001
         fragment = _shorten(text)
         return {"entries": [], "warnings": ["No se pudo interpretar la descripción: revísala."],
@@ -1654,6 +2118,64 @@ def container_children(container_id: str, items) -> list:
     return [i for i in items or () if _active(i) and str(i.get("parent_id") or "").strip() == container_id]
 
 
+# ---------------------------------------------------------------------------
+# Productos que el contenedor ya tiene
+# ---------------------------------------------------------------------------
+
+_FRAGMENT_RE = re.compile(r"Creado desde la descripción de «.*?» \([^)]*\):\s*«(.*?)»\.(?:\s|$)", re.DOTALL)
+SIMILARITY_THRESHOLD = 0.94
+
+
+def _plain_text(text) -> str:
+    """Texto comparable: sin tildes, mayusculas ni signos."""
+    return _collapse(re.sub(r"[\W_]+", " ", fold(text)))
+
+
+def _figures(text: str) -> list:
+    """Palabras con cifras (2x2, 220, M3): dos nombres con cifras distintas son productos distintos."""
+    return sorted(t for t in text.split() if any(ch.isdigit() for ch in t))
+
+
+def child_source_fragment(child: dict) -> str:
+    """Fragmento de la descripcion en que se creo un producto (lo guarda
+    build_payload en su descripcion) o ""."""
+    match = _FRAGMENT_RE.search(str((child or {}).get("description") or ""))
+    return match.group(1) if match else ""
+
+
+def names_match(first, second) -> bool:
+    """Dos nombres son el mismo producto: igual clave (plural, tildes, orden de la
+    medida), igual sin el parentesis de cantidad («(multiples unidades)»), o casi
+    iguales ignorando puntuacion, siempre con las mismas cifras (2x2 no es 2x4)."""
+    forms_a = {str(first or ""), _strip_quantity_parens(str(first or ""))[0]}
+    forms_b = {str(second or ""), _strip_quantity_parens(str(second or ""))[0]}
+    for a in forms_a:
+        for b in forms_b:
+            key = product_key(a)
+            if key and key == product_key(b):
+                return True
+    a = _plain_text(_strip_quantity_parens(str(first or ""))[0])
+    b = _plain_text(_strip_quantity_parens(str(second or ""))[0])
+    return (bool(a) and bool(b) and _figures(a) == _figures(b)
+            and difflib.SequenceMatcher(None, a, b).ratio() >= SIMILARITY_THRESHOLD)
+
+
+def find_existing_child(entry: dict, children) -> dict:
+    """El hijo del contenedor que ya es esta propuesta (por nombre o por el
+    fragmento de la descripcion en que se creo), o None."""
+    origins = [_plain_text(o) for o in (entry.get("origins") or [entry.get("source")]) if o]
+    for child in children:
+        if names_match(entry.get("name"), child.get("name")):
+            return child
+        fragment = _plain_text(child_source_fragment(child))
+        if len(fragment) < 8:
+            continue
+        for origin in origins:
+            if fragment == origin or (min(len(fragment), len(origin)) >= 15 and (fragment in origin or origin in fragment)):
+                return child
+    return None
+
+
 def suggest_products(container: dict, items=()) -> dict:
     """Propuestas de Contenedores de Caracteristica para `container` a partir de
     su descripcion, sin repetir los productos que ya tiene.
@@ -1672,13 +2194,11 @@ def suggest_products(container: dict, items=()) -> dict:
     parsed = parse_description(
         container.get("description"), context=f"{container.get('category') or ''} {container.get('name') or ''}"
     )
-    existing_by_key = {}
-    for child in container_children(container_id, items):
-        existing_by_key.setdefault(product_key(child.get("name")), child)
+    children = container_children(container_id, items)
 
     proposals, existing = [], []
     for entry in parsed["entries"]:
-        match = existing_by_key.get(product_key(entry["name"]))
+        match = find_existing_child(entry, children)
         if match is not None:
             existing.append({"name": entry["name"], "id": match.get("id"),
                              "existing_name": match.get("name"), "source": entry["source"]})
