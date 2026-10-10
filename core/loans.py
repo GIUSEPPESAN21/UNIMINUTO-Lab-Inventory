@@ -11,6 +11,8 @@ import logging
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from core import email_events
+
 logger = logging.getLogger(__name__)
 
 BOGOTA_TZ = ZoneInfo("America/Bogota")
@@ -59,11 +61,14 @@ def checkout(storage, item_id: str, quantity: int, user: dict, expected_return_a
         # La capa de datos re-verifica el stock dentro de su lock: otra persona
         # pudo sacar unidades entre la comprobacion anterior y este punto.
         return False, str(exc), None
+    email_events.notify_loan_checkout(storage, loan, item, user)
     return True, f"Salida registrada: '{item.get('name')}' x{quantity} para {user.get('full_name')}.", loan
 
 
 def checkin(storage, loan_id: str, actor_user: dict):
     ok, msg = storage.return_loan(loan_id, actor_email=actor_user.get("institutional_email", ""))
+    if ok:
+        email_events.notify_loan_checkin(storage, loan_id, actor_user)
     return ok, msg
 
 

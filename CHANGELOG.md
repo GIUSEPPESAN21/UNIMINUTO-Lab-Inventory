@@ -30,6 +30,33 @@
 - Pruebas: `tests/test_password_reset.py` (unitarias) y
   `tests/test_password_reset_ui.py` (AppTest de la página Usuarios y del ingreso).
 
+### Correos automáticos
+- **Todo lo que se pide avisa por correo a los perfiles maestro:** solicitudes de
+  productos y servicios, reservas, salidas (checkout) y devoluciones (checkin). El
+  asunto dice qué y quién, p. ej. `[Laboratorio] Nueva solicitud: Microscopio —
+  Ana Prueba (Estudiante)`, y el cuerpo indica **quién** (nombre, rol, correo, ID),
+  **qué** (producto y código, cantidad, servicio, fechas) y **cuándo** (hora de
+  Bogotá), con un enlace a la app si existe el secret `APP_URL`. Se envía texto
+  plano más una versión HTML sencilla (multipart).
+- **Respuestas al solicitante:** cuando una solicitud o reserva se aprueba o se
+  rechaza, quien la pidió recibe un correo con la decisión y la observación.
+- **Destinatarios:** perfiles maestro activos + `ADMIN_NOTIFICATION_EMAILS` (+ los
+  profesores activos si el maestro lo activa), sin duplicados y sin correos
+  inválidos o anónimos (`noreply`, `anonimo`, dominios de ejemplo).
+- **Nunca bloquea ni rompe nada:** el envío ocurre en un hilo en segundo plano; si
+  el servidor falla, la operación queda guardada y el error se registra. Sin SMTP
+  configurado todo funciona como antes (no se envía ni se intenta nada).
+- **Reportes → Correos (solo maestro):** estado del servidor SMTP (sin mostrar
+  valores), guía con ejemplo de Gmail y contraseña de aplicación, un interruptor
+  por tipo de aviso (todos activos por defecto, guardados en la hoja `settings`),
+  lista de destinatarios, resumen de vencidos bajo demanda, **Enviar correo de
+  prueba** y los últimos envíos con su estado.
+- **Registro de envíos:** nueva hoja `notification_log` (se crea sola en bases
+  anteriores; conserva los últimos 500). Los campos `email_notified` / `email_error`
+  de solicitudes y reservas siguen funcionando.
+- Mensajes de error SMTP más claros (credenciales, conexión, remitente) sin revelar
+  ningún secreto.
+
 ## v1.13.1 — La etiqueta vuelve a su formato de siempre
 
 ### Cambiado
