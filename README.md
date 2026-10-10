@@ -327,11 +327,12 @@ core/
   service_requests.py     Solicitudes de productos/servicios y revisión
   location.py             Rutas de ubicación derivadas del código GLIOPS
   notifications.py        Correo SMTP + alertas WhatsApp opcionales
+  email_events.py         Correos automáticos por evento (destinatarios, contenido, envío en segundo plano, registro)
   reports.py              Analítica y exportación a Excel
 views/
   login.py, inicio.py, escanear.py, inventario.py, solicitudes.py, trazabilidad.py,
   reservas.py, location_guide.py, label_settings.py, perfil.py, prestamos.py, usuarios.py,
-  reportes.py, acerca_de.py
+  reportes.py, correos.py (pestaña de Reportes), acerca_de.py
 tests/                  Pruebas unitarias de core/* (pytest, sin tocar Excel/GitHub)
 .github/workflows/ci.yml Integración continua: sintaxis + pruebas en cada push/PR
 ```
@@ -412,11 +413,52 @@ El `GITHUB_TOKEN` debe ser un *fine-grained personal access token* con acceso
 repositorios.
 
 Para correo automático configura `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`,
-`SMTP_PASSWORD`, `SMTP_FROM_EMAIL` y TLS/SSL en Secrets. Define
-`ADMIN_NOTIFICATION_EMAILS` como lista; si queda vacía, se usan profesores y
-maestros activos. Nunca subas credenciales al repositorio. SMTP es opcional:
+`SMTP_PASSWORD`, `SMTP_FROM_EMAIL` y TLS/SSL en Secrets (ver *Correos
+automáticos*). Nunca subas credenciales al repositorio. SMTP es opcional:
 su ausencia no impide guardar una solicitud o reserva (pero sin SMTP no se puede
 verificar el correo de un profesor: ver *Seguridad del registro*).
+
+### Correos automáticos
+
+Todo lo que se pide en el software avisa por correo, en un hilo en segundo plano
+(la interfaz no espera al servidor y un fallo nunca invalida la operación):
+
+| Evento | Quién recibe |
+|---|---|
+| Nueva solicitud de producto o servicio | Perfiles maestro |
+| Nueva reserva (actividad o laboratorio completo) | Perfiles maestro |
+| Salida (checkout) y devolución (checkin) de un préstamo | Perfiles maestro |
+| Solicitud o reserva aprobada / rechazada | Quien la pidió |
+| Resumen de préstamos vencidos (botón manual) | Perfiles maestro |
+
+Asunto de ejemplo: `[Laboratorio] Nueva solicitud: Microscopio — Ana Prueba
+(Estudiante)`. El cuerpo (texto plano + HTML) dice quién (nombre, rol, correo, ID),
+qué (producto y código, cantidad, servicio, fechas) y cuándo (hora de Bogotá).
+
+**Secrets** (Streamlit Cloud → Settings → Secrets). Ejemplo con Gmail y
+contraseña de aplicación (activa antes la verificación en 2 pasos de la cuenta):
+
+```toml
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = 587
+SMTP_USE_TLS = true
+SMTP_USE_SSL = false            # true solo con el puerto 465
+SMTP_USERNAME = "laboratorio@gmail.com"
+SMTP_PASSWORD = "abcd efgh ijkl mnop"   # contraseña de aplicación, no la clave normal
+SMTP_FROM_EMAIL = "laboratorio@gmail.com"
+
+APP_URL = "https://tu-app.streamlit.app"   # opcional: enlace dentro de cada correo
+ADMIN_NOTIFICATION_EMAILS = ["coordinacion@uniminuto.edu.co"]  # opcional: destinatarios extra
+```
+
+Destinatarios = perfiles maestro **activos** + `ADMIN_NOTIFICATION_EMAILS`
+(+ profesores activos si el maestro lo activa), sin duplicados y sin correos
+inválidos o anónimos. En **Reportes → Correos** (solo maestro) se ve si el SMTP está
+configurado (nunca se muestran los valores), se activa o apaga cada tipo de aviso
+(todos activos por defecto, guardado en la hoja `settings`), se envía un **correo de
+prueba** y se consultan los últimos envíos y sus errores (hoja `notification_log`,
+últimos 500). Sin SMTP configurado no se envía nada y la app funciona igual.
+La lógica vive en `core/email_events.py`.
 
 Opcionales de seguridad (valores por defecto entre paréntesis):
 `LOGIN_MAX_ATTEMPTS` (5), `LOGIN_LOCKOUT_MINUTES` (5) y `SESSION_TIMEOUT_MINUTES` (720).

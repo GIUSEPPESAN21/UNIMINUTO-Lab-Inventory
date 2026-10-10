@@ -75,7 +75,7 @@ def test_conflict_rules_full_lab_and_same_activity_only():
 def test_submit_reservation_saves_even_when_email_is_unconfigured(storage, monkeypatch):
     monkeypatch.setattr(notifications, "get_admin_notification_emails", lambda storage: [])
     monkeypatch.setattr(
-        notifications, "send_email_notification", lambda subject, body, recipients: (False, "SMTP no configurado")
+        notifications, "send_email_notification", lambda subject, body, recipients, **_: (False, "SMTP no configurado")
     )
     row, notified, message = reservations.submit_reservation(
         storage, _user(), reservations.SCOPE_FULL_LAB, "", "Feria", 25, _future(2), _future(5)

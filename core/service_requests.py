@@ -3,7 +3,7 @@
 
 from datetime import datetime, timezone
 
-from core import notifications
+from core import email_events
 from core.reservations import as_utc
 
 TYPE_PRODUCT = "product"
@@ -74,22 +74,9 @@ def submit_request(storage, user: dict, request_type: str, item_id: str = "", qu
         storage, request_type, item_id, quantity, service_name, description, needed_at
     )
     row = storage.create_service_request(data, user)
-    recipients = notifications.get_admin_notification_emails(storage)
-    target = (
-        f"Producto: {row['item_name']} ({row['item_id']}) x{row['quantity']}"
-        if row["request_type"] == TYPE_PRODUCT
-        else f"Servicio: {row['service_name']}"
-    )
-    subject = f"Nueva solicitud de laboratorio: {target}"
-    body = (
-        f"Solicitud #{row['id']}\n"
-        f"Solicitante: {row['requester_name']} <{row['requester_email']}>\n"
-        f"{target}\nFecha requerida (UTC): {row.get('needed_at') or 'No indicada'}\n"
-        f"Descripción: {row.get('description') or 'Sin notas'}\n\n"
-        "Ingresa a la aplicación para aprobar o rechazar la solicitud."
-    )
-    notified, message = notifications.send_email_notification(subject, body, recipients)
-    storage.update_service_request_notification(row["id"], notified, "" if notified else message)
+    # Aviso a los perfiles maestro (en segundo plano si hay SMTP); el resultado
+    # queda en email_notified / email_error de la solicitud.
+    notified, message = email_events.notify_request_created(storage, row, user)
     row["email_notified"], row["email_error"] = notified, "" if notified else message
     return row, notified, message
 
@@ -111,6 +98,7 @@ def review_request(storage, request_id: str, decision: str, reviewer: dict, note
     storage.update_service_request_status(
         request_id, decision, reviewer.get("institutional_email", ""), notes
     )
+    email_events.notify_request_reviewed(storage, request, decision, reviewer, notes)
     return True, "Solicitud aprobada." if decision == STATUS_APPROVED else "Solicitud rechazada."
 
 

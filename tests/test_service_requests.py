@@ -21,7 +21,7 @@ def test_submit_product_request_validates_stock_and_records_email(storage, monke
     storage.add_item("LAB-MIC-01", name="Microscopio", quantity=2)
     monkeypatch.setattr(notifications, "get_admin_notification_emails", lambda storage: ["admin@uniminuto.edu.co"])
     monkeypatch.setattr(
-        notifications, "send_email_notification", lambda subject, body, recipients: (True, "Enviado")
+        notifications, "send_email_notification", lambda subject, body, recipients, **_: (True, "Enviado")
     )
     row, notified, _ = service_requests.submit_request(
         storage, _user(), service_requests.TYPE_PRODUCT, "LAB-MIC-01", 2,
@@ -55,7 +55,7 @@ def test_service_request_requires_name_and_description(storage):
 def test_submit_service_request_is_saved_if_email_fails(storage, monkeypatch):
     monkeypatch.setattr(notifications, "get_admin_notification_emails", lambda storage: [])
     monkeypatch.setattr(
-        notifications, "send_email_notification", lambda subject, body, recipients: (False, "Sin SMTP")
+        notifications, "send_email_notification", lambda subject, body, recipients, **_: (False, "Sin SMTP")
     )
     row, notified, message = service_requests.submit_request(
         storage, _user(), "service", service_name="Corte láser",

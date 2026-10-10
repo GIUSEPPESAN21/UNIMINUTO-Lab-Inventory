@@ -71,7 +71,16 @@ SHEET_COLUMNS = {
         "id", "event_type", "request_id", "item_id", "loan_id", "user_id",
         "actor_id", "actor_name", "actor_email", "receipt", "details", "created_at",
     ],
+    # Registro de correos automaticos (core/email_events.py): que se envio, a
+    # quien y si el servidor lo acepto. Se conservan los ultimos
+    # NOTIFICATION_LOG_LIMIT para que la base no crezca sin limite.
+    "notification_log": [
+        "id", "event_type", "subject", "recipients", "recipient_count", "status",
+        "error", "reference", "actor_email", "created_at",
+    ],
 }
+
+NOTIFICATION_LOG_LIMIT = 500
 
 _cached_dfs = None
 _excel_lock = Lock()
@@ -1524,6 +1533,35 @@ class LabStorage:
                 df = df[df[column] == value]
         rows = [_clean_nan(row.to_dict()) for _, row in df.iterrows()]
         return sorted(rows, key=lambda row: row.get("created_at") or "")
+
+    # ------------------------------------------------------------------
+    # REGISTRO DE CORREOS AUTOMATICOS (ver core/email_events.py)
+    # ------------------------------------------------------------------
+
+    def add_notification_log(self, entry: dict) -> dict:
+        """Agrega UN registro de correo (una escritura = un commit) y conserva solo
+        los ultimos NOTIFICATION_LOG_LIMIT. Solo se guardan las columnas conocidas."""
+        columns = SHEET_COLUMNS["notification_log"]
+        row = {column: "" for column in columns}
+        row.update({key: "" if value is None else str(value) for key, value in entry.items() if key in columns})
+        row["id"] = _new_id()
+        row["created_at"] = row["created_at"] or _now_str()
+        with _db_write():
+            dfs = _read_excel()
+            df = pd.concat([dfs["notification_log"], pd.DataFrame([row])], ignore_index=True)
+            if len(df) > NOTIFICATION_LOG_LIMIT:
+                df = df.iloc[-NOTIFICATION_LOG_LIMIT:].reset_index(drop=True)
+            dfs["notification_log"] = df
+            _write_and_sync(dfs)
+        return dict(row)
+
+    @firestore_retry
+    def get_notification_log(self, limit: int = 50) -> list:
+        """Registros de correo del mas reciente al mas antiguo (todos si limit=0)."""
+        df = _read_excel("notification_log")["notification_log"]
+        rows = [_clean_nan(row.to_dict()) for _, row in df.iterrows()]
+        rows.sort(key=lambda row: row.get("created_at") or "", reverse=True)
+        return rows[:limit] if limit else rows
 
     # ------------------------------------------------------------------
     # ALTA DE VARIOS ITEMS NUEVOS EN UNA SOLA ESCRITURA
