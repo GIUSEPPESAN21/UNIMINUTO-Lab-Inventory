@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.14.2 — Sin controles de plataforma visibles
+
+- Se ocultan para todos los usuarios los controles que añade Streamlit: **Share, favorito, editar y GitHub**, el botón **Deploy** y el
+  menú **⋮** (CSS en `style.css` y `toolbarMode = "minimal"`). Se conservan el logotipo y el botón de la barra lateral.
+- El botón **Manage app** lo dibuja Streamlit Community Cloud fuera de la app: solo lo ven el propietario y los colaboradores con sesión
+  iniciada en Cloud, y el código no puede ocultarlo (los demás usuarios nunca lo ven).
+
 ## v1.14.1 — Ubicaciones a un clic
 
 - **Nueva página «Ubicaciones»** en el menú lateral (Gestión) y acceso rápido «Estanterías y mesas» en Inicio:

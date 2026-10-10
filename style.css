@@ -216,6 +216,20 @@ body, .stApp {
     backdrop-filter: saturate(160%) blur(10px);
 }
 
+/* Controles de plataforma ocultos para todos: Share, favorito, editar y GitHub
+   (los inyecta Streamlit Community Cloud en stToolbarActions), el botón Deploy
+   y el menú ⋮. Se conservan el logotipo y el botón de la barra lateral. */
+[data-testid="stToolbarActions"],
+[data-testid="stAppDeployButton"],
+[data-testid="stMainMenu"],
+[data-testid="stStatusWidget"],
+[data-testid="stDecoration"],
+.stDeployButton,
+#MainMenu {
+    display: none !important;
+    visibility: hidden !important;
+}
+
 [data-testid="stMainBlockContainer"] {
     max-width: 1320px;
     padding-top: 4.25rem;
