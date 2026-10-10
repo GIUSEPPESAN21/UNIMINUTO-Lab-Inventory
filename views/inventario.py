@@ -426,7 +426,7 @@ def _render_generator(storage, user: dict, master: dict) -> None:
             suggestions.COL_FEATURE: st.column_config.TextColumn(suggestions.COL_FEATURE, width="medium"),
             suggestions.COL_QUANTITY: st.column_config.NumberColumn(
                 suggestions.COL_QUANTITY, min_value=0, step=1, format="%d",
-                help="La descripción no trae cantidades: 0 = pendiente de conteo."),
+                help="Si la descripción no trae la cantidad: 0 = pendiente de conteo."),
             suggestions.COL_UNIT: st.column_config.TextColumn(suggestions.COL_UNIT, max_chars=20, width="small"),
             suggestions.COL_NOTES: st.column_config.TextColumn(suggestions.COL_NOTES, width="large"),
         },
