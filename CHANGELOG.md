@@ -1,5 +1,49 @@
 # Changelog
 
+## v1.14.0 — (en preparación)
+
+### Generador de productos más preciso
+El analizador de «✨ Generar productos desde la descripción» (`core/inventory_suggestions.py`)
+sigue siendo determinista (reglas, sin IA ni red) y no cambia la vista ni las columnas de la
+tabla de revisión; solo lee mejor el texto.
+
+- **Lectura más robusta**: `×`, `x`, `X`, `*`, «por» y «by» entre números son la misma medida;
+  listas separadas por `-`, `,`, `;`, `/`, `+`, «y», «o» o saltos de línea; viñetas y listas
+  numeradas; «etc.»; mayúsculas, tildes, plurales (piezas/pieza, biseles/bisel, lisas/lisa) y
+  errores de digitación frecuentes («Contendor», «piesas», «bicel»). Las medidas pegadas
+  (`4x2-2x2-2x1`, `2x2,2x4`) y las separadas por espacios (`4 x 2`) se leen igual.
+- **Nombres canónicos**: «Pieza Lego con pines 4x2», «Pieza Lego lisa 2x2», «Pieza Lego con
+  bisel 3x2», «Base Lego de 1 pin», «Caja con puertas y ventanas»; el sustantivo va en singular,
+  los adjetivos y colores concuerdan en género («Bloque rojo», «Placa roja») y las marcas y
+  siglas se respetan (Lego, Technic, EV3, USB, Arduino UNO). La columna **Característica**
+  ahora incluye la medida («Con pines 4x2», «Lisa 2x2», «220 Ω»).
+- **Cantidades**: «20 piezas de 2x2», «x10», «(15)», «50 uds», «30 pzs», «Cant: 7», o una
+  cantidad suelta tras un guion («Pines 4x2 - 20 uds»). Si el texto trae dos cantidades
+  distintas, una aproximada o una absurda, la nota lo dice.
+- **Electrónica y laboratorio**: los valores con unidad se conservan y se escriben con su
+  símbolo («220 ohm» → «220 Ω», «10uF» → «10 µF», «4k7» → «4.7 kΩ», «5V», «20 cm», «1/4 W»),
+  se reparte la unidad compartida («220, 330 y 470 ohm») y varios valores de una misma pieza
+  forman un solo producto («Condensador de 100 µF 25 V»). «Kit Arduino UNO con 3 sensores
+  ultrasónicos» sigue siendo un producto.
+- **Cajas y contenido**: «Caja con separadores de fichas» sigue siendo una sola caja; con
+  «que contiene…», «donde hay…» o «:» lo que sigue se propone como producto aparte y la nota
+  dice en qué caja está. «Kit … que incluye …» funciona igual.
+- **Medidas imposibles**: una dimensión 0 (`1x0`) o mayor que 48 en una pieza no se corrige en
+  silencio: queda como «Revisar medida», sin marcar y con la sugerencia (`1x1`). Al crear, si el
+  usuario la marca igual, la vista avisa.
+- **Confianza** (alta, media o baja) en cada propuesta: lo de confianza baja (medida imposible,
+  pieza sin tipo, cantidad absurda, texto ilegible) llega sin marcar en «Crear»; lo de confianza
+  media trae su motivo en «Puntos para confirmar». Sin cambios en las columnas del editor.
+- **Sin repetidos**: el mismo producto escrito de otra forma («4x2» = «2x4», «ohm» = «Ω»,
+  «capacitor» = «condensador») se propone una sola vez (sumando cantidades) y tampoco se
+  propone lo que el contenedor ya tiene. Se conserva el orden del texto.
+- **Fragmentos ilegibles**: se informan (hasta 12) en lugar de ignorarse; el analizador nunca
+  lanza excepciones, limita el texto largo y responde en milisegundos.
+- **Pruebas**: tabla de 48 descripciones reales y de electrónica con su resultado esperado,
+  los tres contenedores reales con `×` y sin él, y pruebas de cantidades, unidades, medidas,
+  cajas, confianza, ruido aleatorio y rendimiento. La vista se prueba de punta a punta con un
+  contenedor de electrónica.
+
 ## v1.13.1 — La etiqueta vuelve a su formato de siempre
 
 ### Cambiado
