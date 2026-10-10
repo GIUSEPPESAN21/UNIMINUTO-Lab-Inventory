@@ -26,6 +26,9 @@ Streamlit (ver sección de Configuración). La base de datos se entrega
   Principal.
 - **Ítem Individual** (`standalone`): un producto con código propio que no
   pertenece a ningún Contenedor Principal.
+- **Ubicación** (`location`): una estantería, un piso, una mesa de trabajo o una zona con
+  su propia etiqueta y código de barras (ver *Ubicaciones con código*). No tiene stock: no
+  se presta ni se solicita.
 - **Disponibilidad en vivo**: `disponible = cantidad_total - préstamos abiertos`.
   La cantidad total solo cambia por alta/ajuste/baja; cada salida y reingreso
   queda registrado en el libro mayor de préstamos (`loans`), nunca se resta
@@ -132,6 +135,45 @@ de 10 módulos cuando cabe (nunca menos de 6) y al menos 7 mm de alto, por encim
 recomendación general para Code 128 (≥ 6,35 mm o el 15 % del ancho del símbolo). En las
 etiquetas más altas crecen hasta el 36 % del alto.
 
+### Ubicaciones con código (estanterías, pisos, mesas)
+
+En **Inventario → 🗺️ Ubicaciones** cada estantería, piso, mesa de trabajo o zona tiene
+su propia etiqueta con código de barras, para pegarla en el lugar y escanearla. Son ítems
+de tipo `location` en la misma hoja `items` (no cambia el esquema del Excel).
+
+| Ubicación | Código | Notas |
+|---|---|---|
+| Estantería 2 | `2-0-00-00-000` | Piso `0` = la estantería misma |
+| Piso 1 de la Estantería 2 | `2-1-00-00-000` | Su `parent_id` es la estantería |
+| Mesa de trabajo 1 | `M1-E0` | Equipo `0` = la mesa misma |
+| Exhibición Lego | `E3-LM00` | Modelo `00` = la exhibición; dentro de la Estantería 3 |
+| Zona, sala o subnivel | libre, p. ej. `SALA-A` | Numérico o alfanumérico (hasta 13 caracteres) |
+
+- **Sin colisiones:** estos códigos reutilizan el formato GLIOPS con ceros en niveles que
+  el formato de inventario rechaza (piso 0, contenedor 00, equipo 0, modelo 00), así que
+  `parse_code` los sigue rechazando para contenedores, cajas y productos, y las
+  ubicaciones solo aceptan sus propios códigos (`validate_location_code`). Los códigos de
+  contenedores (`2-1-01-00-000`), cajas, ítems, `M1-E2` y `E3-LM07` no cambian.
+- **Sin stock:** cantidad siempre 0; no aparecen en el catálogo de productos, el inicio,
+  los reportes ni las solicitudes, y no se les da salida.
+- **Crear en bloque:** «Estantería 2 con 4 pisos» crea la estantería y sus pisos en una
+  sola escritura (`save_items_bulk`), con vista previa; lo ya registrado se muestra como
+  tal y solo se agrega lo que falta. Mesas, la exhibición Lego y zonas se registran una a
+  una; un piso solo puede estar dentro de su estantería.
+- **Mapa y etiquetas:** árbol de ubicaciones con lo que guarda cada una (contenedores y
+  productos, por su código GLIOPS o por la ubicación escrita si tienen código libre),
+  etiqueta individual y un PDF con todas las etiquetas de una estantería y sus pisos. La
+  etiqueta mantiene el formato clásico: el tipo dice «Ubicación · Piso», la ruta es
+  `RUTA: E2 › P1` y el aviso es «PUNTO DE CONTROL · ESCANÉALO AL LLEGAR».
+- **Escanear:** leer la etiqueta de una ubicación muestra qué guarda y cómo llegar; si
+  todavía no está registrada, el profesor puede registrarla ahí mismo.
+- **Ruta verificable:** si la estantería, el piso o la mesa del camino están registrados,
+  esos puntos pasan de «Sin etiqueta: confírmalo al llegar» a confirmarse escaneando su
+  etiqueta (entra en el comprobante). Si no están registrados, la ruta es la de siempre.
+- **Salud del inventario:** las ubicaciones tienen sus propias reglas (código de
+  ubicación, piso dentro de su estantería, nombre acorde al código) y no se marcan por
+  falta de categoría, ubicación escrita o cantidad.
+
 ### Cómo imprimir bien (Windows, SAT TT460 y Edge o Chrome)
 
 La etiqueta sale exacta cuando **la medida es la misma en cuatro lugares**: el rollo, la
@@ -199,8 +241,8 @@ Lego tienen rutas especiales; códigos libres/heredados usan `location`.
 - **Estudiante:** con una solicitud aprobada, recorre la ruta paso a paso y
   confirma cada punto **escaneando su etiqueta** (o escribiendo el código). Si
   escanea una equivocada, la app le dice dónde está y hacia dónde ir. Estantería y
-  piso, que no tienen etiqueta, se confirman al llegar o quedan probados al escanear
-  el contenedor. Al terminar recibe un **comprobante** corto y ve su solicitud en
+  piso se confirman al llegar o quedan probados al escanear el contenedor; si tienen
+  etiqueta registrada en **Inventario → Ubicaciones**, se confirman escaneándola. Al terminar recibe un **comprobante** corto y ve su solicitud en
   una línea de tiempo (creada → revisada → ruta verificada → retirada → devuelta).
   Los servicios muestran creada → aprobada → en curso → entregado.
 - **Profesor/maestro:** busca por solicitud, producto, estudiante o comprobante;
@@ -439,14 +481,16 @@ core/
   loans.py                Checkout / checkin / vencidos
   reservations.py         Validación, conflictos y aprobación de reservas
   service_requests.py     Solicitudes de productos/servicios y revisión
-  location.py             Rutas de ubicación derivadas del código GLIOPS
+  location.py             Rutas de ubicación derivadas del código GLIOPS (con etiquetas de estantería, piso y mesa)
+  places.py               Ubicaciones con código: altas en bloque, árbol y contenido de cada una
   notifications.py        Correo SMTP + alertas WhatsApp opcionales
   email_events.py         Correos automáticos por evento (destinatarios, contenido, envío en segundo plano, registro)
   reports.py              Analítica y exportación a Excel
 views/
   login.py, inicio.py, escanear.py, inventario.py, solicitudes.py, trazabilidad.py,
   reservas.py, location_guide.py, label_settings.py, photo_panel.py, perfil.py, prestamos.py, usuarios.py,
-  reportes.py, correos.py (pestaña de Reportes), acerca_de.py, nfc.py (página Chips NFC), nfc_tap.py (toque con ?nfc=)
+  reportes.py, correos.py (pestaña de Reportes), ubicaciones.py, acerca_de.py, nfc.py (página Chips NFC),
+  nfc_tap.py (toque con ?nfc=)
 tests/                  Pruebas unitarias de core/* (pytest, sin tocar Excel/GitHub)
 .github/workflows/ci.yml Integración continua: sintaxis + pruebas en cada push/PR
 ```

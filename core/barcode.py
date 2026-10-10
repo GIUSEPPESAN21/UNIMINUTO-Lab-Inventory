@@ -40,6 +40,10 @@ no usan GLIOPS:
    el generador normaliza su prefijo a mayusculas.
    Ejemplo: LAB-MIC-01
 
+Las ubicaciones fisicas (estanterias, pisos, mesas y zonas) tienen sus propios
+codigos, que solo se aceptan para items de ubicacion (ver "Codigos de
+ubicacion" al final del modulo y core/places.py).
+
 Un codigo con la FORMA de uno de GLIOPS que no cumple sus reglas se rechaza en
 vez de aceptarse como codigo libre, para que un error de digitacion
 (4-2-05-12-001, 2-1-01-00-001, M3-E1, m1-e2, E4-LM01) no cree un item fuera
@@ -342,7 +346,216 @@ def describe_parsed(parsed: dict) -> str:
         return "Código numérico libre (sin ubicación codificada)"
     if fmt == FORMAT_ALNUM:
         return "Código alfanumérico libre (sin ubicación codificada)"
+    if fmt == FORMAT_LOCATION:
+        return describe_location(parsed)
     return ""
+
+
+# ---------------------------------------------------------------------------
+# Codigos de ubicacion (estanterias, pisos, mesas de trabajo y zonas)
+# ---------------------------------------------------------------------------
+# Una ubicacion fisica (item_type "location", ver core/places.py) lleva su
+# propia etiqueta para escanearla. Sus codigos reutilizan los formatos GLIOPS
+# con ceros en los niveles que no aplican, combinaciones que `parse_code`
+# RECHAZA (piso 0, contenedor 00, equipo 0, modelo 00). Por eso nunca chocan con
+# un contenedor, una caja o un producto, y solo se aceptan para ubicaciones:
+#
+#   2-0-00-00-000   Estanteria 2
+#   2-1-00-00-000   Estanteria 2 · Piso 1
+#   M1-E0           Mesa de trabajo 1
+#   E3-LM00         Exhibicion Lego (zona de la Estanteria 3)
+#
+# Una zona, sala o subnivel sin nivel GLIOPS usa un codigo libre (numerico o
+# alfanumerico, ej. SALA-A o E2-P1-IZQ).
+
+FORMAT_LOCATION = "ubicacion"
+LOCATION_SHELF = "estanteria"
+LOCATION_FLOOR = "piso"
+LOCATION_TABLE = "mesa"
+LOCATION_ZONE = "zona"
+LOCATION_KINDS = (LOCATION_SHELF, LOCATION_FLOOR, LOCATION_TABLE, LOCATION_ZONE)
+LOCATION_KIND_NAMES = {
+    LOCATION_SHELF: "Estantería",
+    LOCATION_FLOOR: "Piso",
+    LOCATION_TABLE: "Mesa de trabajo",
+    LOCATION_ZONE: "Zona",
+}
+LEGO_ZONE_CODE = "E3-LM00"
+
+LOCATION_FORMAT_HELP = (
+    "Códigos de ubicación: [ESTANTERIA]-0-00-00-000 para una estantería (ej. 2-0-00-00-000) · "
+    "[ESTANTERIA]-[PISO]-00-00-000 para un piso (ej. 2-1-00-00-000) · "
+    "M1-E0 o M2-E0 para una mesa de trabajo · E3-LM00 para la exhibición Lego · "
+    f"o un código libre (hasta {ALNUM_MAX_LEN} caracteres, ej. SALA-A) para una zona, sala o subnivel."
+)
+
+
+def build_shelf_code(estanteria) -> str:
+    """Codigo de la estanteria: 2 -> 2-0-00-00-000."""
+    estanteria = _as_int(estanteria, "Estanteria", minimum=ESTANTERIA_MIN, maximum=ESTANTERIA_MAX)
+    return f"{estanteria}-0-00-00-000"
+
+
+def build_floor_code(estanteria, piso) -> str:
+    """Codigo de un piso de la estanteria: (2, 1) -> 2-1-00-00-000."""
+    estanteria = _as_int(estanteria, "Estanteria", minimum=ESTANTERIA_MIN, maximum=ESTANTERIA_MAX)
+    piso = _as_int(piso, "Piso", minimum=PISO_MIN, maximum=PISO_MAX)
+    return f"{estanteria}-{piso}-00-00-000"
+
+
+def build_table_code(mesa) -> str:
+    """Codigo de la mesa de trabajo (equipo 0 = la mesa misma): 1 -> M1-E0."""
+    mesa = _as_int(mesa, "Mesa", minimum=1, maximum=2)
+    return f"M{mesa}-E0"
+
+
+def parse_location_code(code: str) -> dict:
+    """Interpreta un codigo de ubicacion ESTRUCTURADO (estanteria, piso, mesa o
+    exhibicion Lego). Lanza ValueError para cualquier otro codigo, incluidos los
+    de contenedores, cajas, productos y los codigos libres."""
+    code = (code or "").strip()
+    m = _STANDARD_RE.match(code)
+    if m:
+        estanteria, piso, contenedor, caja, item = (int(g) for g in m.groups())
+        if (contenedor, caja, item) != (0, 0, 0):
+            raise ValueError(
+                f"'{code}' no es un código de ubicación: en una estantería o un piso los niveles "
+                "contenedor, caja e ítem son 00-00-000."
+            )
+        if not (ESTANTERIA_MIN <= estanteria <= ESTANTERIA_MAX):
+            raise ValueError(
+                f"Estanteria invalida en '{code}': debe estar entre {ESTANTERIA_MIN} y {ESTANTERIA_MAX}."
+            )
+        if piso == 0:
+            return {"format": FORMAT_LOCATION, "kind": LOCATION_SHELF, "estanteria": estanteria}
+        if not (PISO_MIN <= piso <= PISO_MAX):
+            raise ValueError(f"Piso invalido en '{code}': debe estar entre {PISO_MIN} y {PISO_MAX}.")
+        return {"format": FORMAT_LOCATION, "kind": LOCATION_FLOOR, "estanteria": estanteria, "piso": piso}
+
+    m = _MESA_RE.match(code)
+    if m and int(m.group(2)) == 0:
+        return {"format": FORMAT_LOCATION, "kind": LOCATION_TABLE, "mesa": int(m.group(1))}
+
+    m = _LEGO_RE.match(code)
+    if m and int(m.group(1)) == 0:
+        return {"format": FORMAT_LOCATION, "kind": LOCATION_ZONE, "estanteria": 3, "lego": True}
+
+    raise ValueError(f"'{code}' no es un código de ubicación. {LOCATION_FORMAT_HELP}")
+
+
+def location_code(code: str):
+    """Version silenciosa de parse_location_code: dict o None."""
+    try:
+        return parse_location_code(code)
+    except ValueError:
+        return None
+
+
+def is_location_code(code: str) -> bool:
+    """True si `code` es un codigo de ubicacion estructurado (no libre)."""
+    return location_code(code) is not None
+
+
+def validate_location_code(code: str) -> dict:
+    """Valida el codigo de una ubicacion NUEVA y devuelve su interpretacion.
+
+    Acepta los codigos de ubicacion estructurados y, para zonas, salas o
+    subniveles, un codigo libre (numerico o alfanumerico). Rechaza los codigos
+    de contenedores, cajas, productos, equipos de mesa y modelos Lego: una
+    ubicacion nunca puede tomar el codigo de algo que se guarda en ella."""
+    code = (code or "").strip()
+    place = location_code(code)
+    if place:
+        return place
+    try:
+        parsed = parse_code(code)
+    except ValueError:
+        if _STANDARD_RE.match(code):
+            # Forma estandar con niveles de ubicacion fuera de rango: el mensaje especifico ayuda mas.
+            parse_location_code(code)
+        forbidden = sorted({ch for ch in code if not (ch.isascii() and (ch.isalnum() or ch in _SEPARATORS))})
+        detail = ""
+        if forbidden:
+            shown = ", ".join(dict.fromkeys("espacio" if ch.isspace() else f"'{ch}'" for ch in forbidden))
+            detail = f" Contiene caracteres no permitidos ({shown})."
+        raise ValueError(f"'{code}' no es un código de ubicación válido.{detail} {LOCATION_FORMAT_HELP}") from None
+    fmt = parsed["format"]
+    if fmt in (FORMAT_NUMERIC, FORMAT_ALNUM):
+        return {"format": FORMAT_LOCATION, "kind": LOCATION_ZONE, "free": True}
+    if fmt == FORMAT_STANDARD:
+        level = {LEVEL_CONTAINER: "un contenedor", LEVEL_BOX: "una caja", LEVEL_ITEM: "un ítem"}[
+            standard_code_level(parsed)]
+        what = f"{level} ({describe_parsed(parsed)})"
+    elif fmt == FORMAT_MESA:
+        what = f"un equipo de la Mesa de trabajo {parsed['mesa']}"
+    else:
+        what = "un modelo de la exhibición Lego"
+    raise ValueError(
+        f"'{code}' es el código de {what} y no puede usarse para una ubicación. {LOCATION_FORMAT_HELP}"
+    )
+
+
+def describe_location(place: dict) -> str:
+    """Texto legible de una ubicacion ya interpretada."""
+    if not place:
+        return ""
+    kind = place.get("kind")
+    if kind == LOCATION_SHELF:
+        return f"Estantería {place['estanteria']}"
+    if kind == LOCATION_FLOOR:
+        return f"Estantería {place['estanteria']} · Piso {place['piso']}"
+    if kind == LOCATION_TABLE:
+        return f"Mesa de trabajo {place['mesa']}"
+    if place.get("lego"):
+        return "Estantería 3 · Exhibición Lego"
+    return "Zona, sala o subnivel (código libre)"
+
+
+def location_kind(code: str, is_location_item: bool = False) -> str:
+    """Tipo de ubicacion de un codigo: el de un codigo estructurado o, para el
+    codigo libre de un item de ubicacion, "zona". "" si no es una ubicacion."""
+    place = location_code(code)
+    if place:
+        return place["kind"]
+    return LOCATION_ZONE if is_location_item else ""
+
+
+def location_phrase(place: dict) -> str:
+    """La ubicacion con articulo, para frases: "la Estanteria 2", "el Piso 1 de
+    la Estanteria 2", "la Mesa de trabajo 1", "la exhibicion Lego"."""
+    kind = (place or {}).get("kind")
+    if kind == LOCATION_SHELF:
+        return f"la Estantería {place['estanteria']}"
+    if kind == LOCATION_FLOOR:
+        return f"el Piso {place['piso']} de la Estantería {place['estanteria']}"
+    if kind == LOCATION_TABLE:
+        return f"la Mesa de trabajo {place['mesa']}"
+    if (place or {}).get("lego"):
+        return "la exhibición Lego de la Estantería 3"
+    return "esa zona"
+
+
+def location_parent_problem(child_code: str, parent_code: str) -> str:
+    """Por que `child_code` no puede estar dentro de la ubicacion `parent_code`
+    ("" si puede). Un piso va en su estanteria; la exhibicion Lego, en la
+    Estanteria 3; una estanteria o una mesa solo dentro de una zona o sala (codigo
+    libre). Una zona con codigo libre puede estar dentro de cualquier ubicacion, y
+    cualquier ubicacion dentro de una zona con codigo libre."""
+    child, parent = location_code(child_code), location_code(parent_code)
+    if child is None or parent is None:
+        return ""
+    where = location_phrase(parent)
+    if child["kind"] == LOCATION_FLOOR:
+        if parent["kind"] == LOCATION_SHELF and parent["estanteria"] == child["estanteria"]:
+            return ""
+        return (f"El Piso {child['piso']} de la Estantería {child['estanteria']} va dentro de la "
+                f"Estantería {child['estanteria']}, no en {where}.")
+    if child.get("lego"):
+        if parent["kind"] in (LOCATION_SHELF, LOCATION_FLOOR) and parent["estanteria"] == 3:
+            return ""
+        return f"La exhibición Lego está en la Estantería 3, no en {where}."
+    own = location_phrase(child)
+    return f"{own[0].upper()}{own[1:]} solo puede estar dentro de una zona o sala con código libre, no en {where}."
 
 
 def scan(storage, code: str) -> dict:
@@ -359,7 +572,19 @@ def scan(storage, code: str) -> dict:
     try:
         item = storage.get_item(code)
         if not item:
-            return {"status": "not_found", "barcode": code, "parsed": parsed}
+            result = {"status": "not_found", "barcode": code, "parsed": parsed}
+            place = location_code(code)
+            if place:
+                # Codigo de una ubicacion aun no registrada: la vista igual muestra lo que guarda.
+                result["place"] = place
+            return result
+
+        if item.get("item_type") == "location" and item.get("status") != "retired":
+            # Estanteria, piso, mesa o zona: no tiene stock; la vista muestra lo que guarda.
+            return {
+                "status": "found_location", "item": item, "parsed": parsed,
+                "place": location_code(code) or {"format": FORMAT_LOCATION, "kind": LOCATION_ZONE, "free": True},
+            }
 
         if item.get("status") == "retired":
             # El codigo de un item dado de baja queda libre: `retired` permite a la

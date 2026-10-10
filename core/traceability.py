@@ -172,10 +172,10 @@ def short_id(request_id) -> str:
 # Ruta verificable (estado en la sesión; se persiste una sola vez)
 # ---------------------------------------------------------------------------
 
-def new_route(item: dict, parent: dict = None, request: dict = None, names: dict = None) -> dict:
+def new_route(item: dict, parent: dict = None, request: dict = None, names: dict = None, places=None) -> dict:
     """Estado inicial (serializable) de la ruta hacia `item`."""
     item, parent = item or {}, parent or {}
-    checkpoints = location.build_route_checkpoints(item, parent, names)
+    checkpoints = location.build_route_checkpoints(item, parent, names, places)
     for point in checkpoints:
         point.update(done=False, method="", code="", at="")
     return {

@@ -110,6 +110,33 @@
   `nfc_tag_removed`, `count_started`, `count_mark` y `count_closed`. El método `nfc` cuenta como
   etiqueta verificada en la ruta. El toque aparece en la cadena de custodia del producto.
 
+### Ubicaciones con código (estanterías, pisos, mesas)
+- **Nuevo tipo de ítem `location` (Ubicación)** para estanterías, pisos, mesas de trabajo,
+  la exhibición Lego y zonas, cada uno con su etiqueta y código de barras. Usan la misma
+  hoja `items` (sin cambios en el Excel) y no tienen stock: no se prestan, no se solicitan
+  y no cuentan en el catálogo, el inicio ni los reportes.
+- **Códigos que no chocan con los actuales:** `2-0-00-00-000` (estantería),
+  `2-1-00-00-000` (piso), `M1-E0` (mesa), `E3-LM00` (exhibición Lego) y códigos libres
+  para zonas. Son combinaciones que `parse_code` ya rechazaba, así que ningún contenedor,
+  caja o producto puede tomarlos, y las ubicaciones solo aceptan estos códigos. Los
+  códigos y la validación actuales no cambian.
+- **Inventario → 🗺️ Ubicaciones:** mapa en árbol con lo que guarda cada ubicación, alta
+  «Estantería 2 con 4 pisos» en una sola escritura (con vista previa, sin duplicar lo ya
+  registrado), mesas, exhibición Lego y zonas, edición/eliminación (borrar una estantería
+  borra sus pisos, no los productos) y etiquetas: individuales y un PDF con todas las de
+  una estantería y sus pisos.
+- **Etiqueta:** mismo formato clásico; el tipo dice «Ubicación · Piso», la ruta es
+  `RUTA: E2 › P1` y el aviso «PUNTO DE CONTROL · ESCANÉALO AL LLEGAR». La etiqueta de los
+  códigos actuales no cambia (el PDF es idéntico byte a byte).
+- **Escanear:** al leer una ubicación se ve qué guarda y cómo llegar; si no está
+  registrada, el profesor la registra ahí mismo.
+- **Ruta verificable:** cuando la estantería, el piso o la mesa del camino tienen
+  etiqueta registrada, ese punto se confirma escaneándola (y orienta si se escanea otro
+  piso u otra estantería). Sin etiqueta registrada, la ruta funciona como antes.
+- **Salud del inventario:** reglas propias para ubicaciones (código, piso dentro de su
+  estantería, nombre acorde al código, sin cantidad) sin falsos avisos de categoría,
+  ubicación o stock.
+
 ## v1.13.1 — La etiqueta vuelve a su formato de siempre
 
 ### Cambiado

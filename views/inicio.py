@@ -95,7 +95,8 @@ def render():
     )
 
     try:
-        items = storage.get_all_items()
+        # Las ubicaciones (estanterias, pisos, mesas) no son items del catalogo.
+        items = [i for i in storage.get_all_items() if i.get("item_type") != "location"]
         my_open_loans = storage.get_open_loans_for_user(user["id"])
         overdue = loans_core.get_overdue_loans(storage)
     except Exception as e:
