@@ -12,7 +12,7 @@
 
 import streamlit as st
 
-from core import location, service_requests, traceability
+from core import location, nfc, service_requests, traceability
 from core.ui import badge_html, material, section_title, stat_cards, timeline
 
 _CRUMB_TONES = {"done": "success", "inferred": "warning", "current": "info", "pending": "neutral"}
@@ -37,10 +37,35 @@ def _label_names(storage, checkpoints: list) -> dict:
     return names
 
 
+def _registered_places(storage, item: dict, parent: dict = None) -> dict:
+    """{código: nombre} de las estanterías, pisos, mesas o zonas del camino que
+    tienen etiqueta (ubicaciones registradas y activas)."""
+    found = {}
+    if storage is None:
+        return found
+    for code in location.place_codes(item, parent):
+        try:
+            place = storage.get_item(code)
+        except Exception:  # la guía nunca debe romper la página
+            place = None
+        if place and place.get("item_type") == "location" and place.get("status") != "retired":
+            found[code] = place.get("name") or ""
+    return found
+
+
+def _route_checkpoints(storage, item: dict, parent: dict = None) -> tuple:
+    """(puntos de control, ubicaciones con etiqueta): los puntos de estantería,
+    piso o mesa llevan etiqueta solo si esa ubicación está registrada."""
+    places = _registered_places(storage, item, parent)
+    checkpoints = location.build_route_checkpoints(item, parent, places, places)
+    names = {**places, **_label_names(storage, checkpoints)}
+    if any(names.get(p.get("label_code")) for p in checkpoints):
+        checkpoints = location.build_route_checkpoints(item, parent, names, places)
+    return checkpoints, places
+
+
 def _checkpoints_for(storage, item: dict, parent: dict = None) -> list:
-    checkpoints = location.build_route_checkpoints(item, parent)
-    names = _label_names(storage, checkpoints)
-    return location.build_route_checkpoints(item, parent, names) if names else checkpoints
+    return _route_checkpoints(storage, item, parent)[0]
 
 
 def _breadcrumb(crumbs: list) -> None:
@@ -91,8 +116,9 @@ def _load_route(storage, request: dict) -> dict:
             "id": request.get("item_id"), "name": request.get("item_name"),
         }
         parent = storage.get_item(item.get("parent_id")) if item.get("parent_id") else None
-        checkpoints = location.build_route_checkpoints(item, parent)
-        route = traceability.new_route(item, parent, request, _label_names(storage, checkpoints))
+        checkpoints, places = _route_checkpoints(storage, item, parent)
+        names = {**places, **_label_names(storage, checkpoints)}
+        route = traceability.new_route(item, parent, request, names, places)
         st.session_state[key] = route
     return route
 
@@ -200,6 +226,14 @@ def render_verifiable_route(storage, request: dict, user: dict, key_prefix: str 
         return
 
     route = _load_route(storage, request)
+    # Toques de chips NFC (en esta u otra pestaña) confirman sus puntos de control.
+    tapped = nfc.merge_user_taps(storage, user, request, route)
+    if tapped:
+        if tapped["completed"] and traceability.route_stats(route)["full"]:
+            _save(storage, request, user, route, tapped)
+            st.session_state[_feedback_key(request_id)] = tapped
+            st.rerun()
+        feedback = tapped
     stats = traceability.route_stats(route)
     index = traceability.current_index(route)
     _breadcrumb(traceability.breadcrumb(route))

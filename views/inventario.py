@@ -24,7 +24,7 @@ from core.ui import (
     badge_html, centered_columns, empty_state, esc, guard_role, icon_html, page_header, section_title, stat_cards,
     timeline,
 )
-from views import label_settings
+from views import label_settings, photo_panel, ubicaciones
 from views.code_input import render_code_input
 
 ALL = "Todos"
@@ -50,7 +50,13 @@ def _delete_warning(impact: dict) -> str:
         "Eliminar es **permanente**: se borran el item, su historial y sus préstamos ya devueltos, "
         "y su código queda libre para registrarse de nuevo."
     ]
-    if impact.get("contained_items"):
+    if impact.get("item_type") == "location":
+        if impact.get("contained_items"):
+            parts.append(
+                f"Al ser una ubicación, también se eliminarán las {impact['contained_items']} ubicación(es) que "
+                "contiene (los productos guardados en ella no se tocan)."
+            )
+    elif impact.get("contained_items"):
         parts.append(
             f"Al ser un {ITEM_TYPE_NAMES['master']}, también se eliminarán los "
             f"{impact['contained_items']} item(s) que contiene."
@@ -80,7 +86,7 @@ def _edit_item_form(storage, item: dict, user: dict):
         location = st.text_input("Ubicacion", value=item.get("location", ""))
 
         quantity, min_alert = item.get("quantity", 0), item.get("min_stock_alert", 0)
-        if item.get("item_type") != "master":
+        if item.get("item_type") not in ("master", "location"):
             quantity = st.number_input("Cantidad total", value=int(item.get("quantity", 0)), min_value=0, step=1)
             min_alert = st.number_input("Umbral de alerta", value=int(item.get("min_stock_alert", 0)), min_value=0, step=1)
 
@@ -124,6 +130,8 @@ def _edit_item_form(storage, item: dict, user: dict):
         if cancel:
             st.session_state.editing_item_id = None
             st.rerun()
+
+    photo_panel.render_gallery(storage, user, item)
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +268,7 @@ def _product_card(item: dict, available: int, spec, show_type: bool = False) -> 
         st.caption(_stock_line(item, available))
         if item.get("location"):
             st.caption(f":material/location_on: {item.get('location')}")
+        photo_panel.photo_popover(item)
         edit_col, label_col = st.columns(2)
         _edit_button(edit_col, item, ":material/edit: Editar")
         _label_popover(label_col, item, spec, ":material/label: Etiqueta")
@@ -286,6 +295,8 @@ def _item_row(item: dict, available: int, spec) -> None:
         info.markdown(_title_html(item) + f'<div style="margin-top:0.35rem;">{badges}</div>', unsafe_allow_html=True)
         stock.caption(" · ".join(filter(None, [item.get("category") or "Sin categoría", item.get("location")])))
         stock.caption(_stock_line(item, available))
+        with stock:
+            photo_panel.photo_popover(item)
         _edit_button(edit_col, item)
         _label_popover(label_col, item, spec)
 
@@ -323,6 +334,7 @@ def _container_card(storage, user, master: dict, children: list, availability: d
     generador de productos."""
     with st.container(border=True):
         _container_header(master, children, availability, suggested)
+        photo_panel.photo_popover(master)
         has_description = bool((master.get("description") or "").strip())
         is_open = st.session_state.get(GENERATOR_KEY) == master["id"]
         edit_col, label_col, gen_col = st.columns([1, 1, 3])
@@ -414,7 +426,7 @@ def _render_generator(storage, user: dict, master: dict) -> None:
             suggestions.COL_FEATURE: st.column_config.TextColumn(suggestions.COL_FEATURE, width="medium"),
             suggestions.COL_QUANTITY: st.column_config.NumberColumn(
                 suggestions.COL_QUANTITY, min_value=0, step=1, format="%d",
-                help="La descripción no trae cantidades: 0 = pendiente de conteo."),
+                help="Si la descripción no trae la cantidad: 0 = pendiente de conteo."),
             suggestions.COL_UNIT: st.column_config.TextColumn(suggestions.COL_UNIT, max_chars=20, width="small"),
             suggestions.COL_NOTES: st.column_config.TextColumn(suggestions.COL_NOTES, width="large"),
         },
@@ -483,7 +495,8 @@ def _render_catalog(storage, user: dict, spec) -> None:
         st.success(f":material/auto_awesome: {result}")
 
     try:
-        items = storage.get_all_items()
+        # Las ubicaciones (estanterias, pisos, mesas) tienen su propia pestaña: no son productos.
+        items = [i for i in storage.get_all_items() if i.get("item_type") != "location"]
     except Exception as e:
         st.error(f"Error al cargar el inventario: {e}")
         items = []
@@ -523,7 +536,9 @@ def _render_catalog(storage, user: dict, spec) -> None:
     search = f1.text_input("Buscar por nombre, categoria, codigo o ubicacion", key="inv_search")
     categories = sorted({i.get("category") for i in items if i.get("category")})
     category = f2.selectbox("Categoria", [ALL] + categories, key="inv_category")
-    item_type = f3.selectbox("Tipo", [ALL] + list(ITEM_TYPE_LABELS.values()), key="inv_type")
+    item_type = f3.selectbox(
+        "Tipo", [ALL] + [label for key, label in ITEM_TYPE_LABELS.items() if key != "location"], key="inv_type",
+    )
     f4, f5, f6 = st.columns([3, 2, 2])
     top_locations = sorted({
         i.get("location") for i in masters + loose if i.get("location")
@@ -724,8 +739,9 @@ def render():
             _edit_item_form(storage, item, user)
         return
 
-    tab_catalogo, tab_nuevo, tab_import, tab_etiquetas = st.tabs(
-        [":material/list_alt: Catalogo", ":material/add: Nuevo item", ":material/upload_file: Importar CSV masivo", ":material/print: Etiquetas"]
+    tab_catalogo, tab_nuevo, tab_import, tab_etiquetas, tab_ubicaciones = st.tabs(
+        [":material/list_alt: Catalogo", ":material/add: Nuevo item", ":material/upload_file: Importar CSV masivo",
+         ":material/print: Etiquetas", ":material/map: Ubicaciones"]
     )
     label_spec = labels.load_label_spec(storage)
 
@@ -740,3 +756,6 @@ def render():
 
     with tab_import:
         _render_import(storage, user)
+
+    with tab_ubicaciones:
+        ubicaciones.render(storage, user, label_spec)

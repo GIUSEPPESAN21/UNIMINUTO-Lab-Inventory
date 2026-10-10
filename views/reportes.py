@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """views/reportes.py - Analitica de uso del laboratorio, salud del inventario y
-exportacion de datos. Visible para profesor/maestro."""
+exportacion de datos. Visible para profesor/maestro; el perfil maestro ve
+ademas la pestaña de correos automaticos (views/correos.py)."""
 
 from datetime import datetime
 
@@ -14,6 +15,7 @@ from core.ui import (
     BRAND_BLUE, CHART_COLORS, badge_html, empty_state, esc, guard_role, icon_html, material, page_header,
     section_title, stat_cards,
 )
+from views.correos import render_email_settings
 
 _PENDING_KEY = "dq_pending"      # correccion esperando confirmacion: {"key", "fixes"}
 _FLASH_KEY = "dq_flash"          # resultado de la ultima correccion aplicada
@@ -52,16 +54,21 @@ def render():
         st.error(f"No se pudieron cargar los datos: {e}")
         items, users, all_loans = [], [], []
 
-    tab1, tab_health, tab2, tab3 = st.tabs(
-        [":material/trending_up: Uso del laboratorio", ":material/monitor_heart: Salud del inventario", ":material/warning: Vencidos", ":material/download: Exportar base de datos"]
-    )
+    titles = [":material/trending_up: Uso del laboratorio", ":material/monitor_heart: Salud del inventario", ":material/warning: Vencidos", ":material/download: Exportar base de datos"]
+    # Los correos automaticos solo los configura el perfil maestro.
+    is_master = permissions.has_role(st.session_state.user, permissions.ADMIN_ROLES)
+    if is_master:
+        titles.append(":material/mail: Correos")
+    tabs = st.tabs(titles)
+    tab1, tab_health, tab2, tab3 = tabs[:4]
 
     with tab1:
         stat_cards([
             {"label": "Préstamos históricos", "value": len(all_loans), "icon": "📋", "tone": "info"},
             {"label": "Duración promedio de un préstamo",
              "value": f"{reports.average_loan_duration_hours(all_loans):.1f} h".replace(".", ","), "icon": "⏱️"},
-            {"label": "Ítems activos", "value": len([i for i in items if i.get("status") == "active"]),
+            {"label": "Ítems activos",
+             "value": len([i for i in items if i.get("status") == "active" and i.get("item_type") != "location"]),
              "icon": "📦", "tone": "success"},
         ])
         import plotly.express as px
@@ -130,6 +137,10 @@ def render():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
             )
+
+    if is_master:
+        with tabs[4]:
+            render_email_settings(storage, st.session_state.user)
 
 
 # ---------------------------------------------------------------------------

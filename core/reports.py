@@ -47,7 +47,8 @@ def loans_per_day(loans: list, days: int = 30) -> pd.DataFrame:
 
 
 def items_by_category(items: list) -> pd.DataFrame:
-    relevant = [i for i in items if i.get("status") == "active"]
+    # Las ubicaciones (estanterias, pisos, mesas, zonas) no son items del inventario.
+    relevant = [i for i in items if i.get("status") == "active" and i.get("item_type") != "location"]
     if not relevant:
         return pd.DataFrame(columns=["Categoria", "Items"])
     df = pd.DataFrame(relevant)

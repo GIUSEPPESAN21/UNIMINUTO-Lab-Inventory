@@ -11,7 +11,9 @@ import streamlit as st
 from core import barcode, labels, loans as loans_core, notifications, traceability
 from core.labels import ITEM_TYPE_BY_CHOICE, ITEM_TYPE_CHOICES, ITEM_TYPE_HELP, ITEM_TYPE_NAMES
 from core.ui import page_header
+from views import photo_panel
 from views.code_input import render_code_input
+from views import ubicaciones
 from views.location_guide import render_location_guide
 
 
@@ -264,6 +266,10 @@ def render():
         if result.get("retired"):
             st.caption("Su código quedó libre: puedes registrarlo de nuevo como un item nuevo.")
             _render_new_item_wizard(result["barcode"])
+    elif result["status"] == "found_location" or (result["status"] == "not_found" and result.get("place")):
+        ubicaciones.render_scan_result(
+            storage, st.session_state.user, result, labels.load_label_spec(storage), render_label=_render_label_download,
+        )
     elif result["status"] == "not_found":
         _render_new_item_wizard(result["barcode"])
     elif result["status"] == "found_master":
@@ -274,6 +280,7 @@ def render():
         if item.get("description"):
             st.caption(item["description"])
         st.caption(f"Ubicacion: {item.get('location') or 'N/A'}")
+        photo_panel.render_scan_photo(item)
         _render_label_download(item)
         render_location_guide(item, key_prefix=f"scan_master_guide_{item['id']}")
         children = result["children"]
@@ -282,11 +289,13 @@ def render():
         else:
             for child in children:
                 with st.expander(f"{child['name']} — {child['available']} disponibles"):
+                    photo_panel.render_scan_photo(child, compact=True)
                     _render_item_actions(child, parent=item)
     elif result["status"] == "found_item":
         item = result["item"]
         st.success(f":material/check: Item encontrado: **{item['name']}** (`{item['id']}`)")
         if result.get("parsed"):
             st.caption(f":material/menu_book: {barcode.describe_parsed(result['parsed'])}")
+        photo_panel.render_scan_photo(item)
         _render_label_download(item)
         _render_item_actions(item, parent=result.get("parent"))

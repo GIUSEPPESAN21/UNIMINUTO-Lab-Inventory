@@ -4,7 +4,7 @@
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from core import notifications
+from core import email_events
 
 BOGOTA_TZ = ZoneInfo("America/Bogota")
 SCOPE_ACTIVITY = "activity"
@@ -114,18 +114,9 @@ def submit_reservation(storage, user: dict, scope_type: str, activity: str,
             f"Existe una reserva aprobada que se cruza con ese horario: {conflict.get('activity')}."
         )
     row = storage.create_reservation(data, user)
-    recipients = notifications.get_admin_notification_emails(storage)
-    subject = f"Nueva reserva de laboratorio: {row['activity']}"
-    body = (
-        f"Solicitud #{row['id']}\n"
-        f"Solicitante: {row['requester_name']} <{row['requester_email']}>\n"
-        f"Alcance: {row['scope_type']}\nActividad: {row['activity']}\n"
-        f"Inicio (UTC): {row['start_at']}\nFin (UTC): {row['end_at']}\n"
-        f"Asistentes: {row['attendees']}\nPropósito: {row['purpose']}\n\n"
-        "Ingresa a la aplicación para aprobar o rechazar la reserva."
-    )
-    notified, message = notifications.send_email_notification(subject, body, recipients)
-    storage.update_reservation_notification(row["id"], notified, "" if notified else message)
+    # Aviso a los perfiles maestro (en segundo plano si hay SMTP); el resultado
+    # queda en email_notified / email_error de la reserva.
+    notified, message = email_events.notify_reservation_created(storage, row, user)
     row["email_notified"], row["email_error"] = notified, "" if notified else message
     return row, notified, message
 
@@ -155,6 +146,7 @@ def review_reservation(storage, reservation_id: str, decision: str,
         # La capa de datos re-verifica el cruce dentro de su lock (otra aprobacion
         # simultanea pudo ocupar el horario despues de la comprobacion anterior).
         return False, str(exc)
+    email_events.notify_reservation_reviewed(storage, reservation, decision, reviewer, notes)
     return True, "Reserva aprobada." if decision == STATUS_APPROVED else "Reserva rechazada."
 
 

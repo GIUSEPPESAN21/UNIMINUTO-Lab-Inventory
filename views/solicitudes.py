@@ -110,7 +110,7 @@ def render():
         if request_type == service_requests.TYPE_PRODUCT:
             items = [
                 item for item in storage.get_all_items()
-                if item.get("status") != "retired" and item.get("item_type") != "master"
+                if item.get("status") != "retired" and item.get("item_type") not in ("master", "location")
             ]
             options = {f"{item['name']} ({item['id']})": item for item in items}
             if not options:

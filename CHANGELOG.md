@@ -1,5 +1,203 @@
 # Changelog
 
+## v1.14.0 — Correos, contraseñas, fotos, chips NFC, ubicaciones y generador más preciso
+
+### Restablecer contraseñas
+- **Usuarios → 🔑 Restablecer contraseña** en la tarjeta de cada estudiante y
+  profesor: el maestro genera una contraseña temporal (12 caracteres aleatorios en
+  tres grupos, sin `0/O` ni `1/l/I`) o escribe una (con confirmación y la misma
+  regla del registro: mínimo 8 caracteres). Paso de confirmación antes de aplicar;
+  la temporal se muestra **una sola vez** con botón de copiar y el consejo de
+  entregarla en persona. Con SMTP configurado, casilla opcional (desmarcada) para
+  enviarla al correo del usuario.
+- **Cambio obligatorio al ingresar:** la cuenta queda con `must_change_password` y,
+  al entrar con la temporal, una pantalla pide elegir una contraseña propia (no
+  puede repetir la temporal) antes de mostrar la app; la tarjeta muestra la
+  pastilla «Clave temporal» hasta entonces. El resto de cuentas entra como siempre.
+- **Sesiones cerradas:** la nueva columna `password_changed_at` cierra en la
+  siguiente recarga las sesiones abiertas antes del cambio
+  (`auth.validate_session`); el restablecimiento también levanta el bloqueo por
+  intentos fallidos.
+- **Política:** solo un maestro activo (rol revalidado contra la base), solo a
+  estudiantes y profesores; ni la propia (se cambia en Mi perfil) ni la de otro
+  maestro.
+- **Auditoría** en `trace_events` (evento `password_reset`: quién, a quién, cuándo,
+  modo, si se envió correo) sin la contraseña ni su hash.
+- La hoja `users` suma `must_change_password` y `password_changed_at`; las bases
+  anteriores se completan solas al cargar. Nuevas funciones en `core/auth.py`:
+  `admin_reset_password`, `complete_forced_password_change`,
+  `generate_temporary_password`, `validate_new_password`, `must_change_password`.
+- Pruebas: `tests/test_password_reset.py` (unitarias) y
+  `tests/test_password_reset_ui.py` (AppTest de la página Usuarios y del ingreso).
+
+### Correos automáticos
+- **Todo lo que se pide avisa por correo a los perfiles maestro:** solicitudes de
+  productos y servicios, reservas, salidas (checkout) y devoluciones (checkin). El
+  asunto dice qué y quién, p. ej. `[Laboratorio] Nueva solicitud: Microscopio —
+  Ana Prueba (Estudiante)`, y el cuerpo indica **quién** (nombre, rol, correo, ID),
+  **qué** (producto y código, cantidad, servicio, fechas) y **cuándo** (hora de
+  Bogotá), con un enlace a la app si existe el secret `APP_URL`. Se envía texto
+  plano más una versión HTML sencilla (multipart).
+- **Respuestas al solicitante:** cuando una solicitud o reserva se aprueba o se
+  rechaza, quien la pidió recibe un correo con la decisión y la observación.
+- **Destinatarios:** perfiles maestro activos + `ADMIN_NOTIFICATION_EMAILS` (+ los
+  profesores activos si el maestro lo activa), sin duplicados y sin correos
+  inválidos o anónimos (`noreply`, `anonimo`, dominios de ejemplo).
+- **Nunca bloquea ni rompe nada:** el envío ocurre en un hilo en segundo plano; si
+  el servidor falla, la operación queda guardada y el error se registra. Sin SMTP
+  configurado todo funciona como antes (no se envía ni se intenta nada).
+- **Reportes → Correos (solo maestro):** estado del servidor SMTP (sin mostrar
+  valores), guía con ejemplo de Gmail y contraseña de aplicación, un interruptor
+  por tipo de aviso (todos activos por defecto, guardados en la hoja `settings`),
+  lista de destinatarios, resumen de vencidos bajo demanda, **Enviar correo de
+  prueba** y los últimos envíos con su estado.
+- **Registro de envíos:** nueva hoja `notification_log` (se crea sola en bases
+  anteriores; conserva los últimos 500). Los campos `email_notified` / `email_error`
+  de solicitudes y reservas siguen funcionando.
+- Mensajes de error SMTP más claros (credenciales, conexión, remitente) sin revelar
+  ningún secreto.
+
+### Fotos de los objetos
+- **Foto de cada objeto con la cámara del celular**, para reconocerlo y para la
+  trazabilidad: acción **📷 Foto** en las tarjetas del Inventario (última foto +
+  tomar o subir otra), **galería** en el editor (más reciente primero, con fecha,
+  autor, tipo y nota; el maestro puede eliminar) y, en **Escanear**, la última foto
+  del objeto para todos los roles y «Foto de estado (opcional)» para profesor y
+  maestro al dar salida o reingresar. Tipos: registro, estado e inventario.
+- **Privacidad y peso:** se aplica la orientación EXIF, se eliminan todos los
+  metadatos (GPS incluido), se reduce a 1024 px y se guarda como JPEG de calidad ~75
+  (objetivo < 150 KB), con miniatura de 256 px.
+- **Almacenamiento:** en el mismo repositorio privado de la base
+  (`fotos/<código>/<fecha>.jpg`, API de contenidos de GitHub con los mismos secretos;
+  `GITHUB_PHOTOS_DIR` opcional). Nueva hoja `item_photos` (migración automática de
+  las bases existentes). Sin GitHub, las fotos quedan en el disco con una advertencia.
+  Descargas con caché (`st.cache_data` + disco) y en paralelo; los errores de red no
+  tumban la página.
+- **Trazabilidad:** eventos `photo_added` / `photo_deleted` en la cadena de custodia.
+- Nuevos `core/photos.py` y `views/photo_panel.py`; cambios aditivos en
+  `core/storage.py`, `core/traceability.py`, `views/inventario.py` y
+  `views/escanear.py`. Eliminar un ítem quita sus fotos del índice. Ver README
+  («Fotos de los objetos») por el tamaño del repositorio.
+
+### Chips NFC
+- **Cada chip guarda una URL**, no un código suelto: `<APP_URL>/escanear?nfc=<código>&s=<firma>`.
+  Al acercar el teléfono (Android, o iPhone XS en adelante) se abre la app sin instalar nada
+  ni usar Web NFC. Funciona con etiquetas NTAG213, NTAG215 (recomendada) y NTAG216.
+- **Prueba de presencia.** Cada toque guarda un evento `nfc_tap` (persona, código, hora) en la
+  hoja `trace_events`; el mismo chip tocado dos veces en menos de un minuto cuenta una vez. Si la
+  persona no ha iniciado sesión, el toque espera y se registra al entrar. La URL se limpia
+  (`?nfc=` desaparece) para que recargar no lo cuente doble.
+- **Ruta verificable.** Si el estudiante tiene una solicitud aprobada cuya ruta pasa por ese
+  chip, el toque confirma el punto de control con el método «Chip NFC tocado» (también si lo toca
+  desde otra pestaña); al completar la ruta se guarda el mismo comprobante de siempre. Un chip
+  que no es de su ruta muestra hacia dónde ir.
+- **Firma opcional (`NFC_SECRET`).** Con ese secreto cada URL lleva una firma corta (HMAC,
+  10 caracteres) y la app rechaza las URL sin firma, alteradas o inventadas. `APP_URL` fija la
+  dirección pública que se graba (si falta, se usa la dirección con la que se abrió la app).
+- **Nueva página Chips NFC** (Gestión, profesor y maestro):
+  - *Inventario con el teléfono*: abre un conteo (todo el inventario, una estantería o un
+    contenedor); cada chip tocado, o código escrito/escaneado, marca el producto como verificado,
+    con la cantidad contada opcional. Muestra el avance (se actualiza solo), lo que falta y las
+    diferencias contra lo que debería haber en el estante (disponible = total − en préstamo). Al
+    cerrar se guarda un resumen y los conteos anteriores quedan consultables. **Las cantidades no
+    cambian al contar**: solo el maestro puede aplicar ajustes, eligiéndolos y confirmando
+    explícitamente; cada ajuste queda en el historial del producto.
+  - *Grabar etiquetas*: la URL de cada producto o ubicación para copiar (con su tamaño en bytes y
+    los chips en que cabe), guía paso a paso con la app gratuita NFC Tools, cómo probar el chip,
+    registro de chips grabados/probados/sin chip y descarga de todas las URL en CSV.
+  - *Toques recientes*: quién tocó qué chip y cuándo.
+- Nuevos tipos de evento en `trace_events` (sin hojas nuevas): `nfc_tap`, `nfc_tag_written`,
+  `nfc_tag_removed`, `count_started`, `count_mark` y `count_closed`. El método `nfc` cuenta como
+  etiqueta verificada en la ruta. El toque aparece en la cadena de custodia del producto.
+
+### Ubicaciones con código (estanterías, pisos, mesas)
+- **Nuevo tipo de ítem `location` (Ubicación)** para estanterías, pisos, mesas de trabajo,
+  la exhibición Lego y zonas, cada uno con su etiqueta y código de barras. Usan la misma
+  hoja `items` (sin cambios en el Excel) y no tienen stock: no se prestan, no se solicitan
+  y no cuentan en el catálogo, el inicio ni los reportes.
+- **Códigos que no chocan con los actuales:** `2-0-00-00-000` (estantería),
+  `2-1-00-00-000` (piso), `M1-E0` (mesa), `E3-LM00` (exhibición Lego) y códigos libres
+  para zonas. Son combinaciones que `parse_code` ya rechazaba, así que ningún contenedor,
+  caja o producto puede tomarlos, y las ubicaciones solo aceptan estos códigos. Los
+  códigos y la validación actuales no cambian.
+- **Inventario → 🗺️ Ubicaciones:** mapa en árbol con lo que guarda cada ubicación, alta
+  «Estantería 2 con 4 pisos» en una sola escritura (con vista previa, sin duplicar lo ya
+  registrado), mesas, exhibición Lego y zonas, edición/eliminación (borrar una estantería
+  borra sus pisos, no los productos) y etiquetas: individuales y un PDF con todas las de
+  una estantería y sus pisos.
+- **Etiqueta:** mismo formato clásico; el tipo dice «Ubicación · Piso», la ruta es
+  `RUTA: E2 › P1` y el aviso «PUNTO DE CONTROL · ESCANÉALO AL LLEGAR». La etiqueta de los
+  códigos actuales no cambia (el PDF es idéntico byte a byte).
+- **Escanear:** al leer una ubicación se ve qué guarda y cómo llegar; si no está
+  registrada, el profesor la registra ahí mismo.
+- **Ruta verificable:** cuando la estantería, el piso o la mesa del camino tienen
+  etiqueta registrada, ese punto se confirma escaneándola (y orienta si se escanea otro
+  piso u otra estantería). Sin etiqueta registrada, la ruta funciona como antes.
+- **Salud del inventario:** reglas propias para ubicaciones (código, piso dentro de su
+  estantería, nombre acorde al código, sin cantidad) sin falsos avisos de categoría,
+  ubicación o stock.
+
+### Generador de productos más preciso
+El analizador de «✨ Generar productos desde la descripción» (`core/inventory_suggestions.py`)
+sigue siendo determinista (reglas, sin IA ni red) y no cambia la vista ni las columnas de la
+tabla de revisión; solo lee mejor el texto.
+
+- **Lectura más robusta**: `×`, `x`, `X`, `*`, «por» y «by» entre números son la misma medida;
+  listas separadas por `-`, `,`, `;`, `/`, `+`, «y», «o» o saltos de línea; viñetas y listas
+  numeradas; «etc.»; mayúsculas, tildes, plurales (piezas/pieza, biseles/bisel, lisas/lisa) y
+  errores de digitación frecuentes («Contendor», «piesas», «bicel»). Las medidas pegadas
+  (`4x2-2x2-2x1`, `2x2,2x4`) y las separadas por espacios (`4 x 2`) se leen igual.
+- **Nombres canónicos**: «Pieza Lego con pines 4x2», «Pieza Lego lisa 2x2», «Pieza Lego con
+  bisel 3x2», «Base Lego de 1 pin», «Caja con puertas y ventanas»; el sustantivo va en singular,
+  los adjetivos y colores concuerdan en género («Bloque rojo», «Placa roja») y las marcas y
+  siglas se respetan (Lego, Technic, EV3, USB, Arduino UNO). La columna **Característica**
+  ahora incluye la medida («Con pines 4x2», «Lisa 2x2», «220 Ω»).
+- **Cantidades**: «20 piezas de 2x2», «x10», «(15)», «50 uds», «30 pzs», «Cant: 7», o una
+  cantidad suelta tras un guion («Pines 4x2 - 20 uds»). Si el texto trae dos cantidades
+  distintas, una aproximada o una absurda, la nota lo dice.
+- **Electrónica y laboratorio**: los valores con unidad se conservan y se escriben con su
+  símbolo («220 ohm» → «220 Ω», «10uF» → «10 µF», «4k7» → «4.7 kΩ», «5V», «20 cm», «1/4 W»),
+  se reparte la unidad compartida («220, 330 y 470 ohm») y varios valores de una misma pieza
+  forman un solo producto («Condensador de 100 µF 25 V»). «Kit Arduino UNO con 3 sensores
+  ultrasónicos» sigue siendo un producto.
+- **Cajas y contenido**: «Caja con separadores de fichas» sigue siendo una sola caja; con
+  «que contiene…», «donde hay…» o «:» lo que sigue se propone como producto aparte y la nota
+  dice en qué caja está. «Kit … que incluye …» funciona igual.
+- **Medidas imposibles**: una dimensión 0 (`1x0`) o mayor que 48 en una pieza no se corrige en
+  silencio: queda como «Revisar medida», sin marcar y con la sugerencia (`1x1`). Al crear, si el
+  usuario la marca igual, la vista avisa.
+- **Confianza** (alta, media o baja) en cada propuesta: lo de confianza baja (medida imposible,
+  pieza sin tipo, cantidad absurda, texto ilegible) llega sin marcar en «Crear»; lo de confianza
+  media trae su motivo en «Puntos para confirmar». Sin cambios en las columnas del editor.
+- **Sin repetidos**: el mismo producto escrito de otra forma («4x2» = «2x4», «ohm» = «Ω»,
+  «capacitor» = «condensador») se propone una sola vez (sumando cantidades) y tampoco se
+  propone lo que el contenedor ya tiene. Se conserva el orden del texto.
+- **Fragmentos ilegibles**: se informan (hasta 12) en lugar de ignorarse; el analizador nunca
+  lanza excepciones, limita el texto largo y responde en milisegundos.
+- **Descripciones en prosa y «Título: explicación»** (formatos reales de los Contenedores 4 y 5):
+  - Con «Título: explicación» se propone **un producto por título** (sin el paréntesis de cantidad
+    como «(múltiples unidades)», con paréntesis balanceados y sin cortar a la mitad); la
+    **Característica** sale de la explicación («Paquete de plataformas base de cimentación») y la
+    explicación nunca es el nombre. La frase de introducción no es un producto. Una cantidad
+    numérica en el título («(200 unidades)») sí llena Cantidad.
+  - En prosa se descartan las oraciones que describen el contenedor o empiezan como prosa («Este
+    estuche…», «De esta manera…», «Está compuesto…»). De una lista de colores («en tonos como azul
+    claro, magenta y lila») más una medida global («todas las piezas son 2x1») salen **un producto
+    por color** («Pieza Lego 2x1 azul claro»), con los colores de dos palabras unidos; «un par de
+    piezas aisladas en verde lima» queda con cantidad 2, confianza media y su nota.
+  - **Un nombre nunca es una oración**: más de 8 palabras y 60 caracteres se acorta (el texto
+    completo va en la nota) y la propuesta queda en confianza baja, sin marcar; igual toda
+    propuesta que venga de una oración ambigua.
+  - **Reconoce lo que ya existe**: un producto ya creado se detecta por el fragmento de la
+    descripción en que se creó y por nombre casi igual (sin puntuación, tildes, paréntesis ni
+    plurales, siempre con las mismas cifras), así que el Contenedor 4 con sus 10 productos ya
+    creados ya no propone nada.
+- **Pruebas**: tabla de 48 descripciones reales y de electrónica con su resultado esperado,
+  los tres contenedores reales con `×` y sin él, los Contenedores 4 y 5 (con sus hijos existentes) y
+  14 variantes de prosa y «Título: explicación», y pruebas de cantidades, unidades, medidas,
+  cajas, confianza, ruido aleatorio y rendimiento. La vista se prueba de punta a punta con un
+  contenedor de electrónica.
+
 ## v1.13.1 — La etiqueta vuelve a su formato de siempre
 
 ### Cambiado

@@ -11,6 +11,8 @@ import logging
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from core import email_events
+
 logger = logging.getLogger(__name__)
 
 BOGOTA_TZ = ZoneInfo("America/Bogota")
@@ -48,6 +50,9 @@ def checkout(storage, item_id: str, quantity: int, user: dict, expected_return_a
         return False, f"El item '{item_id}' no existe.", None
     if item.get("item_type") == "master":
         return False, "No se puede dar salida a un Contenedor Principal, solo a los items que tiene dentro.", None
+    if item.get("item_type") == "location":
+        return False, ("No se puede dar salida a una ubicación (estantería, piso, mesa o zona), solo a los "
+                       "productos que guarda."), None
 
     available = storage.get_available_quantity(item_id)
     if quantity > available:
@@ -59,11 +64,14 @@ def checkout(storage, item_id: str, quantity: int, user: dict, expected_return_a
         # La capa de datos re-verifica el stock dentro de su lock: otra persona
         # pudo sacar unidades entre la comprobacion anterior y este punto.
         return False, str(exc), None
+    email_events.notify_loan_checkout(storage, loan, item, user)
     return True, f"Salida registrada: '{item.get('name')}' x{quantity} para {user.get('full_name')}.", loan
 
 
 def checkin(storage, loan_id: str, actor_user: dict):
     ok, msg = storage.return_loan(loan_id, actor_email=actor_user.get("institutional_email", ""))
+    if ok:
+        email_events.notify_loan_checkin(storage, loan_id, actor_user)
     return ok, msg
 
 

@@ -15,18 +15,22 @@ ve el usuario, para poder evolucionarlos sin tocar la logica de negocio.
   caracteristica (ej. "Resistencias 220 ohm", "Tornillos M4 x 20mm").
 - Item Individual ("standalone"): un producto con codigo propio que no
   pertenece a ningun Contenedor Principal.
+- Ubicacion ("location"): una estanteria, un piso, una mesa de trabajo o una
+  zona con etiqueta propia; no tiene stock (ver core/places.py).
 """
 
 ITEM_TYPE_ICONS = {
     "master": "🗄️",
     "child": "🧩",
     "standalone": "🔹",
+    "location": "📍",
 }
 
 ITEM_TYPE_NAMES = {
     "master": "Contenedor Principal",
     "child": "Contenedor de Característica",
     "standalone": "Ítem Individual",
+    "location": "Ubicación",
 }
 
 ITEM_TYPE_LABELS = {k: f"{ITEM_TYPE_ICONS[k]} {v}" for k, v in ITEM_TYPE_NAMES.items()}
@@ -49,6 +53,8 @@ ITEM_TYPE_HELP = {
     "master": "La caja, kit o gabinete fisico que va a agrupar productos (ej. 'Caja de Electronica').",
     "child": "Una subdivision DENTRO de un Contenedor Principal ya creado, para una caracteristica "
              "especifica (ej. 'Resistencias 220 ohm', 'Tornillos M4').",
+    "location": "Una estanteria, un piso, una mesa de trabajo o una zona con su propia etiqueta "
+                "(se crean en Inventario > Ubicaciones).",
 }
 
 
@@ -137,6 +143,9 @@ LABEL_INSTITUTION_TEXT = "LABORATORIO DE INGENIERÍA"
 # Para omitir todo el encabezado institucional, pasa notice=None (o "").
 LABEL_NOTICE_TEXT = "ACTIVO INSTITUCIONAL · NO RETIRAR SIN PRÉSTAMO"
 LABEL_NOTICE_SHORT_TEXT = "NO RETIRAR SIN PRÉSTAMO"
+# Aviso de las etiquetas de ubicacion (estanteria, piso, mesa, zona): no se
+# prestan, son puntos de control de la ruta verificable.
+LOCATION_NOTICE_TEXT = "PUNTO DE CONTROL · ESCANÉALO AL LLEGAR"
 
 # Barras: modulo entre 0,25 mm (minimo recomendado para lectores USB) y
 # 0,5 mm; zona de silencio de 10 modulos si cabe (ISO/IEC 15417), nunca menos
@@ -481,12 +490,46 @@ def _barcode_geometry(n_modules: int, width_px: int, dpi: int) -> tuple:
 # Composicion
 # ---------------------------------------------------------------------------
 
+def _place_guide(code: str) -> str:
+    """Ruta compacta de un codigo de ubicacion (estanteria, piso, mesa o zona Lego)."""
+    place = barcode_rules.location_code(code)
+    if not place:
+        return ""
+    kind = place["kind"]
+    if kind == barcode_rules.LOCATION_SHELF:
+        return f"RUTA: E{place['estanteria']}"
+    if kind == barcode_rules.LOCATION_FLOOR:
+        return f"RUTA: E{place['estanteria']} › P{place['piso']}"
+    if kind == barcode_rules.LOCATION_TABLE:
+        return f"RUTA: MESA {place['mesa']}"
+    return "RUTA: E3 › LEGO"
+
+
+def _is_printable(code: str) -> bool:
+    """Codigo que puede ir en una etiqueta: de inventario o de ubicacion."""
+    return is_valid_code(code) or barcode_rules.is_location_code(code)
+
+
+def _validate_printable(code: str) -> None:
+    """Como validate_code_format, pero tambien acepta los codigos de ubicacion."""
+    if not barcode_rules.is_location_code(code):
+        validate_code_format(code)
+
+
+def _type_text(item_type: str, code: str) -> str:
+    """Tipo de activo del encabezado; para una ubicacion, "Ubicación · Piso"."""
+    if item_type == "location":
+        kind = barcode_rules.LOCATION_KIND_NAMES.get(barcode_rules.location_kind(code, True), "")
+        return f"{type_name(item_type)} · {kind}" if kind else type_name(item_type)
+    return type_name(item_type) or "Activo de laboratorio"
+
+
 def _location_guide(code: str) -> str:
     """Ruta fisica compacta derivada del codigo, sin cambiar el Code 128."""
     try:
         parsed = barcode_rules.parse_code(code)
     except ValueError:
-        return ""
+        return _place_guide(code)
     fmt = parsed.get("format")
     if fmt == barcode_rules.FORMAT_STANDARD:
         parts = [
@@ -757,7 +800,7 @@ def _classic_fields(code: str, spec: LabelSpec, description, notice, category, l
         if spec.shows("brand"):
             header.append(("lab", LABEL_INSTITUTION_TEXT))
         if spec.shows("type"):
-            header.append(("type", type_name(item_type) or "Activo de laboratorio"))
+            header.append(("type", _type_text(item_type, code)))
         if spec.shows("notice"):
             header.append(("notice", notice))
     meta = []
@@ -939,7 +982,7 @@ def layout_label(code: str, spec: LabelSpec = None, *, canvas_size: tuple = None
     (ver arriba) y reporta lo acortado u omitido. Lanza ValueError si el
     codigo no es valido o no cabe en la etiqueta."""
     code = (code or "").strip()
-    validate_code_format(code)
+    _validate_printable(code)
     spec = spec or LabelSpec()
     canvas = tuple(canvas_size) if canvas_size else spec.canvas_size
     fields = _classic_fields(code, spec, description, notice, category, location, item_type)
@@ -1105,6 +1148,29 @@ def _label_image_to_pdf(image: Image.Image, spec: LabelSpec = None, title: str =
     raster se copia 1:1 (verificado con los motores de Chrome/Edge y de poppler
     a 203 y 300 dpi, en tests/test_label_print.py)."""
     spec = spec or LabelSpec()
+    page_width, page_height, image_object, content_object = _label_page_parts(image, spec)
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R "
+        b"/ViewerPreferences << /PrintScaling /None /PickTrayByPDFSize true >> >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width:.4f} {page_height:.4f}] "
+            f"/Resources << /XObject << /Label 4 0 R >> >> /Contents 5 0 R >>"
+        ).encode("ascii"),
+        image_object,
+        content_object,
+        (
+            f"<< /Title {_pdf_text(f'{title} · {spec.describe()}')} "
+            f"/Creator {_pdf_text('Inventario de Laboratorio UNIMINUTO')} >>"
+        ).encode("ascii"),
+    ]
+    return _assemble_pdf(objects, info_number=6)
+
+
+def _label_page_parts(image: Image.Image, spec: LabelSpec) -> tuple:
+    """(ancho, alto, objeto imagen, objeto contenido) de la pagina de una
+    etiqueta: el raster 1 bit anclado arriba a la izquierda con las holguras
+    explicadas en `_label_image_to_pdf`."""
     image = image.convert("1", dither=Image.Dither.NONE)
     dot = 72 / spec.dpi  # un punto de la impresora, en puntos PDF
     page_width = round(spec.width_mm * 72 / 25.4, 4)
@@ -1128,22 +1194,7 @@ def _label_image_to_pdf(image: Image.Image, spec: LabelSpec = None, title: str =
         f"<< /Length {len(commands)} >>\nstream\n".encode("ascii")
         + commands + b"endstream"
     )
-    objects = [
-        b"<< /Type /Catalog /Pages 2 0 R "
-        b"/ViewerPreferences << /PrintScaling /None /PickTrayByPDFSize true >> >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        (
-            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width:.4f} {page_height:.4f}] "
-            f"/Resources << /XObject << /Label 4 0 R >> >> /Contents 5 0 R >>"
-        ).encode("ascii"),
-        image_object,
-        content_object,
-        (
-            f"<< /Title {_pdf_text(f'{title} · {spec.describe()}')} "
-            f"/Creator {_pdf_text('Inventario de Laboratorio UNIMINUTO')} >>"
-        ).encode("ascii"),
-    ]
-    return _assemble_pdf(objects, info_number=6)
+    return page_width, page_height, image_object, content_object
 
 
 def generate_label_pdf_bytes(code: str, canvas_size: tuple = None, *,
@@ -1292,19 +1343,22 @@ def generate_calibration_pdf_bytes(spec: LabelSpec = None) -> bytes:
 
 def _item_label_fields(item: dict) -> dict:
     item = item or {}
-    return {
+    fields = {
         "code": str(item.get("id") or "").strip(),
         "description": _clean_text(item.get("name")),
         "category": _clean_text(item.get("category")),
         "location": _clean_text(item.get("location")),
         "item_type": _clean_text(item.get("item_type")),
     }
+    if fields["item_type"] == "location":
+        fields["notice"] = LOCATION_NOTICE_TEXT  # una ubicacion no se presta
+    return fields
 
 
 def generate_item_label_png_bytes(item: dict, spec: LabelSpec = None):
     """Etiqueta PNG de inventario; None para ids no imprimibles."""
     fields = _item_label_fields(item)
-    if not is_valid_code(fields["code"]):
+    if not _is_printable(fields["code"]):
         return None
     try:
         return generate_label_png_bytes(**fields, spec=spec)
@@ -1315,7 +1369,7 @@ def generate_item_label_png_bytes(item: dict, spec: LabelSpec = None):
 def generate_item_label_pdf_bytes(item: dict, spec: LabelSpec = None):
     """Etiqueta PDF de inventario a tamaño real; None para ids no imprimibles."""
     fields = _item_label_fields(item)
-    if not is_valid_code(fields["code"]):
+    if not _is_printable(fields["code"]):
         return None
     try:
         return generate_label_pdf_bytes(**fields, spec=spec)
@@ -1327,17 +1381,18 @@ def layout_item_label(item: dict, spec: LabelSpec = None) -> LabelLayout:
     """Composicion de la etiqueta de un item (vista previa y diagnostico en la
     interfaz). Lanza ValueError si el codigo no es imprimible en ese tamaño."""
     fields = _item_label_fields(item)
+    extra = {"notice": fields["notice"]} if "notice" in fields else {}
     return layout_label(
         fields["code"], spec or LabelSpec(), description=fields["description"],
-        category=fields["category"], location=fields["location"], item_type=fields["item_type"],
+        category=fields["category"], location=fields["location"], item_type=fields["item_type"], **extra,
     )
 
 
 @functools.lru_cache(maxsize=256)  # ~5-80 KB por etiqueta: acota la memoria
 def _cached_item_label_files(spec: LabelSpec, code: str, description: str, category: str,
-                             location: str, item_type: str) -> tuple:
+                             location: str, item_type: str, notice: str = LABEL_NOTICE_TEXT) -> tuple:
     fields = dict(code=code, description=description, category=category,
-                  location=location, item_type=item_type)
+                  location=location, item_type=item_type, notice=notice)
     image = generate_label_image(**fields, spec=spec)
     png = io.BytesIO()
     image.save(png, format="PNG", dpi=(spec.dpi, spec.dpi))
@@ -1349,9 +1404,59 @@ def item_label_files(item: dict, spec: LabelSpec = None) -> tuple:
     el catalogo no regenera todas las etiquetas en cada recarga. (None, None)
     si el codigo no es imprimible o no cabe en la etiqueta configurada."""
     fields = _item_label_fields(item)
-    if not is_valid_code(fields["code"]):
+    if not _is_printable(fields["code"]):
         return None, None
     try:
         return _cached_item_label_files(spec or LabelSpec(), **fields)
     except ValueError:
         return None, None
+
+
+# ---------------------------------------------------------------------------
+# Varias etiquetas en un solo PDF (p. ej. una estanteria y sus pisos)
+# ---------------------------------------------------------------------------
+
+def _labels_to_pdf(images: list, spec: LabelSpec, title: str) -> bytes:
+    """PDF con una pagina por etiqueta, cada una igual a la pagina unica de
+    `_label_image_to_pdf` (mismo tamaño, raster anclado arriba a la izquierda y
+    las mismas holguras): se imprime punto por punto, en orden."""
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R "
+        b"/ViewerPreferences << /PrintScaling /None /PickTrayByPDFSize true >> >>",
+        None,  # arbol de paginas: se completa al final
+    ]
+    kids = []
+    for image in images:
+        page_width, page_height, image_object, content_object = _label_page_parts(image, spec)
+        page = len(objects) + 1
+        objects.append((
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width:.4f} {page_height:.4f}] "
+            f"/Resources << /XObject << /Label {page + 1} 0 R >> >> /Contents {page + 2} 0 R >>"
+        ).encode("ascii"))
+        objects.extend([image_object, content_object])
+        kids.append(f"{page} 0 R")
+    objects[1] = f"<< /Type /Pages /Kids [{' '.join(kids)}] /Count {len(kids)} >>".encode("ascii")
+    objects.append((
+        f"<< /Title {_pdf_text(f'{title} · {spec.describe()}')} "
+        f"/Creator {_pdf_text('Inventario de Laboratorio UNIMINUTO')} >>"
+    ).encode("ascii"))
+    return _assemble_pdf(objects, info_number=len(objects))
+
+
+def generate_labels_pdf_bytes(items: list, spec: LabelSpec = None, title: str = "Etiquetas"):
+    """Un solo PDF con una pagina (del tamaño real de la etiqueta) por cada item
+    imprimible de `items`, en el mismo orden: imprime de una vez las etiquetas de
+    una estanteria y sus pisos. None si ninguno es imprimible."""
+    spec = spec or LabelSpec()
+    images = []
+    for item in items or []:
+        fields = _item_label_fields(item)
+        if not _is_printable(fields["code"]):
+            continue
+        try:
+            images.append(generate_label_image(**fields, spec=spec))
+        except ValueError:
+            continue
+    if not images:
+        return None
+    return _labels_to_pdf(images, spec, title)

@@ -36,6 +36,10 @@ SHEET_COLUMNS = {
     "users": [
         "id", "full_name", "student_id", "institutional_email", "password_hash", "role",
         "program_or_department", "status", "created_at",
+        # Restablecimiento de clave por el perfil maestro (core/auth.py):
+        # `must_change_password` ("1" o vacio) y `password_changed_at` (ISO).
+        # Las bases antiguas sin estas columnas se completan con "" al cargar.
+        "must_change_password", "password_changed_at",
     ],
     "professors_whitelist": [
         "institutional_email",
@@ -71,7 +75,22 @@ SHEET_COLUMNS = {
         "id", "event_type", "request_id", "item_id", "loan_id", "user_id",
         "actor_id", "actor_name", "actor_email", "receipt", "details", "created_at",
     ],
+    # Registro de correos automaticos (core/email_events.py): que se envio, a
+    # quien y si el servidor lo acepto. Se conservan los ultimos
+    # NOTIFICATION_LOG_LIMIT para que la base no crezca sin limite.
+    "notification_log": [
+        "id", "event_type", "subject", "recipients", "recipient_count", "status",
+        "error", "reference", "actor_email", "created_at",
+    ],
+    # Fotos de los objetos (core/photos.py): indice de las fotos de cada item.
+    # `path` es la ruta del JPEG en el repositorio de datos (fotos/<codigo>/...),
+    # `sha` el blob de git de ese archivo y `kind` registro | estado | inventario.
+    "item_photos": [
+        "id", "item_id", "path", "sha", "taken_by", "taken_at", "kind", "note",
+    ],
 }
+
+NOTIFICATION_LOG_LIMIT = 500
 
 _cached_dfs = None
 _excel_lock = Lock()
@@ -217,14 +236,16 @@ def _is_github_configured() -> bool:
     return True
 
 
-def _github_request(method: str, url: str, attempts: int = 3, **kwargs):
+def _github_request(method: str, url: str, attempts: int = 3, session=None, **kwargs):
     """Llamada a la API de GitHub con reintentos ante fallos transitorios de red
     o respuestas 429/5xx (esperas de 1 s y 2 s). Los demas codigos HTTP se
-    devuelven tal cual para que el llamador los interprete."""
+    devuelven tal cual para que el llamador los interprete. `session` (opcional)
+    es un requests.Session u objeto con `.request` (las fotos lo usan en pruebas)."""
     last_exc = None
+    client = session or requests
     for attempt in range(attempts):
         try:
-            resp = requests.request(method, url, headers=_github_headers(), **kwargs)
+            resp = client.request(method, url, headers=_github_headers(), **kwargs)
         except requests.RequestException as exc:
             last_exc = exc
         else:
@@ -595,7 +616,31 @@ def _row_to_service_request(row: pd.Series) -> dict:
     )
 
 
-VALID_ITEM_TYPES = ("master", "child", "standalone")
+VALID_ITEM_TYPES = ("master", "child", "standalone", "location")
+LOCATION_TYPE = "location"  # estanteria, piso, mesa o zona (ver core/places.py)
+
+
+def _validate_location_data(parent_id: str, df_items: pd.DataFrame, custom_id: str, is_new: bool) -> None:
+    """Reglas de una ubicacion: su codigo es de ubicacion (nunca el de un
+    contenedor o producto) y, si esta dentro de otra, esa otra es una ubicacion
+    compatible (un piso en su estanteria). La jerarquia se fija al crearla."""
+    if not is_new:
+        return
+    barcode.validate_location_code(custom_id)
+    if not parent_id:
+        return
+    if parent_id == custom_id:
+        raise ValueError("Una ubicacion no puede estar dentro de si misma.")
+    parent_rows = df_items[df_items["id"] == parent_id]
+    if parent_rows.empty:
+        raise ValueError(f"La ubicacion '{parent_id}' no existe.")
+    if parent_rows.iloc[0]["item_type"] != LOCATION_TYPE:
+        raise ValueError(f"'{parent_id}' no es una ubicacion (estanteria, piso, mesa o zona).")
+    if parent_rows.iloc[0]["status"] == "retired":
+        raise ValueError(f"La ubicacion '{parent_id}' esta dada de baja.")
+    problem = barcode.location_parent_problem(custom_id, parent_id)
+    if problem:
+        raise ValueError(problem)
 
 
 def _validate_item_data(data: dict, df_items: pd.DataFrame, custom_id: str, is_new: bool = False) -> None:
@@ -603,6 +648,10 @@ def _validate_item_data(data: dict, df_items: pd.DataFrame, custom_id: str, is_n
     parent_id = str(data.get("parent_id") or "").strip()
     if parent_id.lower() in ("nan", "none"):  # celdas nulas heredadas de Excel
         parent_id = ""
+
+    if item_type == LOCATION_TYPE:
+        _validate_location_data(parent_id, df_items, custom_id, is_new)
+        return
 
     if is_new:
         barcode.validate_code_format(custom_id)
@@ -666,6 +715,17 @@ def _cascade_ids(df_items: pd.DataFrame, item_id: str) -> list:
     rows = df_items[df_items["id"] == item_id]
     if not rows.empty and rows.iloc[0]["item_type"] == "master":
         ids.extend(df_items[df_items["parent_id"] == item_id]["id"].tolist())
+    elif not rows.empty and rows.iloc[0]["item_type"] == LOCATION_TYPE:
+        # Una ubicacion arrastra las ubicaciones que contiene (los pisos de una
+        # estanteria...), a cualquier profundidad. Los productos no se tocan.
+        pending = [item_id]
+        while pending:
+            current = pending.pop()
+            inner = df_items[(df_items["parent_id"] == current) & (df_items["item_type"] == LOCATION_TYPE)]
+            for child_id in inner["id"].tolist():
+                if child_id not in ids:
+                    ids.append(child_id)
+                    pending.append(child_id)
     return ids
 
 
@@ -691,6 +751,12 @@ def _purge_item_records(dfs: dict, ids: list, actor_email: str = "") -> dict:
     dfs["items"] = df_items[~df_items["id"].isin(ids)].reset_index(drop=True)
     dfs["item_history"] = df_hist[~df_hist["item_id"].isin(ids)].reset_index(drop=True)
     dfs["loans"] = df_loans[~df_loans["item_id"].isin(ids)].reset_index(drop=True)
+    if "item_photos" in dfs:
+        # Las fotos salen del indice (si el codigo se reutiliza, el objeto nuevo no
+        # hereda fotos ajenas). Los JPEG siguen en el repositorio de datos.
+        df_photos = dfs["item_photos"]
+        counts["photos"] = int(df_photos["item_id"].isin(ids).sum())
+        dfs["item_photos"] = df_photos[~df_photos["item_id"].isin(ids)].reset_index(drop=True)
 
     if open_requests.any():
         now = _now_str()
@@ -810,6 +876,9 @@ class LabStorage:
 
             old_quantity = int(float(existing["quantity"])) if existing is not None and str(existing["quantity"]).strip() not in ("", "nan") else 0
             new_quantity = int(data.get("quantity", 0) or 0)
+            min_stock_alert = data.get("min_stock_alert", 0)
+            if item_type == LOCATION_TYPE:
+                new_quantity = min_stock_alert = 0  # una ubicacion no tiene stock: nunca se presta
             quantity_delta = new_quantity - old_quantity if existing is not None else new_quantity
 
             history_type = "Alta" if is_new else "Ajuste"
@@ -825,7 +894,7 @@ class LabStorage:
                 "unit": data.get("unit", "unidad"),
                 "quantity": new_quantity,
                 "location": data.get("location", ""),
-                "min_stock_alert": data.get("min_stock_alert", 0),
+                "min_stock_alert": min_stock_alert,
                 "status": data.get("status", "active"),
                 "created_by": data.get("created_by", actor_email),
                 "updated_at": _now_str(),
@@ -887,6 +956,7 @@ class LabStorage:
                     # Codigo liberado por una baja anterior: se reutiliza como item nuevo.
                     _purge_item_records(dfs, _cascade_ids(df_items, custom_id), actor_email)
                     df_items, df_hist = dfs["items"], dfs["item_history"]
+                no_stock = item_type == LOCATION_TYPE  # una ubicacion no tiene stock
                 row = {
                     "id": custom_id,
                     "name": name,
@@ -895,9 +965,9 @@ class LabStorage:
                     "item_type": item_type,
                     "parent_id": parent_id,
                     "unit": str(raw.get("unit", "unidad") or "unidad"),
-                    "quantity": int(float(raw.get("quantity", 0) or 0)),
+                    "quantity": 0 if no_stock else int(float(raw.get("quantity", 0) or 0)),
                     "location": str(raw.get("location", "") or ""),
-                    "min_stock_alert": int(float(raw.get("min_stock_alert", 0) or 0)),
+                    "min_stock_alert": 0 if no_stock else int(float(raw.get("min_stock_alert", 0) or 0)),
                     "status": "active",
                     "created_by": actor_email,
                     "updated_at": _now_str(),
@@ -943,6 +1013,8 @@ class LabStorage:
             if item_type == "master":
                 children_ids = df_items[df_items["parent_id"] == item_id]["id"].tolist()
                 ids_to_retire.extend(children_ids)
+            elif item_type == LOCATION_TYPE:
+                ids_to_retire = _cascade_ids(df_items, item_id)  # con las ubicaciones que contiene
 
             open_for_these = df_loans[df_loans["item_id"].isin(ids_to_retire) & (df_loans["status"] == "out")]
             if not open_for_these.empty:
@@ -1007,7 +1079,7 @@ class LabStorage:
                     "closed_loans": 0, "open_requests": 0}
         ids = _cascade_ids(df_items, item_id)
         loans = df_loans[df_loans["item_id"].isin(ids)]
-        return {
+        impact = {
             "exists": True,
             "contained_items": len(ids) - 1,
             "open_loans": int((loans["status"] == "out").sum()),
@@ -1016,6 +1088,9 @@ class LabStorage:
                 (df_req["item_id"].isin(ids) & df_req["status"].isin(("pending", "approved"))).sum()
             ),
         }
+        if df_items[df_items["id"] == item_id].iloc[0]["item_type"] == LOCATION_TYPE:
+            impact["item_type"] = LOCATION_TYPE  # lo contenido son ubicaciones, no productos
+        return impact
 
     @firestore_retry
     def item_code_in_use(self, code: str) -> bool:
@@ -1127,6 +1202,7 @@ class LabStorage:
         allowed = {
             "full_name", "student_id", "institutional_email", "password_hash",
             "role", "program_or_department", "status",
+            "must_change_password", "password_changed_at",
         }
         unknown = set(changes) - allowed
         if unknown:
@@ -1526,6 +1602,35 @@ class LabStorage:
         return sorted(rows, key=lambda row: row.get("created_at") or "")
 
     # ------------------------------------------------------------------
+    # REGISTRO DE CORREOS AUTOMATICOS (ver core/email_events.py)
+    # ------------------------------------------------------------------
+
+    def add_notification_log(self, entry: dict) -> dict:
+        """Agrega UN registro de correo (una escritura = un commit) y conserva solo
+        los ultimos NOTIFICATION_LOG_LIMIT. Solo se guardan las columnas conocidas."""
+        columns = SHEET_COLUMNS["notification_log"]
+        row = {column: "" for column in columns}
+        row.update({key: "" if value is None else str(value) for key, value in entry.items() if key in columns})
+        row["id"] = _new_id()
+        row["created_at"] = row["created_at"] or _now_str()
+        with _db_write():
+            dfs = _read_excel()
+            df = pd.concat([dfs["notification_log"], pd.DataFrame([row])], ignore_index=True)
+            if len(df) > NOTIFICATION_LOG_LIMIT:
+                df = df.iloc[-NOTIFICATION_LOG_LIMIT:].reset_index(drop=True)
+            dfs["notification_log"] = df
+            _write_and_sync(dfs)
+        return dict(row)
+
+    @firestore_retry
+    def get_notification_log(self, limit: int = 50) -> list:
+        """Registros de correo del mas reciente al mas antiguo (todos si limit=0)."""
+        df = _read_excel("notification_log")["notification_log"]
+        rows = [_clean_nan(row.to_dict()) for _, row in df.iterrows()]
+        rows.sort(key=lambda row: row.get("created_at") or "", reverse=True)
+        return rows[:limit] if limit else rows
+
+    # ------------------------------------------------------------------
     # ALTA DE VARIOS ITEMS NUEVOS EN UNA SOLA ESCRITURA
     # ------------------------------------------------------------------
 
@@ -1583,6 +1688,8 @@ class LabStorage:
                 try:
                     quantity = whole(raw.get("quantity", 0), "Cantidad")
                     min_alert = whole(raw.get("min_stock_alert", 0), "Umbral de alerta")
+                    if item_type == LOCATION_TYPE:
+                        quantity = min_alert = 0  # una ubicacion no tiene stock
                     lookup = df_items
                     if parent_id in batch_types:
                         # Contenedor creado antes en esta misma tanda (va primero en la busqueda).
@@ -1634,3 +1741,75 @@ class LabStorage:
             _write_and_sync(dfs)
             logger.info(f"{len(rows)} item(s) creados en una sola escritura por {actor_email or 'sistema'}.")
         return [row["id"] for row in rows]
+
+    # ------------------------------------------------------------------
+    # FOTOS DE LOS OBJETOS (indice; los JPEG viven en el repo, ver core/photos.py)
+    # ------------------------------------------------------------------
+
+    def add_item_photo(self, photo: dict, trace_event: dict = None) -> dict:
+        """Agrega UNA foto al indice `item_photos` y, si se da, su evento de
+        trazabilidad, en la MISMA escritura (un solo commit). Solo se guardan las
+        columnas conocidas. ValueError si el item no existe."""
+        columns = SHEET_COLUMNS["item_photos"]
+        row = {column: "" for column in columns}
+        row.update({key: "" if value is None else str(value) for key, value in photo.items() if key in columns})
+        row["id"] = row["id"] or _new_id()
+        row["taken_at"] = row["taken_at"] or _now_str()
+        if not row["item_id"] or not row["path"]:
+            raise ValueError("La foto necesita el codigo del item y la ruta del archivo.")
+        event_row = _trace_event_row(trace_event) if trace_event else None
+        with _db_write():
+            dfs = _read_excel()
+            if dfs["items"][dfs["items"]["id"] == row["item_id"]].empty:
+                raise ValueError("El item no existe.")
+            dfs["item_photos"] = pd.concat([dfs["item_photos"], pd.DataFrame([row])], ignore_index=True)
+            if event_row:
+                dfs["trace_events"] = pd.concat([dfs["trace_events"], pd.DataFrame([event_row])], ignore_index=True)
+            _write_and_sync(dfs)
+        return dict(row)
+
+    @firestore_retry
+    def get_item_photos(self, item_id: str) -> list:
+        """Fotos de un item, la mas reciente primero."""
+        df = _read_excel("item_photos")["item_photos"]
+        rows = [_clean_nan(row.to_dict()) for _, row in df[df["item_id"] == item_id].iterrows()]
+        return sorted(rows, key=lambda row: row.get("taken_at") or "", reverse=True)
+
+    @firestore_retry
+    def get_item_photo(self, photo_id: str):
+        df = _read_excel("item_photos")["item_photos"]
+        rows = df[df["id"] == photo_id]
+        return None if rows.empty else _clean_nan(rows.iloc[0].to_dict())
+
+    def get_photo_counts(self) -> dict:
+        """{item_id: numero de fotos} en una sola pasada y sin copiar la hoja: el
+        catalogo lo consulta en cada tarjeta."""
+        df = _load_cache()["item_photos"]
+        return {str(item_id): int(count) for item_id, count in df["item_id"].value_counts().items()}
+
+    def delete_item_photo(self, photo_id: str, trace_event: dict = None):
+        """Quita una foto del indice (y registra su evento) en una sola escritura.
+        Devuelve la fila eliminada o None si no existia."""
+        event_row = _trace_event_row(trace_event) if trace_event else None
+        with _db_write():
+            dfs = _read_excel()
+            df = dfs["item_photos"]
+            rows = df[df["id"] == photo_id]
+            if rows.empty:
+                return None
+            removed = _clean_nan(rows.iloc[0].to_dict())
+            dfs["item_photos"] = df[df["id"] != photo_id].reset_index(drop=True)
+            if event_row:
+                dfs["trace_events"] = pd.concat([dfs["trace_events"], pd.DataFrame([event_row])], ignore_index=True)
+            _write_and_sync(dfs)
+        return removed
+
+
+def _trace_event_row(event: dict) -> dict:
+    """Fila de `trace_events` con las mismas reglas que LabStorage.add_trace_event."""
+    columns = SHEET_COLUMNS["trace_events"]
+    row = {column: "" for column in columns}
+    row.update({key: "" if value is None else str(value) for key, value in event.items() if key in columns})
+    row["id"] = _new_id()
+    row["created_at"] = row["created_at"] or _now_str()
+    return row
