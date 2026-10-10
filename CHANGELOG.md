@@ -174,8 +174,27 @@ tabla de revisión; solo lee mejor el texto.
   propone lo que el contenedor ya tiene. Se conserva el orden del texto.
 - **Fragmentos ilegibles**: se informan (hasta 12) en lugar de ignorarse; el analizador nunca
   lanza excepciones, limita el texto largo y responde en milisegundos.
+- **Descripciones en prosa y «Título: explicación»** (formatos reales de los Contenedores 4 y 5):
+  - Con «Título: explicación» se propone **un producto por título** (sin el paréntesis de cantidad
+    como «(múltiples unidades)», con paréntesis balanceados y sin cortar a la mitad); la
+    **Característica** sale de la explicación («Paquete de plataformas base de cimentación») y la
+    explicación nunca es el nombre. La frase de introducción no es un producto. Una cantidad
+    numérica en el título («(200 unidades)») sí llena Cantidad.
+  - En prosa se descartan las oraciones que describen el contenedor o empiezan como prosa («Este
+    estuche…», «De esta manera…», «Está compuesto…»). De una lista de colores («en tonos como azul
+    claro, magenta y lila») más una medida global («todas las piezas son 2x1») salen **un producto
+    por color** («Pieza Lego 2x1 azul claro»), con los colores de dos palabras unidos; «un par de
+    piezas aisladas en verde lima» queda con cantidad 2, confianza media y su nota.
+  - **Un nombre nunca es una oración**: más de 8 palabras y 60 caracteres se acorta (el texto
+    completo va en la nota) y la propuesta queda en confianza baja, sin marcar; igual toda
+    propuesta que venga de una oración ambigua.
+  - **Reconoce lo que ya existe**: un producto ya creado se detecta por el fragmento de la
+    descripción en que se creó y por nombre casi igual (sin puntuación, tildes, paréntesis ni
+    plurales, siempre con las mismas cifras), así que el Contenedor 4 con sus 10 productos ya
+    creados ya no propone nada.
 - **Pruebas**: tabla de 48 descripciones reales y de electrónica con su resultado esperado,
-  los tres contenedores reales con `×` y sin él, y pruebas de cantidades, unidades, medidas,
+  los tres contenedores reales con `×` y sin él, los Contenedores 4 y 5 (con sus hijos existentes) y
+  14 variantes de prosa y «Título: explicación», y pruebas de cantidades, unidades, medidas,
   cajas, confianza, ruido aleatorio y rendimiento. La vista se prueba de punta a punta con un
   contenedor de electrónica.
 

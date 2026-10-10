@@ -12,7 +12,9 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 from core import inventory_suggestions as sug  # noqa: E402
 from core import storage as storage_module  # noqa: E402
 from core.storage import LabStorage  # noqa: E402
-from test_inventory_suggestions import ACTOR, C1, C2, C3, EXPECTED, LAB, REAL, default_payloads  # noqa: E402
+from test_inventory_suggestions import (  # noqa: E402
+    ACTOR, C1, C2, C3, C4, C4_CHILDREN, C4_TITLES, C5, C5_COLORS, EXPECTED, LAB, REAL, default_payloads,
+)
 
 
 def _script():
@@ -230,3 +232,48 @@ def test_lab_container_fills_quantities_and_leaves_low_confidence_rows_unchecked
     # Lo que quedo sin marcar sigue disponible para revisar.
     _open_generator(at, LAB)
     assert [n for n in _editor(at)["Nombre"]] == ["Pieza 0x2"]
+
+
+def _save_master(db, container):
+    db.save_item({k: container[k] for k in ("name", "category", "item_type", "location", "description")},
+                 container["id"], is_new=True, actor_email=ACTOR)
+
+
+def test_container_4_title_explanation_is_fully_registered_so_nothing_is_proposed(db, writes):
+    _save_master(db, C4)
+    payloads = [sug.build_payload({"code": code, "name": name, "quantity": 0, "unit": "unidad", "source": fragment}, C4)
+                for code, name, fragment in C4_CHILDREN]
+    db.save_items_bulk(payloads, actor_email=ACTOR)
+    at = _open_generator(_run(), C4)
+    assert "No hay productos nuevos por crear" in _text(at.markdown)
+    assert "Ya registrados en este contenedor (no se duplican)" in _text(at.caption)
+    assert not [d for d in at.dataframe if list(d.value.columns) == list(sug.EDITOR_COLUMNS)]
+    assert "3 contenedor(es) describen productos que aún no están registrados" in _text(at.info)   # C4 ya no cuenta
+
+
+def test_container_4_proposes_only_the_titles_that_are_missing(db):
+    _save_master(db, C4)
+    db.save_items_bulk([sug.build_payload({"code": code, "name": name, "quantity": 0, "unit": "unidad",
+                                           "source": fragment}, C4)
+                        for code, name, fragment in C4_CHILDREN[:3] + C4_CHILDREN[10:]],
+                       actor_email=ACTOR)
+    frame = _editor(_open_generator(_run(), C4))
+    assert frame["Nombre"].tolist() == C4_TITLES[4:]        # «Bolsa de llantas» ya existe renombrada: se reconoce por su fragmento
+    assert frame["Cantidad"].tolist() == [0] * 6 and frame["Crear"].tolist() == [True] * 6
+    assert frame["Característica"].iloc[0].startswith("Paquete de ejes")
+
+
+def test_container_5_prose_becomes_one_row_per_color(db, writes):
+    _save_master(db, C5)
+    at = _open_generator(_run(), C5)
+    frame = _editor(at)
+    assert frame["Nombre"].tolist() == [f"Pieza Lego 2x1 {c}" for c in C5_COLORS] + ["Pieza Lego 2x1 verde lima"]
+    assert frame["Cantidad"].tolist() == [0] * 10 + [2] and frame["Crear"].tolist() == [True] * 11
+    assert any(e.label == ":material/warning: Puntos para confirmar (2)" for e in at.expander)
+    create = _button(at, f"inv_gen_create_{C5['id']}")
+    assert create.label == ":material/check_circle: Crear 11 producto(s)"
+    create.click().run()
+    assert not at.exception
+    children = {c["name"]: c for c in db.get_children(C5["id"])}
+    assert len(children) == 11 and children["Pieza Lego 2x1 verde lima"]["quantity"] == 2
+    assert "Se crearon 11 producto(s) en «Contenedor 5»; 10 quedan pendientes de conteo." in _text(at.success)
