@@ -34,9 +34,19 @@ EVENT_PICKED_UP = "picked_up"
 EVENT_RECEIPT_CHECKED = "receipt_checked"
 EVENT_SERVICE_STARTED = "service_started"
 EVENT_SERVICE_DELIVERED = "service_delivered"
+# Chips NFC (core/nfc.py) y conteo de inventario con el telefono
+# (core/inventory_count.py). Viven en la misma hoja `trace_events`.
+EVENT_NFC_TAP = "nfc_tap"                   # alguien toco el chip de un producto/ubicacion
+EVENT_NFC_TAG_WRITTEN = "nfc_tag_written"   # se grabo el chip de un codigo
+EVENT_NFC_TAG_REMOVED = "nfc_tag_removed"   # el chip se quito o se perdio
+EVENT_COUNT_STARTED = "count_started"       # se abrio un conteo de inventario
+EVENT_COUNT_MARK = "count_mark"             # producto verificado (codigo escrito y/o cantidad contada)
+EVENT_COUNT_CLOSED = "count_closed"         # resumen del conteo al cerrarlo
 EVENT_TYPES = (
     EVENT_ROUTE_VERIFIED, EVENT_PICKED_UP, EVENT_RECEIPT_CHECKED,
     EVENT_SERVICE_STARTED, EVENT_SERVICE_DELIVERED,
+    EVENT_NFC_TAP, EVENT_NFC_TAG_WRITTEN, EVENT_NFC_TAG_REMOVED,
+    EVENT_COUNT_STARTED, EVENT_COUNT_MARK, EVENT_COUNT_CLOSED,
 )
 EVENT_LABELS = {
     EVENT_ROUTE_VERIFIED: "Ruta verificada",
@@ -44,6 +54,12 @@ EVENT_LABELS = {
     EVENT_RECEIPT_CHECKED: "Comprobante validado",
     EVENT_SERVICE_STARTED: "Servicio en curso",
     EVENT_SERVICE_DELIVERED: "Servicio entregado",
+    EVENT_NFC_TAP: "Toque de chip NFC",
+    EVENT_NFC_TAG_WRITTEN: "Chip NFC grabado",
+    EVENT_NFC_TAG_REMOVED: "Chip NFC retirado",
+    EVENT_COUNT_STARTED: "Conteo iniciado",
+    EVENT_COUNT_MARK: "Verificado en conteo",
+    EVENT_COUNT_CLOSED: "Conteo cerrado",
 }
 SERVICE_STAGES = (EVENT_SERVICE_STARTED, EVENT_SERVICE_DELIVERED)
 
@@ -67,15 +83,19 @@ PHOTO_KIND_LABELS = {
 
 # Cómo quedó confirmado cada punto de control de la ruta.
 METHOD_SCAN = "scan"            # se escaneó o escribió el código de su etiqueta
+METHOD_NFC = "nfc"              # se tocó el chip NFC de su etiqueta con el teléfono
 METHOD_ARRIVAL = "arrival"      # punto sin etiqueta: el estudiante confirmó que llegó
 METHOD_IMPLIED = "implied"      # punto sin etiqueta probado por una etiqueta más adentro
 METHOD_INFERRED = "inferred"    # punto CON etiqueta que se saltó (se escaneó una más adentro)
 METHOD_LABELS = {
     METHOD_SCAN: "Etiqueta escaneada",
+    METHOD_NFC: "Chip NFC tocado",
     METHOD_ARRIVAL: "Llegada confirmada (sin etiqueta)",
     METHOD_IMPLIED: "Confirmado por una etiqueta más adentro",
     METHOD_INFERRED: "Etiqueta sin escanear (inferida)",
 }
+# Metodos que prueban que se estuvo frente a la etiqueta.
+VERIFIED_METHODS = (METHOD_SCAN, METHOD_NFC)
 
 # Comprobante: 6 caracteres del alfabeto de Crockford (sin I, L, O ni U para que
 # no se confundan al dictarlo o escribirlo).
@@ -186,7 +206,7 @@ def is_complete(route: dict) -> bool:
 def route_stats(route: dict) -> dict:
     points = route.get("checkpoints") or []
     labels = [p for p in points if p.get("label_code")]
-    scanned = [p for p in labels if p.get("method") == METHOD_SCAN]
+    scanned = [p for p in labels if p.get("method") in VERIFIED_METHODS]
     done = [p for p in points if p.get("done")]
     complete = bool(points) and len(done) == len(points)
     start, end = to_datetime(route.get("started_at")), to_datetime(route.get("completed_at"))
@@ -195,6 +215,7 @@ def route_stats(route: dict) -> dict:
         "done": len(done),
         "labels": len(labels),
         "scanned": len(scanned),
+        "nfc": len([p for p in labels if p.get("method") == METHOD_NFC]),
         "inferred": len([p for p in labels if p.get("method") == METHOD_INFERRED]),
         "progress": (len(done) / len(points)) if points else 0.0,
         "complete": complete,
@@ -234,7 +255,7 @@ def confirm_arrival(route: dict, now=None) -> dict:
     return _after_progress(route, f"📍 Llegaste a {point['title']}.", now)
 
 
-def apply_code(route: dict, code: str, now=None, known_item: dict = None) -> dict:
+def apply_code(route: dict, code: str, now=None, known_item: dict = None, method: str = METHOD_SCAN) -> dict:
     """Aplica un código escaneado/escrito a la ruta.
 
     - Si es la etiqueta del punto actual, lo confirma.
@@ -243,7 +264,12 @@ def apply_code(route: dict, code: str, now=None, known_item: dict = None) -> dic
       "inferidas" (se pueden escanear después para una verificación completa).
     - Si no pertenece a la ruta, explica dónde está quien escaneó y hacia
       dónde ir, y cuenta el intento fallido.
+
+    `method` dice cómo llegó el código: METHOD_SCAN (lector o teclado) o
+    METHOD_NFC (toque del chip NFC de la etiqueta, ver core/nfc.py).
     """
+    if method not in VERIFIED_METHODS:
+        method = METHOD_SCAN
     code = (code or "").strip()
     if not code:
         return _result(False, "warning", "Escribe o escanea el código de la etiqueta.")
@@ -259,7 +285,7 @@ def apply_code(route: dict, code: str, now=None, known_item: dict = None) -> dic
         point = points[match]
         if index is None or match < index:
             if point.get("method") == METHOD_INFERRED:
-                _mark(point, METHOD_SCAN, now, code)
+                _mark(point, method, now, code)
                 message = f"🏷️ Etiqueta de {point['title']} verificada: ya no queda inferida."
                 if index is None:
                     return _result(True, "success", message, completed=True)
@@ -276,8 +302,8 @@ def apply_code(route: dict, code: str, now=None, known_item: dict = None) -> dic
                 skipped += 1
             else:
                 _mark(previous, METHOD_IMPLIED, now)
-        _mark(point, METHOD_SCAN, now, code)
-        message = f"✅ {point['title']} verificado."
+        _mark(point, method, now, code)
+        message = f"✅ {point['title']} verificado" + (" con su chip NFC." if method == METHOD_NFC else ".")
         if skipped == 1:
             message += " Saltaste 1 etiqueta: queda inferida (escanéala si quieres una verificación completa)."
         elif skipped:
@@ -477,7 +503,7 @@ def save_route(storage, request: dict, route: dict, actor: dict, now=None):
         "started_at": route.get("started_at") or completed_at,
         "completed_at": completed_at,
         "labels": stats["labels"], "scanned": stats["scanned"], "attempts": stats["attempts"],
-        "duration_s": stats["duration_s"],
+        "nfc": stats["nfc"], "duration_s": stats["duration_s"],
         "checkpoints": [
             {key: point.get(key, "") for key in ("key", "title", "name", "label_code", "method", "code", "at")}
             for point in route["checkpoints"]
@@ -863,6 +889,8 @@ _HISTORY_ICONS = {"Alta": "📦", "Salida": "📤", "Reingreso": "📥", "Baja":
 _EVENT_ICONS = {
     EVENT_ROUTE_VERIFIED: "🧭", EVENT_PICKED_UP: "🤝", EVENT_RECEIPT_CHECKED: "🔏",
     EVENT_SERVICE_STARTED: "🛠️", EVENT_SERVICE_DELIVERED: "📦",
+    EVENT_NFC_TAP: ":material/nfc:", EVENT_NFC_TAG_WRITTEN: ":material/nfc:", EVENT_NFC_TAG_REMOVED: "🗑️",
+    EVENT_COUNT_MARK: ":material/fact_check:",
 }
 _EVENT_ICONS.update({EVENT_PHOTO_ADDED: "📷", EVENT_PHOTO_DELETED: "🗑️"})
 
@@ -915,6 +943,13 @@ def custody_timeline(history: list, requests: list, events: list, names: dict = 
                       f"{short_id(event.get('request_id'))}" + ("" if info.get("route_verified") else " · sin ruta"))
         elif kind in PHOTO_EVENTS:
             detail = _photo_detail(event, info)
+        elif kind == EVENT_NFC_TAP:
+            detail = f"{event.get('actor_name') or ''} · con el teléfono" + (
+                " · durante un conteo" if info.get("count_session") else "")
+        elif kind == EVENT_COUNT_MARK:
+            counted = info.get("qty")
+            detail = f"{event.get('actor_name') or ''}" + (
+                f" · contó {counted} u. en el estante" if counted not in (None, "") else "")
         entries.append((to_datetime(event.get("created_at")), {
             "title": EVENT_LABELS.get(kind, kind or "Evento"), "icon": _EVENT_ICONS.get(kind, "•"),
             "detail": detail.strip(" ·"),

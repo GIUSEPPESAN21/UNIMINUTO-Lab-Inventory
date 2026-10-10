@@ -12,7 +12,7 @@
 
 import streamlit as st
 
-from core import location, service_requests, traceability
+from core import location, nfc, service_requests, traceability
 from core.ui import badge_html, material, section_title, stat_cards, timeline
 
 _CRUMB_TONES = {"done": "success", "inferred": "warning", "current": "info", "pending": "neutral"}
@@ -200,6 +200,14 @@ def render_verifiable_route(storage, request: dict, user: dict, key_prefix: str 
         return
 
     route = _load_route(storage, request)
+    # Toques de chips NFC (en esta u otra pestaña) confirman sus puntos de control.
+    tapped = nfc.merge_user_taps(storage, user, request, route)
+    if tapped:
+        if tapped["completed"] and traceability.route_stats(route)["full"]:
+            _save(storage, request, user, route, tapped)
+            st.session_state[_feedback_key(request_id)] = tapped
+            st.rerun()
+        feedback = tapped
     stats = traceability.route_stats(route)
     index = traceability.current_index(route)
     _breadcrumb(traceability.breadcrumb(route))

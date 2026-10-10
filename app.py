@@ -55,8 +55,14 @@ auth.ensure_master_seed(storage)
 if "user" not in st.session_state:
     st.session_state.user = None
 
+# Chip NFC: un toque abre la app con ?nfc=<codigo>. Se guarda ANTES del login
+# para registrarlo en cuanto la persona inicie sesion (ver views/nfc_tap.py).
+from views import nfc_tap
+nfc_tap.capture_tap()
+
 if not st.session_state.user:
     from views import login
+    nfc_tap.render_login_hint()
     login.render()
     st.stop()
 
@@ -83,6 +89,7 @@ if auth.must_change_password(user):
     st.stop()
 
 from views import inicio, escanear, inventario, prestamos, reservas, solicitudes, trazabilidad, usuarios, reportes, acerca_de, perfil
+from views import nfc as nfc_page
 
 pages = {
     "inicio": st.Page(inicio.render, title="Inicio", icon=":material/home:", default=True, url_path="inicio"),
@@ -96,6 +103,7 @@ pages = {
 if user["role"] in permissions.MANAGER_ROLES:
     pages["inventario"] = st.Page(inventario.render, title="Inventario", icon=":material/inventory_2:", url_path="inventario")
     pages["reportes"] = st.Page(reportes.render, title="Reportes", icon=":material/bar_chart:", url_path="reportes")
+    pages["nfc"] = st.Page(nfc_page.render, title="Chips NFC", icon=":material/nfc:", url_path="nfc")
 
 if user["role"] in permissions.ADMIN_ROLES:
     pages["usuarios"] = st.Page(usuarios.render, title="Usuarios", icon=":material/group:", url_path="usuarios")
@@ -108,7 +116,7 @@ st.session_state.pages = pages
 # Navegacion agrupada por secciones para que el sidebar sea facil de leer.
 nav_sections = {"Principal": [pages["inicio"], pages["escanear"], pages["solicitudes"], pages["trazabilidad"], pages["reservas"], pages["prestamos"]]}
 if user["role"] in permissions.MANAGER_ROLES:
-    nav_sections["Gestión"] = [pages["inventario"], pages["reportes"]]
+    nav_sections["Gestión"] = [pages["inventario"], pages["reportes"], pages["nfc"]]
 if user["role"] in permissions.ADMIN_ROLES:
     nav_sections["Administración"] = [pages["usuarios"]]
 nav_sections["Mi cuenta"] = [pages["perfil"], pages["acerca_de"]]
@@ -130,5 +138,8 @@ with st.sidebar:
 sync_status_banner(storage, user)
 
 nav = st.navigation(nav_sections)
+# Toque NFC pendiente: se registra una sola vez y lleva a su pagina.
+nfc_tap.handle_pending(storage, user, pages, nav)
+nfc_tap.render_tap_banner()
 nav.run()
 footer()

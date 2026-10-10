@@ -79,6 +79,37 @@
   `views/escanear.py`. Eliminar un ítem quita sus fotos del índice. Ver README
   («Fotos de los objetos») por el tamaño del repositorio.
 
+### Chips NFC
+- **Cada chip guarda una URL**, no un código suelto: `<APP_URL>/escanear?nfc=<código>&s=<firma>`.
+  Al acercar el teléfono (Android, o iPhone XS en adelante) se abre la app sin instalar nada
+  ni usar Web NFC. Funciona con etiquetas NTAG213, NTAG215 (recomendada) y NTAG216.
+- **Prueba de presencia.** Cada toque guarda un evento `nfc_tap` (persona, código, hora) en la
+  hoja `trace_events`; el mismo chip tocado dos veces en menos de un minuto cuenta una vez. Si la
+  persona no ha iniciado sesión, el toque espera y se registra al entrar. La URL se limpia
+  (`?nfc=` desaparece) para que recargar no lo cuente doble.
+- **Ruta verificable.** Si el estudiante tiene una solicitud aprobada cuya ruta pasa por ese
+  chip, el toque confirma el punto de control con el método «Chip NFC tocado» (también si lo toca
+  desde otra pestaña); al completar la ruta se guarda el mismo comprobante de siempre. Un chip
+  que no es de su ruta muestra hacia dónde ir.
+- **Firma opcional (`NFC_SECRET`).** Con ese secreto cada URL lleva una firma corta (HMAC,
+  10 caracteres) y la app rechaza las URL sin firma, alteradas o inventadas. `APP_URL` fija la
+  dirección pública que se graba (si falta, se usa la dirección con la que se abrió la app).
+- **Nueva página Chips NFC** (Gestión, profesor y maestro):
+  - *Inventario con el teléfono*: abre un conteo (todo el inventario, una estantería o un
+    contenedor); cada chip tocado, o código escrito/escaneado, marca el producto como verificado,
+    con la cantidad contada opcional. Muestra el avance (se actualiza solo), lo que falta y las
+    diferencias contra lo que debería haber en el estante (disponible = total − en préstamo). Al
+    cerrar se guarda un resumen y los conteos anteriores quedan consultables. **Las cantidades no
+    cambian al contar**: solo el maestro puede aplicar ajustes, eligiéndolos y confirmando
+    explícitamente; cada ajuste queda en el historial del producto.
+  - *Grabar etiquetas*: la URL de cada producto o ubicación para copiar (con su tamaño en bytes y
+    los chips en que cabe), guía paso a paso con la app gratuita NFC Tools, cómo probar el chip,
+    registro de chips grabados/probados/sin chip y descarga de todas las URL en CSV.
+  - *Toques recientes*: quién tocó qué chip y cuándo.
+- Nuevos tipos de evento en `trace_events` (sin hojas nuevas): `nfc_tap`, `nfc_tag_written`,
+  `nfc_tag_removed`, `count_started`, `count_mark` y `count_closed`. El método `nfc` cuenta como
+  etiqueta verificada en la ruta. El toque aparece en la cadena de custodia del producto.
+
 ## v1.13.1 — La etiqueta vuelve a su formato de siempre
 
 ### Cambiado
