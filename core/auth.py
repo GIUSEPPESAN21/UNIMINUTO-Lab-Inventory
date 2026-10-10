@@ -24,6 +24,7 @@ hay un limite de intentos fallidos por correo con bloqueo temporal.
 
 import hashlib
 import hmac
+import json
 import logging
 import math
 import secrets
@@ -33,7 +34,7 @@ from datetime import datetime, timedelta, timezone
 
 import bcrypt
 
-from core import notifications
+from core import notifications, permissions
 from core.config import safe_secret
 
 logger = logging.getLogger(__name__)
@@ -202,6 +203,12 @@ def validate_session(storage, session_user: dict, login_at=None, now: datetime =
         return None, "Tu cuenta ya no existe. Contacta a un administrador."
     if fresh.get("status") != "active":
         return None, "Tu cuenta fue deshabilitada. Contacta a un administrador."
+    # Una clave cambiada DESPUES de iniciar esta sesion (p. ej. restablecida por
+    # el perfil maestro) cierra la sesion: la clave anterior ya no da acceso.
+    changed_at = _parse_utc(fresh.get("password_changed_at"))
+    started_at = _parse_utc(login_at)
+    if changed_at is not None and started_at is not None and changed_at > started_at:
+        return None, PASSWORD_CHANGED_SESSION_NOTICE
     return public_user(fresh), None
 
 
@@ -374,3 +381,212 @@ def validate_profile_update(storage, user_id: str, full_name: str, email: str,
         "program_or_department": program,
         "student_id": student_id,
     }, None
+
+
+# ---------------------------------------------------------------------------
+# Restablecimiento de contraseña por el perfil maestro
+# ---------------------------------------------------------------------------
+# Politica (ver README, "Restablecer contraseñas"):
+# - Solo un maestro ACTIVO restablece claves, y solo de estudiantes y
+#   profesores. Su propia clave la cambia en "Mi perfil" (pide la actual) y la
+#   de otro maestro no se restablece desde aqui: un maestro no puede tomar en
+#   silencio la cuenta de otro.
+# - La clave nueva cumple la regla del registro (minimo 8 caracteres; bcrypt
+#   solo usa los primeros 72 bytes, ver hash_password). Si el maestro no la
+#   escribe, se genera una temporal aleatoria y facil de dictar.
+# - La cuenta queda con `must_change_password`: al ingresar, el usuario debe
+#   elegir una clave propia antes de usar la app.
+# - `password_changed_at` cierra las sesiones abiertas antes del cambio
+#   (validate_session lo compara con la hora de inicio de cada sesion).
+# - Queda un evento de auditoria en `trace_events` SIN la contraseña.
+
+MIN_PASSWORD_LENGTH = 8
+RESETTABLE_ROLES = (permissions.ROLE_STUDENT, permissions.ROLE_PROFESSOR)
+PASSWORD_RESET_EVENT = "password_reset"
+PASSWORD_CHANGED_SESSION_NOTICE = "Tu contraseña cambió. Inicia sesión de nuevo con la contraseña nueva."
+
+# Sin caracteres que se confunden al dictar o copiar a mano (0/O/o, 1/l/I).
+TEMP_PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+TEMP_PASSWORD_GROUPS = 3
+TEMP_PASSWORD_GROUP_SIZE = 4
+
+_TRUE_FLAGS = ("1", "true", "yes", "si", "sí")
+
+
+def _parse_utc(value):
+    """datetime con zona (UTC si no trae) o None si el valor esta vacio o no es valido."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        moment = value
+    else:
+        try:
+            moment = datetime.fromisoformat(str(value).strip())
+        except ValueError:
+            return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+def must_change_password(user) -> bool:
+    """True si la cuenta tiene una clave temporal que debe reemplazar al ingresar."""
+    value = (user or {}).get("must_change_password")
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in _TRUE_FLAGS
+
+
+def validate_new_password(password, confirmation=None):
+    """Misma regla que el registro. Devuelve el mensaje de error o None."""
+    if not password or len(password) < MIN_PASSWORD_LENGTH:
+        return f"La contraseña debe tener al menos {MIN_PASSWORD_LENGTH} caracteres."
+    if confirmation is not None and password != confirmation:
+        return "Las contraseñas no coinciden."
+    return None
+
+
+def generate_temporary_password() -> str:
+    """Clave temporal aleatoria (modulo secrets) en grupos faciles de dictar,
+    p. ej. "hX7k-m3Pq-9tRw": ~70 bits de entropia, con mayuscula, minuscula y digito."""
+    size = TEMP_PASSWORD_GROUPS * TEMP_PASSWORD_GROUP_SIZE
+    while True:
+        chars = "".join(secrets.choice(TEMP_PASSWORD_ALPHABET) for _ in range(size))
+        if (any(c.isupper() for c in chars) and any(c.islower() for c in chars)
+                and any(c.isdigit() for c in chars)):
+            break
+    step = TEMP_PASSWORD_GROUP_SIZE
+    return "-".join(chars[i:i + step] for i in range(0, size, step))
+
+
+def can_reset_password(actor: dict, target: dict) -> bool:
+    """Regla de la interfaz: el maestro ve la opcion solo en tarjetas ajenas de
+    estudiantes y profesores (la decision final la toma admin_reset_password)."""
+    return (permissions.has_role(actor, permissions.ADMIN_ROLES) and bool(target)
+            and target.get("id") != (actor or {}).get("id")
+            and target.get("role") in RESETTABLE_ROLES)
+
+
+def email_delivery_configured() -> bool:
+    """Hay SMTP configurado para enviar la clave temporal (misma regla minima
+    que notifications.send_email_notification: servidor y remitente)."""
+    host = str(safe_secret("SMTP_HOST", "") or "").strip()
+    sender = str(safe_secret("SMTP_FROM_EMAIL", "") or safe_secret("SMTP_USERNAME", "") or "").strip()
+    return bool(host) and "@" in sender
+
+
+def send_temporary_password_email(email: str, password: str, full_name: str = ""):
+    """Envia la clave temporal al correo de la cuenta. Devuelve (ok, mensaje); nunca lanza."""
+    greeting = f"Hola {full_name}," if full_name else "Hola,"
+    body = (
+        f"{greeting}\n\n"
+        "El perfil maestro del Laboratorio UNIMINUTO restableció la contraseña de tu cuenta.\n\n"
+        f"Contraseña temporal: {password}\n\n"
+        "Al ingresar, la app te pedirá elegir una contraseña nueva que solo tú conozcas. "
+        "Si no pediste este cambio, avisa al laboratorio."
+    )
+    return notifications.send_email_notification(
+        "Contraseña temporal - Laboratorio UNIMINUTO", body, [email]
+    )
+
+
+def _record_password_reset(storage, actor: dict, target: dict, details: dict, now: datetime) -> None:
+    """Auditoria del restablecimiento. Nunca incluye la contraseña ni su hash."""
+    try:
+        storage.add_trace_event({
+            "event_type": PASSWORD_RESET_EVENT,
+            "user_id": target.get("id", ""),
+            "actor_id": actor.get("id", ""),
+            "actor_name": actor.get("full_name", ""),
+            "actor_email": actor.get("institutional_email", ""),
+            "details": json.dumps(details, ensure_ascii=False),
+            "created_at": now.isoformat(),
+        })
+    except Exception as exc:  # la clave ya cambio: la falta de auditoria no la revierte
+        logger.error(f"No se pudo registrar la auditoria del restablecimiento: {type(exc).__name__}")
+
+
+def admin_reset_password(storage, actor: dict, target_user_id: str, new_password: str = None,
+                         send_email: bool = False, now: datetime = None):
+    """El perfil maestro restablece la clave de un estudiante o profesor.
+
+    Si `new_password` es None se genera una temporal. Devuelve (resultado, error);
+    el resultado trae `temporary_password` SOLO si se genero (para mostrarla una
+    vez), `user` sin hash y el estado del correo opcional."""
+    actor_id = (actor or {}).get("id")
+    fresh_actor = storage.get_user_by_id(actor_id) if actor_id else None
+    if (not fresh_actor or fresh_actor.get("status") != "active"
+            or not permissions.has_role(fresh_actor, permissions.ADMIN_ROLES)):
+        return None, "Solo el perfil maestro puede restablecer contraseñas."
+    target = storage.get_user_by_id(target_user_id) if target_user_id else None
+    if not target:
+        return None, "La cuenta ya no existe."
+    if target.get("id") == fresh_actor.get("id"):
+        return None, "Tu propia contraseña se cambia en Mi perfil."
+    if target.get("role") not in RESETTABLE_ROLES:
+        return None, ("La contraseña de otro perfil maestro no se restablece aquí: "
+                      "cada maestro la cambia en Mi perfil.")
+
+    generated = new_password is None
+    password = generate_temporary_password() if generated else new_password
+    error = validate_new_password(password)
+    if error:
+        return None, error
+
+    now = now or datetime.now(timezone.utc)
+    updated = storage.update_user(target["id"], {
+        "password_hash": hash_password(password),
+        "must_change_password": "1",
+        "password_changed_at": now.isoformat(),
+    })
+    if not updated:
+        return None, "La cuenta ya no existe."
+    # Si el usuario quedo bloqueado probando claves, puede entrar ya con la nueva.
+    _clear_failures((target.get("institutional_email") or "").strip().lower())
+
+    email_sent, email_message = False, ""
+    if send_email:
+        email_sent, email_message = send_temporary_password_email(
+            target.get("institutional_email", ""), password, target.get("full_name", "")
+        )
+    _record_password_reset(storage, fresh_actor, target, {
+        "mode": "generated" if generated else "manual",
+        "target_role": target.get("role", ""),
+        "email_requested": bool(send_email),
+        "email_sent": bool(email_sent),
+    }, now)
+    logger.info("Contraseña restablecida por el perfil maestro.")
+    return {
+        "user": public_user(updated),
+        "temporary_password": password if generated else None,
+        "generated": generated,
+        "email_requested": bool(send_email),
+        "email_sent": bool(email_sent),
+        "email_message": email_message,
+    }, None
+
+
+def complete_forced_password_change(storage, user_id: str, new_password: str, confirmation: str,
+                                    now: datetime = None):
+    """El usuario con clave temporal elige la suya. Devuelve (usuario, cambiado_en, error).
+
+    `cambiado_en` es la nueva `password_changed_at`: la vista la usa como hora de
+    inicio de SU sesion para seguir dentro, mientras cualquier otra sesion abierta
+    con la clave temporal se cierra."""
+    fresh = storage.get_user_by_id(user_id) if user_id else None
+    if not fresh or fresh.get("status") != "active":
+        return None, None, "Tu cuenta no está disponible. Contacta a un administrador."
+    if not must_change_password(fresh):
+        return None, None, "No hay un cambio de contraseña pendiente."
+    error = validate_new_password(new_password, confirmation)
+    if error:
+        return None, None, error
+    if verify_password(new_password, fresh.get("password_hash", "")):
+        return None, None, "La contraseña nueva debe ser distinta de la temporal."
+    now = now or datetime.now(timezone.utc)
+    updated = storage.update_user(fresh["id"], {
+        "password_hash": hash_password(new_password),
+        "must_change_password": "",
+        "password_changed_at": now.isoformat(),
+    })
+    if not updated:
+        return None, None, "Tu cuenta no está disponible. Contacta a un administrador."
+    return public_user(updated), now, None

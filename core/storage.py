@@ -36,6 +36,10 @@ SHEET_COLUMNS = {
     "users": [
         "id", "full_name", "student_id", "institutional_email", "password_hash", "role",
         "program_or_department", "status", "created_at",
+        # Restablecimiento de clave por el perfil maestro (core/auth.py):
+        # `must_change_password` ("1" o vacio) y `password_changed_at` (ISO).
+        # Las bases antiguas sin estas columnas se completan con "" al cargar.
+        "must_change_password", "password_changed_at",
     ],
     "professors_whitelist": [
         "institutional_email",
@@ -1127,6 +1131,7 @@ class LabStorage:
         allowed = {
             "full_name", "student_id", "institutional_email", "password_hash",
             "role", "program_or_department", "status",
+            "must_change_password", "password_changed_at",
         }
         unknown = set(changes) - allowed
         if unknown:

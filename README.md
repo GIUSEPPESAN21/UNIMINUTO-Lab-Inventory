@@ -256,13 +256,45 @@ se respeta tal cual.
 El maestro puede corregir nombre, ID, correo institucional y programa. El
 sistema valida campos obligatorios, dominio institucional y unicidad del correo;
 rol, estado y contraseña conservan sus controles independientes.
+
+### Restablecer contraseñas
+
+Cuando un estudiante o profesor olvida su contraseña, el maestro la restablece en
+**Usuarios → tarjeta del usuario → 🔑 Restablecer contraseña**:
+
+1. Elige **Generar una contraseña temporal** (12 caracteres aleatorios en tres
+   grupos, p. ej. `hX7k-m3Pq-9tRw`, sin caracteres que se confunden como `0/O` o
+   `1/l/I`) o **Escribirla yo** (con confirmación; mínimo 8 caracteres, la misma
+   regla del registro).
+2. Confirma con **Sí, restablecer**. La contraseña anterior deja de funcionar y las
+   sesiones abiertas de esa cuenta se cierran en su siguiente recarga.
+3. La contraseña generada se muestra **una sola vez** (con botón de copiar):
+   entrégala en persona. Si hay SMTP configurado, una casilla opcional
+   (desmarcada por defecto) la envía al correo institucional del usuario.
+
+Al ingresar con ella, el usuario ve una pantalla que le pide elegir una
+contraseña propia antes de usar la app (no puede repetir la temporal); mientras
+tanto su tarjeta muestra la pastilla **Clave temporal**. Si estaba bloqueado por
+intentos fallidos, el restablecimiento lo desbloquea. Las demás cuentas inician
+sesión como siempre.
+
+**Política:** solo un maestro activo puede restablecer, y solo a estudiantes y
+profesores. Cada maestro cambia su propia contraseña en **Mi perfil** (pide la
+actual) y la de otro maestro no se restablece desde aquí, para que nadie tome en
+silencio la cuenta de otro maestro; si un maestro pierde el acceso, otro maestro
+puede pasarlo a profesor, restablecerla y devolverle el rol (un paso deliberado y
+visible). Cada restablecimiento queda auditado en la hoja `trace_events` (evento
+`password_reset`: quién, a quién, cuándo, modo y si se envió correo) **sin la
+contraseña**. La hoja `users` suma las columnas `must_change_password` y
+`password_changed_at`; en una base anterior se completan solas al cargar.
+
 ## Roles
 
 | Rol | Puede |
 |---|---|
 | Estudiante | Escanear, solicitar productos/servicios, reservar y gestionar sus préstamos/solicitudes |
 | Profesor | Todo lo anterior + alta/edición/baja de ítems, aprobar solicitudes/reservas, ver préstamos y reportes |
-| Maestro | Todo lo anterior + corregir usuarios, roles/estados, lista blanca y exportación |
+| Maestro | Todo lo anterior + corregir usuarios, roles/estados, restablecer contraseñas, lista blanca y exportación |
 
 **Seguridad del registro:** nadie elige su rol al registrarse. Toda cuenta nace
 `estudiante`; solo nace `profesor` si su correo está en la lista blanca
@@ -287,6 +319,9 @@ contraseña — todos obligatorios.
 - La sesión se **revalida contra la base en cada recarga**: un cambio de rol o una
   cuenta deshabilitada surten efecto de inmediato, y la sesión expira a las 12 h
   (`SESSION_TIMEOUT_MINUTES`). La sesión nunca guarda el hash de la contraseña.
+- Si el maestro restablece la contraseña de una cuenta, las sesiones de esa cuenta
+  abiertas antes del cambio se cierran (`password_changed_at`), y al volver a entrar
+  debe elegir una contraseña propia (ver *Restablecer contraseñas*).
 - Las vistas de Inventario, Reportes y Usuarios vuelven a comprobar el rol (ocultar
   una página no es autorizar) y el texto escrito por usuarios se escapa antes de
   mostrarse como HTML.

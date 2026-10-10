@@ -12,6 +12,106 @@ from core.ui import (
 ROLES = ["estudiante", "profesor", "maestro"]
 _ROLE_TONES = {"estudiante": "success", "profesor": "info", "maestro": "warning"}
 
+# Restablecer contraseña (core/auth.admin_reset_password): modos del selector.
+_RESET_GENERATE = "generate"
+_RESET_MANUAL = "manual"
+_RESET_MODES = {
+    _RESET_GENERATE: "Generar una contraseña temporal",
+    _RESET_MANUAL: "Escribirla yo",
+}
+
+
+def _show_reset_result(user: dict, result: dict) -> None:
+    """Resultado del restablecimiento. La clave generada se muestra UNA sola vez:
+    la vista la saca de la sesion al pintarla y no vuelve a aparecer."""
+    name = user.get("full_name") or "el usuario"
+    st.success(f"Contraseña de {name} restablecida. Deberá elegir una nueva al ingresar.")
+    if result.get("temporary_password"):
+        st.code(result["temporary_password"], language=None)
+        st.caption(
+            ":material/content_copy: Cópiala con el botón del recuadro: solo se muestra esta vez. "
+            "Entrégala en persona (no por chat ni en público); al ingresar, el usuario deberá cambiarla."
+        )
+    if result.get("email_requested"):
+        if result.get("email_sent"):
+            st.info("También se envió al correo institucional del usuario.")
+        else:
+            st.warning("No se pudo enviar el correo: entrega la contraseña en persona.")
+
+
+def _password_reset_panel(storage, user: dict, current_user: dict) -> None:
+    """Expander "Restablecer contraseña" de la tarjeta de un estudiante o profesor.
+
+    Dos pasos: elegir como se define la clave y luego confirmar. Las keys llevan
+    un contador que cambia tras cada restablecimiento para dejar el formulario limpio."""
+    uid = user["id"]
+    result = st.session_state.pop(f"pwreset_result_{uid}", None)
+    if result:
+        _show_reset_result(user, result)
+
+    nonce = st.session_state.get(f"pwreset_nonce_{uid}", 0)
+    confirm_key = f"pwreset_confirm_{uid}"
+    with st.expander(":material/key: Restablecer contraseña", expanded=False):
+        st.caption(
+            "Para quien olvidó su contraseña. Sus sesiones abiertas se cerrarán y, al ingresar "
+            "con la nueva, la app le pedirá elegir una propia."
+        )
+        mode = st.radio(
+            "Nueva contraseña", list(_RESET_MODES), format_func=_RESET_MODES.get, horizontal=True,
+            key=f"pwreset_mode_{uid}_{nonce}",
+        )
+        new_pw = confirm_pw = None
+        if mode == _RESET_MANUAL:
+            new_pw = st.text_input("Contraseña nueva", type="password", key=f"pwreset_pw_{uid}_{nonce}")
+            confirm_pw = st.text_input(
+                "Confirmar contraseña nueva", type="password", key=f"pwreset_pw2_{uid}_{nonce}"
+            )
+            st.caption(f"Al menos {auth.MIN_PASSWORD_LENGTH} caracteres.")
+        send_email = False
+        if auth.email_delivery_configured():
+            send_email = st.checkbox(
+                "Enviar la contraseña temporal al correo del usuario", value=False,
+                key=f"pwreset_mail_{uid}_{nonce}",
+            )
+
+        if st.button("Restablecer contraseña", icon=":material/lock_reset:", key=f"pwreset_start_{uid}_{nonce}"):
+            error = auth.validate_new_password(new_pw, confirm_pw) if mode == _RESET_MANUAL else None
+            if error:
+                st.session_state.pop(confirm_key, None)
+                st.error(error)
+            else:
+                st.session_state[confirm_key] = True
+
+        if st.session_state.get(confirm_key):
+            st.warning(
+                f"¿Restablecer la contraseña de {user.get('full_name') or 'este usuario'}? "
+                "La actual dejará de funcionar y sus sesiones abiertas se cerrarán."
+            )
+            c_yes, c_no = st.columns(2)
+            if c_yes.button("Sí, restablecer", type="primary", key=f"pwreset_yes_{uid}_{nonce}",
+                            use_container_width=True):
+                error = auth.validate_new_password(new_pw, confirm_pw) if mode == _RESET_MANUAL else None
+                outcome = None
+                if not error:
+                    outcome, error = auth.admin_reset_password(
+                        storage, current_user, uid,
+                        new_password=new_pw if mode == _RESET_MANUAL else None, send_email=send_email,
+                    )
+                if error:
+                    st.error(error)
+                else:
+                    st.session_state.pop(confirm_key, None)
+                    st.session_state[f"pwreset_nonce_{uid}"] = nonce + 1
+                    st.session_state[f"pwreset_result_{uid}"] = {
+                        "temporary_password": outcome.get("temporary_password"),
+                        "email_requested": outcome.get("email_requested"),
+                        "email_sent": outcome.get("email_sent"),
+                    }
+                    st.rerun()
+            if c_no.button("Cancelar", key=f"pwreset_no_{uid}_{nonce}", use_container_width=True):
+                st.session_state.pop(confirm_key, None)
+                st.rerun()
+
 
 def _user_card(storage, user: dict, current_user: dict) -> None:
     is_active = user.get("status") == "active"
@@ -20,6 +120,8 @@ def _user_card(storage, user: dict, current_user: dict) -> None:
         badges = [{"text": ROLE_LABELS.get(role, role), "tone": _ROLE_TONES.get(role, "neutral")}]
         badges.append({"text": "Activo", "tone": "success", "icon": "●"} if is_active
                       else {"text": "Deshabilitado", "tone": "danger", "icon": "●"})
+        if auth.must_change_password(user):
+            badges.append({"text": "Clave temporal", "tone": "warning", "icon": ":material/key:"})
         c1, c2, c3, c4 = st.columns([3, 2, 2, 2], vertical_alignment="center")
         c1.markdown(
             card_header_html(
@@ -83,6 +185,11 @@ def _user_card(storage, user: dict, current_user: dict) -> None:
                         except ValueError as exc:
                             st.error(str(exc))
 
+        # Solo estudiantes y profesores ajenos: la propia clave se cambia en Mi
+        # perfil y la de otro maestro no se restablece desde aqui.
+        if auth.can_reset_password(current_user, user):
+            _password_reset_panel(storage, user, current_user)
+
 
 def render():
     storage = st.session_state.storage
@@ -100,6 +207,7 @@ def render():
     with tab_usuarios:
         st.caption(
             "Puedes corregir nombre, ID, correo y programa, además de activar cuentas o cambiar roles. "
+            "Si un estudiante o profesor olvidó su contraseña, restablécela desde su tarjeta. "
             "El registro solo otorga profesor si el correo ya está en la lista blanca."
         )
         users = storage.get_all_users()

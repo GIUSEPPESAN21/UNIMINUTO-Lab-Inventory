@@ -1,5 +1,35 @@
 # Changelog
 
+## v1.14.0 — (en preparación)
+
+### Restablecer contraseñas
+- **Usuarios → 🔑 Restablecer contraseña** en la tarjeta de cada estudiante y
+  profesor: el maestro genera una contraseña temporal (12 caracteres aleatorios en
+  tres grupos, sin `0/O` ni `1/l/I`) o escribe una (con confirmación y la misma
+  regla del registro: mínimo 8 caracteres). Paso de confirmación antes de aplicar;
+  la temporal se muestra **una sola vez** con botón de copiar y el consejo de
+  entregarla en persona. Con SMTP configurado, casilla opcional (desmarcada) para
+  enviarla al correo del usuario.
+- **Cambio obligatorio al ingresar:** la cuenta queda con `must_change_password` y,
+  al entrar con la temporal, una pantalla pide elegir una contraseña propia (no
+  puede repetir la temporal) antes de mostrar la app; la tarjeta muestra la
+  pastilla «Clave temporal» hasta entonces. El resto de cuentas entra como siempre.
+- **Sesiones cerradas:** la nueva columna `password_changed_at` cierra en la
+  siguiente recarga las sesiones abiertas antes del cambio
+  (`auth.validate_session`); el restablecimiento también levanta el bloqueo por
+  intentos fallidos.
+- **Política:** solo un maestro activo (rol revalidado contra la base), solo a
+  estudiantes y profesores; ni la propia (se cambia en Mi perfil) ni la de otro
+  maestro.
+- **Auditoría** en `trace_events` (evento `password_reset`: quién, a quién, cuándo,
+  modo, si se envió correo) sin la contraseña ni su hash.
+- La hoja `users` suma `must_change_password` y `password_changed_at`; las bases
+  anteriores se completan solas al cargar. Nuevas funciones en `core/auth.py`:
+  `admin_reset_password`, `complete_forced_password_change`,
+  `generate_temporary_password`, `validate_new_password`, `must_change_password`.
+- Pruebas: `tests/test_password_reset.py` (unitarias) y
+  `tests/test_password_reset_ui.py` (AppTest de la página Usuarios y del ingreso).
+
 ## v1.13.1 — La etiqueta vuelve a su formato de siempre
 
 ### Cambiado

@@ -75,6 +75,13 @@ if st.session_state.get("login_at") is None:
     st.session_state.login_at = datetime.now(timezone.utc)
 user = session_user
 
+# Clave restablecida por el perfil maestro: antes de usar la app el usuario elige
+# una propia (views/perfil.py). Las demas cuentas siguen el flujo de siempre.
+if auth.must_change_password(user):
+    from views import perfil
+    perfil.render_forced_password_change()
+    st.stop()
+
 from views import inicio, escanear, inventario, prestamos, reservas, solicitudes, trazabilidad, usuarios, reportes, acerca_de, perfil
 
 pages = {
