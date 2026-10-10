@@ -71,3 +71,53 @@ def test_student_self_registration_end_to_end():
 
     assert not at.exception
     assert any("estudiante" in s.value.lower() for s in at.success)
+
+
+def _login(role: str, email: str):
+    at = AppTest.from_file(APP_PATH)
+    at.run()
+    at.session_state["storage"].create_user(
+        full_name="Usuario de Prueba", email=email,
+        password_hash=auth.hash_password("ClaveSegura123"), role=role,
+    )
+    at.text_input[0].input(email)
+    at.text_input[1].input("ClaveSegura123")
+    at.button[0].click().run()
+    assert not at.exception
+    return at
+
+
+def test_ubicaciones_in_menu_for_managers_only():
+    manager = _login("maestro", "maestro.ubic@uniminuto.edu.co")
+    assert "ubicaciones" in manager.session_state["pages"]
+    student = _login("estudiante", "estudiante.ubic@uniminuto.edu.co")
+    assert "ubicaciones" not in student.session_state["pages"]
+
+
+def _render_ubicaciones_page():
+    import streamlit as st
+
+    from core.storage import LabStorage
+    from views import ubicaciones
+
+    if "storage" not in st.session_state:
+        st.session_state.storage = LabStorage()
+    st.session_state.user = {"id": "u1", "role": st.session_state.get("_role", "maestro"), "full_name": "T"}
+    ubicaciones.render_page()
+
+
+def test_ubicaciones_page_has_shelf_and_table_creation():
+    at = AppTest.from_function(_render_ubicaciones_page)
+    at.run()
+    assert not at.exception
+    labels = [e.label for e in at.expander]
+    assert any("Crear estantería" in label for label in labels)
+    assert any("mesa de trabajo" in label.lower() for label in labels)
+
+
+def test_ubicaciones_page_blocked_for_students():
+    at = AppTest.from_function(_render_ubicaciones_page)
+    at.session_state["_role"] = "estudiante"
+    at.run()
+    assert not at.exception
+    assert not any("Crear estantería" in e.label for e in at.expander)

@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.14.1 — Ubicaciones a un clic
+
+- **Nueva página «Ubicaciones»** en el menú lateral (Gestión) y acceso rápido «Estanterías y mesas» en Inicio:
+  crear estanterías con sus pisos, mesas de trabajo, exhibición Lego y zonas, con sus códigos y etiquetas.
+  Antes solo estaba como quinta pestaña dentro de Inventario, difícil de ver (sobre todo en el celular). La pestaña se conserva.
+- Pruebas: la página aparece solo para profesor/maestro y muestra los formularios de creación.
+
 ## v1.14.0 — Correos, contraseñas, fotos, chips NFC, ubicaciones y generador más preciso
 
 ### Restablecer contraseñas
