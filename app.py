@@ -90,6 +90,7 @@ if auth.must_change_password(user):
 
 from views import inicio, escanear, inventario, prestamos, reservas, solicitudes, trazabilidad, usuarios, reportes, acerca_de, perfil
 from views import nfc as nfc_page
+from views import ubicaciones as ubicaciones_page
 
 pages = {
     "inicio": st.Page(inicio.render, title="Inicio", icon=":material/home:", default=True, url_path="inicio"),
@@ -102,6 +103,7 @@ pages = {
 
 if user["role"] in permissions.MANAGER_ROLES:
     pages["inventario"] = st.Page(inventario.render, title="Inventario", icon=":material/inventory_2:", url_path="inventario")
+    pages["ubicaciones"] = st.Page(ubicaciones_page.render_page, title="Ubicaciones", icon=":material/map:", url_path="ubicaciones")
     pages["reportes"] = st.Page(reportes.render, title="Reportes", icon=":material/bar_chart:", url_path="reportes")
     pages["nfc"] = st.Page(nfc_page.render, title="Chips NFC", icon=":material/nfc:", url_path="nfc")
 
@@ -116,7 +118,7 @@ st.session_state.pages = pages
 # Navegacion agrupada por secciones para que el sidebar sea facil de leer.
 nav_sections = {"Principal": [pages["inicio"], pages["escanear"], pages["solicitudes"], pages["trazabilidad"], pages["reservas"], pages["prestamos"]]}
 if user["role"] in permissions.MANAGER_ROLES:
-    nav_sections["Gestión"] = [pages["inventario"], pages["reportes"], pages["nfc"]]
+    nav_sections["Gestión"] = [pages["inventario"], pages["ubicaciones"], pages["reportes"], pages["nfc"]]
 if user["role"] in permissions.ADMIN_ROLES:
     nav_sections["Administración"] = [pages["usuarios"]]
 nav_sections["Mi cuenta"] = [pages["perfil"], pages["acerca_de"]]

@@ -14,8 +14,10 @@ Solo profesor/maestro crean o editan; cualquiera que escanee ve lo que guarda.
 import pandas as pd
 import streamlit as st
 
-from core import barcode, labels, places
-from core.ui import badge_html, empty_state, esc, icon_html, section_title, stat_cards
+from core import barcode, labels, permissions, places
+from core.ui import (
+    badge_html, empty_state, esc, guard_role, icon_html, page_header, section_title, stat_cards,
+)
 from views.location_guide import render_location_guide
 
 FLASH_KEY = "places_flash"
@@ -251,6 +253,20 @@ def render(storage, user: dict, spec) -> None:
     with st.expander(":material/add_location: Registrar mesa de trabajo, exhibición Lego o zona"):
         _render_create_place(storage, user, items)
         st.caption(barcode.LOCATION_FORMAT_HELP)
+
+
+def render_page() -> None:
+    """Pagina «Ubicaciones» del menu lateral: el mismo gestor que la pestaña de
+    Inventario, a un clic para profesor y maestro."""
+    storage = st.session_state.storage
+    user = st.session_state.user
+    if not guard_role(user, permissions.MANAGER_ROLES, "las Ubicaciones"):
+        return
+    page_header(
+        "Ubicaciones", icon=":material/map:",
+        subtitle="Estanterías, pisos, mesas de trabajo y zonas con su código y su etiqueta",
+    )
+    render(storage, user, labels.load_label_spec(storage))
 
 
 # ---------------------------------------------------------------------------

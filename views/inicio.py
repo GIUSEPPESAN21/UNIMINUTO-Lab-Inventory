@@ -26,6 +26,7 @@ _ACTIONS = [
     ("reservas", "Reservar laboratorio", "🗓️", "Agenda una actividad o el laboratorio completo."),
     ("prestamos", "Ver préstamos", "📋", "Consulta qué está prestado y qué falta devolver."),
     ("inventario", "Ir a Inventario", "📦", "Registra, edita e imprime etiquetas de productos."),
+    ("ubicaciones", "Estanterías y mesas", "🗄️", "Crea estanterías, pisos, mesas de trabajo y sus etiquetas."),
     ("reportes", "Reportes", "📊", "Indicadores y exportaciones del laboratorio."),
 ]
 

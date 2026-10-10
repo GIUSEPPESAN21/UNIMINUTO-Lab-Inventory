@@ -137,7 +137,7 @@ etiquetas más altas crecen hasta el 36 % del alto.
 
 ### Ubicaciones con código (estanterías, pisos, mesas)
 
-En **Inventario → 🗺️ Ubicaciones** cada estantería, piso, mesa de trabajo o zona tiene
+En el menú lateral **Gestión → Ubicaciones** (y también en **Inventario → 🗺️ Ubicaciones**; solo profesor y maestro) cada estantería, piso, mesa de trabajo o zona tiene
 su propia etiqueta con código de barras, para pegarla en el lugar y escanearla. Son ítems
 de tipo `location` en la misma hoja `items` (no cambia el esquema del Excel).
 
