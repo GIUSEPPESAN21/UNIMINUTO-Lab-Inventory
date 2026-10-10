@@ -47,6 +47,24 @@ EVENT_LABELS = {
 }
 SERVICE_STAGES = (EVENT_SERVICE_STARTED, EVENT_SERVICE_DELIVERED)
 
+# Fotos de los objetos (core/photos.py): cada alta o borrado de una foto queda
+# en la cadena de custodia del producto. Tipos de foto: al registrar el objeto,
+# de su estado (p. ej. al dar salida o reingresar) y de un conteo de inventario.
+EVENT_PHOTO_ADDED = "photo_added"
+EVENT_PHOTO_DELETED = "photo_deleted"
+PHOTO_EVENTS = (EVENT_PHOTO_ADDED, EVENT_PHOTO_DELETED)
+EVENT_TYPES = EVENT_TYPES + PHOTO_EVENTS
+EVENT_LABELS.update({EVENT_PHOTO_ADDED: "Foto agregada", EVENT_PHOTO_DELETED: "Foto eliminada"})
+PHOTO_KIND_REGISTRO = "registro"
+PHOTO_KIND_ESTADO = "estado"
+PHOTO_KIND_INVENTARIO = "inventario"
+PHOTO_KINDS = (PHOTO_KIND_REGISTRO, PHOTO_KIND_ESTADO, PHOTO_KIND_INVENTARIO)
+PHOTO_KIND_LABELS = {
+    PHOTO_KIND_REGISTRO: "Registro",
+    PHOTO_KIND_ESTADO: "Estado",
+    PHOTO_KIND_INVENTARIO: "Inventario",
+}
+
 # Cómo quedó confirmado cada punto de control de la ruta.
 METHOD_SCAN = "scan"            # se escaneó o escribió el código de su etiqueta
 METHOD_ARRIVAL = "arrival"      # punto sin etiqueta: el estudiante confirmó que llegó
@@ -846,6 +864,16 @@ _EVENT_ICONS = {
     EVENT_ROUTE_VERIFIED: "🧭", EVENT_PICKED_UP: "🤝", EVENT_RECEIPT_CHECKED: "🔏",
     EVENT_SERVICE_STARTED: "🛠️", EVENT_SERVICE_DELIVERED: "📦",
 }
+_EVENT_ICONS.update({EVENT_PHOTO_ADDED: "📷", EVENT_PHOTO_DELETED: "🗑️"})
+
+
+def _photo_detail(event: dict, info: dict) -> str:
+    """Detalle de un evento de foto en la cadena de custodia, p. ej.
+    «Carlos Ruiz · foto de estado · rayón en la carcasa»."""
+    kind = PHOTO_KIND_LABELS.get(info.get("kind"), "")
+    parts = [event.get("actor_name") or event.get("actor_email") or "",
+             f"foto de {kind.lower()}" if kind else "", info.get("note") or ""]
+    return " · ".join(part for part in parts if part)
 
 
 def custody_timeline(history: list, requests: list, events: list, names: dict = None) -> list:
@@ -885,6 +913,8 @@ def custody_timeline(history: list, requests: list, events: list, names: dict = 
         elif kind == EVENT_PICKED_UP:
             detail = (f"{event.get('actor_name') or ''} · {info.get('quantity', 0)} u. · solicitud "
                       f"{short_id(event.get('request_id'))}" + ("" if info.get("route_verified") else " · sin ruta"))
+        elif kind in PHOTO_EVENTS:
+            detail = _photo_detail(event, info)
         entries.append((to_datetime(event.get("created_at")), {
             "title": EVENT_LABELS.get(kind, kind or "Evento"), "icon": _EVENT_ICONS.get(kind, "•"),
             "detail": detail.strip(" ·"),
