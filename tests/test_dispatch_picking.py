@@ -347,3 +347,15 @@ def test_manual_confirmation_panel_is_open_in_scenario_a_and_gated_by_the_checkb
     done.click().run()
     assert not at.exception
     assert _events(storage, request_id, traceability.EVENT_ORDER_PICKED)
+
+
+def test_one_click_takes_the_order_and_opens_the_picking_panel(lab):
+    storage, people = lab
+    row, _, _ = service_requests.submit_request(storage, people["estudiante"], "product", CODE, 2)
+    assert service_requests.review_request(storage, row["id"], "approved", people["encargado"])[0]
+    at = _open_despacho(people["operario"])
+    [b for b in at.button if b.label == "Tomar y empezar picking"][0].click().run()
+    assert not at.exception
+    assert dispatch.assigned_picker(storage.get_trace_events(request_id=row["id"])) == people["operario"]["id"]
+    assert picking.active_request(people["operario"]["id"]) == row["id"]            # el panel queda abierto
+    assert "Picking · " in _text(at.markdown, at.caption, at.subheader) or any("Código leído" in t.label for t in at.text_input)

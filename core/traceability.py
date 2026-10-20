@@ -54,6 +54,7 @@ EVENT_ORDER_SCAN_FAILED = "order_scan_failed"
 EVENT_ROLE_CHANGED = "role_changed"
 EVENT_WHITELIST_CHANGED = "whitelist_changed"
 EVENT_SYNC_CONFLICT_RESOLVED = "sync_conflict_resolved"
+EVENT_DATA_PURGED = "data_purged"
 EVENT_SESSION_LOGIN = "session_login"
 EVENT_SESSION_LOGOUT = "session_logout"
 EVENT_SESSION_EXPIRED = "session_expired"
@@ -140,7 +141,7 @@ EVENT_TYPES = (
     EVENT_ORDER_RECEIVED, EVENT_ORDER_DELIVERED, EVENT_ORDER_REWORK,
     EVENT_ORDER_RETURNED_TO_SHELF, EVENT_ORDER_CLIENT_CONFIRMED,
     EVENT_ORDER_ACTION_FAILED, EVENT_ORDER_SCAN_FAILED, EVENT_ROLE_CHANGED,
-    EVENT_WHITELIST_CHANGED, EVENT_SYNC_CONFLICT_RESOLVED,
+    EVENT_WHITELIST_CHANGED, EVENT_SYNC_CONFLICT_RESOLVED, EVENT_DATA_PURGED,
     EVENT_SESSION_LOGIN, EVENT_SESSION_LOGOUT, EVENT_SESSION_EXPIRED,
     EVENT_NFC_TAP, EVENT_NFC_TAG_WRITTEN, EVENT_NFC_TAG_REMOVED,
     EVENT_COUNT_STARTED, EVENT_COUNT_MARK, EVENT_COUNT_CLOSED,
@@ -170,6 +171,7 @@ EVENT_LABELS = {
     EVENT_ROLE_CHANGED: "Rol cambiado",
     EVENT_WHITELIST_CHANGED: "Lista blanca modificada",
     EVENT_SYNC_CONFLICT_RESOLVED: "Conflicto de sincronización resuelto",
+    EVENT_DATA_PURGED: "Datos operativos borrados",
     EVENT_SESSION_LOGIN: "Inicio de sesión",
     EVENT_SESSION_LOGOUT: "Cierre de sesión",
     EVENT_SESSION_EXPIRED: "Sesión vencida",
@@ -627,6 +629,10 @@ def describe_event(event: dict) -> str:
     if kind == EVENT_SYNC_CONFLICT_RESOLVED:
         return "Resolvió un conflicto de sincronización conservando la versión " + (
             "de GitHub" if details.get("kept") == "remote" else "de esta app")
+    if kind == EVENT_DATA_PURGED:
+        removed = {key: value for key, value in (details.get("removed") or {}).items() if value}
+        return "Borró datos operativos: " + (", ".join(f"{label} ({count})" for label, count in removed.items())
+                                            or "nada que borrar")
     pairs = [f"{key}: {value}" for key, value in details.items() if value not in ("", None, [], {})]
     return " · ".join(pairs[:6])
 

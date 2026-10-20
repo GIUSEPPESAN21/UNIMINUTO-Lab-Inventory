@@ -62,8 +62,8 @@ def test_old_labels_are_gone_from_the_interface_code():
 def test_readme_documents_the_four_roles_without_the_old_labels():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     roles = readme[readme.index("## Roles"):readme.index("**Seguridad del registro:**")]
-    for label in ("**Cliente**", "**Operario**", "**Supervisor**", "**Administrador**"):
-        assert label in roles
+    for label in permissions.ROLE_LABELS.values():
+        assert f"**{label}**" in roles
     for old in OLD:
         assert old not in readme
 

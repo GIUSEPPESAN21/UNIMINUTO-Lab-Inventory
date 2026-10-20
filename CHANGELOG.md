@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.17.0 — Más simple: Buscar, Solicitudes unificadas y datos limpios
+
+### Errores
+- **`StreamlitDuplicateElementKey` en Despacho:** dos pedidos del mismo producto repetían la clave del popover
+  «Foto de estado». Ahora la clave incluye el pedido (prueba de regresión).
+- **Las pestañas ya no saltan:** Reportes (y Usuarios, Despacho, Solicitudes, Inventario, Chips NFC, Préstamos y
+  Trazabilidad) usan `core.ui.persistent_tabs`, que recuerda la pestaña abierta tras un `st.rerun()`. Confirmar una
+  sugerencia de *Salud del inventario* ya no vuelve a *Uso del laboratorio*. Una prueba impide `st.tabs` a secas.
+- Los avisos de éxito ya no se borran con el `st.rerun()` (`ui.flash` / `show_flash`).
+
+### Buscar y Solicitudes
+- **Buscar** reemplaza a Escanear (la ruta `/escanear` y los chips NFC no cambian): un solo cuadro para códigos,
+  nombres (sin importar tildes) y `#pedido` (`core/search.py`). El cliente puede pedir el producto desde el resultado.
+- **Solicitudes** une producto, servicio y **reserva** (ya no hay página Reservas) en *Nueva solicitud*,
+  *Mis pedidos* y *Gestionar*. **Mis pedidos** muestra el avance en palabras del cliente —Enviada → Aprobada →
+  Preparando → Listo para reclamar → Completado— y la acción que le toca (`core/tracker.py`).
+- **Trazabilidad** queda para el personal, con auditoría en frases (`traceability.describe_event`) en lugar de JSON y
+  filtros plegados. El cliente sigue su pedido en Mis pedidos; el toque NFC de su ruta lo lleva a Solicitudes.
+
+### Despacho
+- **Tomar y empezar picking** en un clic.
+- **Confirmación manual** sin lector: casilla de autorización, nombre del operario y mensaje quedan registrados
+  (`manual_confirmation` en el evento de picking; método `manual`).
+
+### Cargos
+- Etiquetas con el cargo real: **Estudiante (Cliente)**, **Operario (Auxiliar de laboratorio)**, **Supervisor
+  (Encargado del laboratorio)**, **Supervisor (Profesor)** y **Administrador**; `ROLE_SHORT_LABELS` para «Nombre (cargo)».
+
+### Datos
+- **Usuarios → Datos** (`purge_data`, solo administrador): vacía solicitudes y su trazabilidad, reservas, correos y
+  eventos de sesión/NFC (y, opcional, préstamos devueltos) con confirmación escrita, copia `.bak` y constancia. Los
+  préstamos abiertos, personas, productos y fotos no se tocan. Todas las columnas del Excel están en uso.
+
+### Pruebas
+- `test_unified_views`, `test_search_tracker`, `test_purge`, `test_ui_tabs`; la matriz incluye `purge_data`.
+
 ## v1.16.0 — Datos a salvo
 
 Primera entrega de la lista de mejoras (`MEJORAS_PROPUESTAS_v1.16.md`): cierra la pérdida silenciosa de

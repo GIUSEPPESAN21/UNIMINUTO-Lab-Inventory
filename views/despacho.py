@@ -86,9 +86,13 @@ def _queue_fragment(storage, user: dict) -> None:
         with st.container(border=True):
             _heading(request, events)
             _order_context(storage, request, f"queue_{request['id']}")
-            if st.button("Tomar pedido", key=f"claim_{request['id']}", type="primary",
-                         use_container_width=True):
+            if st.button("Tomar y empezar picking", key=f"claim_{request['id']}", type="primary",
+                         use_container_width=True,
+                         help="Lo tomas y se abre el panel de picking arriba, listo para leer el código."):
                 ok, message, _ = dispatch.claim_request(storage, request["id"], user)
+                if ok:
+                    ok, message = dispatch.start_picking(storage, request["id"], user)
+                    message = "Pedido tomado. Lee el código de cada unidad o confirma manualmente." if ok else message
                 _notice(ok, message)
                 st.rerun()
 

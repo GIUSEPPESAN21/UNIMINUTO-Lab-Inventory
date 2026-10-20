@@ -2248,6 +2248,74 @@ class LabStorage:
     REVOKED_SESSIONS_KEY = "revoked_sessions"
     REVOKED_SESSIONS_LIMIT = 1000
 
+    # Datos operativos que el administrador puede vaciar desde la app (Usuarios → Datos).
+    PURGE_NOISE_EVENTS = ("session_login", "session_logout", "session_expired", "nfc_tap")
+
+    def operational_data_counts(self) -> dict:
+        """Cuántas filas hay de cada tipo de dato operativo (vista previa del borrado)."""
+        dfs = _read_excel("service_requests", "reservations", "notification_log", "trace_events", "loans")
+        events = dfs["trace_events"]
+        loans = dfs["loans"]
+        return {
+            "solicitudes": len(dfs["service_requests"]),
+            "trazabilidad": int((events["request_id"] != "").sum()),
+            "reservas": len(dfs["reservations"]),
+            "correos": len(dfs["notification_log"]),
+            "sesiones_nfc": int(events["event_type"].isin(self.PURGE_NOISE_EVENTS).sum()),
+            "prestamos_cerrados": int((loans["status"] != "out").sum()),
+            "prestamos_abiertos": int((loans["status"] == "out").sum()),
+        }
+
+    def purge_operational_data(self, actor: dict, requests: bool = True, reservations: bool = True,
+                               mail_log: bool = True, session_noise: bool = True,
+                               closed_loans: bool = False) -> dict:
+        """Vacía datos operativos de una base **real**, solo a petición del administrador.
+
+        Nunca toca personas, productos, ubicaciones, fotos, ajustes, ni los préstamos abiertos (de ellos
+        depende la disponibilidad). Guarda antes ``<base>.bak`` y deja constancia en la trazabilidad.
+        Devuelve cuántas filas quitó de cada tipo."""
+        _authorize(actor, "purge_data", "Solo un administrador puede borrar datos operativos.")
+        removed = {}
+        with _db_write():
+            dfs = _read_excel()
+            _backup_local_copy()
+            if requests:
+                removed["solicitudes"] = len(dfs["service_requests"])
+                dfs["service_requests"] = dfs["service_requests"].iloc[0:0].copy()
+                events = dfs["trace_events"]
+                linked = events["request_id"] != ""
+                removed["trazabilidad"] = int(linked.sum())
+                dfs["trace_events"] = events[~linked].reset_index(drop=True)
+                loans = dfs["loans"].copy()          # un préstamo abierto ya no apunta a una solicitud borrada
+                loans["request_id"] = ""
+                dfs["loans"] = loans
+            if reservations:
+                removed["reservas"] = len(dfs["reservations"])
+                dfs["reservations"] = dfs["reservations"].iloc[0:0].copy()
+            if mail_log:
+                removed["correos"] = len(dfs["notification_log"])
+                dfs["notification_log"] = dfs["notification_log"].iloc[0:0].copy()
+            if session_noise:
+                events = dfs["trace_events"]
+                noise = events["event_type"].isin(self.PURGE_NOISE_EVENTS)
+                removed["sesiones_nfc"] = int(noise.sum())
+                dfs["trace_events"] = events[~noise].reset_index(drop=True)
+            if closed_loans:
+                loans = dfs["loans"]
+                done = loans["status"] != "out"
+                removed["prestamos_cerrados"] = int(done.sum())
+                dfs["loans"] = loans[~done].reset_index(drop=True)
+            if actor is not None:
+                audit = _admin_audit_row(actor, "data_purged", {"removed": removed})
+                dfs["trace_events"] = pd.concat([dfs["trace_events"], pd.DataFrame([audit])], ignore_index=True)
+            _write_and_sync(dfs)
+            _bump_data_version(reload=True)       # las listas de Despacho se recalculan desde cero
+        from core import dispatch, picking
+
+        dispatch.reset_orders_cache()
+        picking.reset()
+        return removed
+
     def reset_simulation(self) -> dict:
         """Vacía lo operativo (préstamos, solicitudes, eventos, reservas, correos y las
         salidas/reingresos del historial) de una base de SIMULACIÓN de la lúdica.

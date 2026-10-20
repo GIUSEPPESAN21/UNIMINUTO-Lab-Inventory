@@ -139,6 +139,7 @@ CAPABILITY_TABLE = {
     permissions.CAP_DELETE_PHOTOS: {"maestro"},
     permissions.CAP_DISPATCH_SETTINGS: {"maestro"},
     permissions.CAP_RESOLVE_SYNC: {"maestro"},
+    permissions.CAP_PURGE_DATA: {"maestro"},
 }
 
 

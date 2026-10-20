@@ -214,9 +214,11 @@ La misma guía está en la pestaña **🖨️ Etiquetas**.
 
 ## Operación del laboratorio
 
-### Reservas
+### Reservas (dentro de Solicitudes)
 
-Todo usuario autenticado puede solicitar una actividad o el laboratorio
+Las reservas ya no tienen página propia: se piden en **Solicitudes → Nueva solicitud → Reserva** y se
+siguen en **Mis pedidos**; quien las aprueba las ve en **Solicitudes → Gestionar**. Todo usuario autenticado
+puede solicitar una actividad o el laboratorio
 completo. Las fechas se interpretan en `America/Bogota` y se guardan en UTC.
 Una reserva completa entra en conflicto con cualquier reserva aprobada que se
 solape; dos actividades distintas pueden coexistir, pero dos reservas de la
@@ -224,13 +226,30 @@ misma actividad no. Supervisor (profesor) y administrador aprueban/rechazan; el 
 cancelar. No se imponen horarios de apertura porque la documentación no los
 define.
 
-### Solicitudes de productos y servicios
+### Buscar y Solicitudes (🔎 Buscar · 📝 Solicitudes)
+
+**Buscar** (antes «Escanear») es un solo cuadro: un **código** (escaneado con la pistola o escrito) abre el
+producto o la ubicación, un **nombre** busca por nombre, categoría, descripción o ubicación sin importar tildes
+ni mayúsculas, y `#a1b2c3` abre un **pedido** (el cliente solo encuentra los suyos). Con una sola coincidencia se
+abre directo; con varias se listan. Desde el producto el cliente puede **pedirlo** (cantidad, nota y, si quiere,
+para qué día) y el personal sigue pudiendo dar salida o reingresar. La ruta de la página sigue siendo
+`/escanear`: los chips NFC ya grabados no cambian.
+
+**Solicitudes** reúne todo lo que se pide, con tres pestañas:
+
+- **Nueva solicitud:** *Producto* (se busca por nombre o código), *Servicio* o *Reserva*.
+- **Mis pedidos:** cada pedido con su avance en palabras sencillas —**Enviada → Aprobada → Preparando tu
+  pedido → Listo para reclamar → Completado**— y qué le toca hacer al cliente (por ejemplo, *Recibí mi pedido*
+  cuando ya se lo entregaron). El cliente solo ve lo suyo y no necesita Trazabilidad; si prefiere retirarlo
+  él mismo, ahí mismo tiene la **ruta verificable** hasta el producto.
+- **Gestionar** (quien aprueba): solicitudes por revisar con operarios autorizados y respuesta, y, con permiso de
+  reservas, las reservas por revisar y las próximas aprobadas.
 
 Los productos validan existencia, estado y disponibilidad tanto al solicitar
-como al aprobar. Aprobar no descuenta inventario: la salida se confirma en
-Escanear para conservar la cadena de custodia. Los servicios requieren nombre,
-descripción y fecha. Si SMTP está configurado, los administradores reciben un
-correo; si falla, la solicitud permanece guardada y muestra la advertencia.
+como al aprobar. Aprobar no descuenta inventario: lo hace el picking de Despacho (o la salida directa en
+Buscar). Los servicios requieren nombre y descripción; la fecha es opcional. Si SMTP está configurado, los
+administradores reciben un correo; si falla, la solicitud permanece guardada y muestra la advertencia.
+Los avisos (pedido enviado, aprobado…) **sobreviven a la recarga** de la página.
 
 ### Despacho: tomar, hacer picking, recibir y entregar (🚚 Despacho)
 
@@ -246,6 +265,13 @@ descuenta dos veces) o **devuelve al estante** (cierra el préstamo y repone la 
 frescos y bajo el bloqueo, en `LabStorage.transition_request`; un intento rechazado solo deja un
 evento de auditoría. Un supervisor **no aprueba su propia solicitud** (`ALLOW_SELF_APPROVAL`, apagado
 por omisión, lo permite en una demostración con una sola persona).
+
+**Menos pasos.** **Tomar y empezar picking** toma el pedido y abre el panel de picking de una vez.
+Si no hay pistola ni chip a mano, el operario puede **confirmar manualmente** (*¿Sin lector?*): marca la
+casilla de autorización y el sistema registra **su nombre**, el mensaje *«… confirma que tomó N unidad(es) de … sin
+leer su código y autoriza este registro»* y una nota opcional; cada unidad queda con el método `manual`, y
+Trazabilidad y el CSV de la lúdica lo distinguen de una lectura real. En el escenario A («Manual») ese panel
+aparece abierto.
 
 **En el teléfono.** Cada pedido muestra su **ruta** (la misma de la etiqueta: E2 › P1 › C01 …), la
 referencia de ubicación y la **foto** del producto; el panel de **picking va arriba**, antes de las
@@ -267,13 +293,13 @@ producto) nunca suma. Las lecturas **fallidas se acumulan y se guardan en UN sol
 picking completo (antes cada error escribía en el Excel y en GitHub). Si la app se reinicia a mitad de un
 picking, las lecturas pendientes se pierden (el pedido sigue «tomado» y se retoma).
 
-### Retiro por autoservicio (Escanear)
+### Retiro por autoservicio (Buscar)
 
-Por omisión (**Libre**, igual que en v1.15) un cliente puede dar salida desde **Escanear** a
+Por omisión (**Libre**, igual que en v1.15) un cliente puede dar salida desde **Buscar** a
 cualquier producto con unidades disponibles. El administrador puede endurecerlo en
 **Despacho → Ajustes → Retiro por autoservicio**:
 
-| Modo | Qué puede hacer un cliente en Escanear |
+| Modo | Qué puede hacer un cliente en Buscar |
 |---|---|
 | **Libre** | Retirar lo que esté disponible, con o sin solicitud (comportamiento actual) |
 | **Solo con solicitud aprobada** | Retirar únicamente un producto con una solicitud **aprobada a su nombre**, vinculada, y hasta la cantidad aprobada |
@@ -289,7 +315,7 @@ Cada producto muestra su ruta derivada del código V3 (estantería › piso ›
 contenedor › caja › ítem) con la etiqueta que se encontrará en cada punto. Mesa y
 Lego tienen rutas especiales; códigos libres/heredados usan `location`.
 
-- **Cliente:** con una solicitud aprobada, recorre la ruta paso a paso y
+- **Cliente** (en **Solicitudes → Mis pedidos**, ya no hay página Trazabilidad para él): con una solicitud aprobada, recorre la ruta paso a paso y
   confirma cada punto **escaneando su etiqueta** (o escribiendo el código). Si
   escanea una equivocada, la app le dice dónde está y hacia dónde ir. Estantería y
   piso se confirman al llegar o quedan probados al escanear el contenedor; si tienen
@@ -458,20 +484,21 @@ contraseña**. La hoja `users` suma las columnas `must_change_password` y
 
 ## Roles
 
-Hay cuatro etiquetas visibles y cinco **ids técnicos** estables (no cambian aunque se
-renombre una etiqueta: `ROLE_LABELS` en `core/permissions.py` es el único lugar donde viven
-los nombres).
+Cada cargo se muestra con su nombre de la vida real entre paréntesis y hay cinco **ids técnicos** estables (no
+cambian aunque se renombre una etiqueta: `ROLE_LABELS` en `core/permissions.py` es el único lugar donde viven
+los nombres; `ROLE_SHORT_LABELS` da la forma corta —Cliente, Operario, Supervisor, Administrador— para frases
+como «Ana (Cliente)»).
 
 | Etiqueta | Id técnico | Puede |
 |---|---|---|
-| **Cliente** | `estudiante` | Solicita productos y servicios, reserva, escanea y devuelve lo suyo, **confirma la recepción** de su pedido. Ve solo lo suyo |
-| **Operario** | `operario` | Toma un pedido autorizado, recorre el laboratorio, hace el **picking** unidad por unidad y lo entrega al supervisor. **No aprueba, no recibe, no ve inventario ni reportes** |
-| **Supervisor** | `encargado` | **Aprueba** solicitudes, **autoriza operarios**, **recibe** el picking del operario, lo revisa y lo **entrega al cliente**; ve las trazas y los tiempos. **No edita el inventario ni ve los préstamos de otras personas** |
-| **Supervisor** | `profesor` | Todo lo del encargado + alta/edición/baja de ítems, ubicaciones, fotos, chips NFC, conteos, reportes, reservas y **todos los préstamos** |
-| **Administrador** | `maestro` | Todo lo anterior + usuarios, roles y contraseñas, la lista blanca, correos automáticos, el escenario de despacho y el **retiro por autoservicio**, **resolver conflictos de sincronización**, eliminar fotos y ajustar cantidades tras un conteo |
+| **Estudiante (Cliente)** | `estudiante` | Busca, pide productos, servicios y reservas, sigue su pedido en **Mis pedidos**, devuelve lo suyo, **confirma la recepción** de su pedido. Ve solo lo suyo |
+| **Operario (Auxiliar de laboratorio)** | `operario` | Toma un pedido autorizado, recorre el laboratorio, hace el **picking** unidad por unidad y lo entrega al supervisor. **No aprueba, no recibe, no ve inventario ni reportes** |
+| **Supervisor (Encargado del laboratorio)** | `encargado` | **Aprueba** solicitudes, **autoriza operarios**, **recibe** el picking del operario, lo revisa y lo **entrega al cliente**; ve las trazas y los tiempos. **No edita el inventario ni ve los préstamos de otras personas** |
+| **Supervisor (Profesor)** | `profesor` | Todo lo del encargado + alta/edición/baja de ítems, ubicaciones, fotos, chips NFC, conteos, reportes, reservas y **todos los préstamos** |
+| **Administrador** | `maestro` | Todo lo anterior + usuarios, roles y contraseñas, la lista blanca, correos automáticos, el escenario de despacho y el **retiro por autoservicio**, **resolver conflictos de sincronización**, **borrar datos operativos** (Usuarios → Datos), eliminar fotos y ajustar cantidades tras un conteo |
 
-*Supervisor* es una sola etiqueta para `encargado` y `profesor`: en **Usuarios** el administrador
-los distingue como «Supervisor (encargado)» y «Supervisor (profesor)».
+Los dos supervisores se distinguen por su cargo: el **encargado del laboratorio** opera (aprueba, recibe,
+entrega) y el **profesor** además administra inventario, ubicaciones, reservas y reportes.
 
 **Seguridad por capacidad (no por nombre de rol).** Cada rol concede un conjunto de
 capacidades (`request`, `approve`, `claim`, `pick`, `receive_and_deliver`, `view_all_loans`,
@@ -656,6 +683,20 @@ Cómo se protege la base (Excel + GitHub):
 > reiniciar la app (Reboot) después de cambiar el archivo, para que descargue la
 > versión nueva. Si algo sale mal, `UNIMINUTO_LAB_DB.xlsx.bak` (en el contenedor de la app) guarda la
 > copia local anterior al último reemplazo.
+
+## Empezar de cero y pestañas que no saltan
+
+**Usuarios → Datos** (solo administrador) vacía lo operativo de prueba sin tocar personas, productos,
+ubicaciones, fotos ni ajustes: solicitudes con su trazabilidad, reservas, registro de correos, inicios de sesión y
+toques NFC antiguos, y —solo si lo marcas— los préstamos ya devueltos. **Los préstamos abiertos nunca se
+borran** (de ellos depende la disponibilidad). Pide escribir `BORRAR`, guarda antes una copia local
+`UNIMINUTO_LAB_DB.xlsx.bak` (GitHub conserva además la versión anterior en su historial) y deja una constancia
+*Datos operativos borrados* en la trazabilidad. El Excel no tiene columnas sin uso: lo que lo hace crecer son
+esas filas, que es lo que esta herramienta quita.
+
+Las pestañas de Reportes, Usuarios, Despacho, Solicitudes, Inventario, Chips NFC, Préstamos y Trazabilidad
+**recuerdan cuál está abierta** (`core.ui.persistent_tabs`): confirmar una sugerencia de *Salud del inventario*
+ya no devuelve a *Uso del laboratorio*.
 
 ## Importación masiva de inventario
 

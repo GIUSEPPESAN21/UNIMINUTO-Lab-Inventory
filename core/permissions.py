@@ -54,6 +54,7 @@ CAP_REPORTS = "reports"
 CAP_DISPATCH_REPORTS = "dispatch_reports"
 CAP_DISPATCH_SETTINGS = "dispatch_settings"
 CAP_RESOLVE_SYNC = "resolve_sync"
+CAP_PURGE_DATA = "purge_data"
 CAP_MANAGE_EMAIL = "manage_email"
 CAP_ADJUST_COUNTS = "adjust_counts"
 CAP_MANAGE_RESERVATIONS = "manage_reservations"
@@ -75,7 +76,7 @@ _PROFESSOR = {
 }
 _ADMIN = {
     CAP_MANAGE_USERS, CAP_MANAGE_EMAIL, CAP_ADJUST_COUNTS, CAP_DELETE_PHOTOS, CAP_DISPATCH_SETTINGS,
-    CAP_RESOLVE_SYNC,
+    CAP_RESOLVE_SYNC, CAP_PURGE_DATA,
 }
 
 ROLE_CAPS = {
