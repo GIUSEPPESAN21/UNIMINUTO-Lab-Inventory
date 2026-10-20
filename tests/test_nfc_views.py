@@ -276,6 +276,10 @@ def test_overview_progress_and_filters(monkeypatch):
     page = _open_page(users["prof"])
     text = _page_text(page)
     assert "Con chip probado" in text and "Grabados sin probar" in text and "Sin chip" in text
+    # Por omisión solo se ven los lugares donde van chips (estanterías, pisos, contenedores); un producto con chip
+    # aparece al elegir «Todo».
+    assert not [b for b in page.button if b.key == "nfc_removed_2-1-01-01-001"]
+    page.selectbox(key="nfc_tag_type").set_value("Todo").run()
     page.segmented_control(key="nfc_tag_status").set_value(nfc.TAG_STATUS_LABELS[nfc.TAG_WRITTEN]).run()
     cards = [b for b in page.button if b.key and b.key.startswith(("nfc_removed_", "nfc_written_"))]
     assert [b.key for b in cards] == ["nfc_removed_2-1-01-01-001"]

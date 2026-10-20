@@ -284,6 +284,22 @@ frescos y bajo el bloqueo, en `LabStorage.transition_request`; un intento rechaz
 evento de auditoría. Un supervisor **no aprueba su propia solicitud** (`ALLOW_SELF_APPROVAL`, apagado
 por omisión, lo permite en una demostración con una sola persona).
 
+**Ruta obligatoria del picking.** Antes de leer las unidades, el operario confirma la ruta **en orden**:
+**estantería → piso → contenedor → caja**. Estanterías, pisos y contenedores llevan **chip NFC** (o su código de
+barras); las cajas y los productos, código de barras. Una lectura fuera de orden no avanza (queda como lectura
+rechazada y el panel dice qué leer), «Completar picking» y la confirmación manual esperan a que la ruta esté completa y
+la ruta leída queda en la trazabilidad. Estantería y piso se exigen si están registrados en Inventario → Ubicaciones; los
+códigos libres no tienen ruta. El administrador la apaga en **Despacho → Ajustes** (`core/pick_route.py`).
+
+**Chips NFC: llegada.** Al tocar el chip de una estantería, un piso o un contenedor la app responde «Llegaste al
+contenedor «X» · N producto(s) dentro» (y, con un picking abierto, confirma ese punto de la ruta aunque el toque abra otra
+pestaña). En **Chips NFC** la vista por omisión es «Estanterías, pisos y contenedores».
+
+**Pedidos de varios productos.** El cliente usa **Agregar al pedido** en Solicitudes (o en la ficha de Buscar), ajusta
+cantidades en el carrito y lo envía todo como **una solicitud** (`order_id` compartido en `service_requests`, hasta 30
+productos distintos). El supervisor aprueba o rechaza el pedido completo, el operario lo toma completo («Tomar todo el
+pedido») y el supervisor recibe y entrega todo de una vez; el picking sigue siendo producto por producto.
+
 **Devoluciones en tres pasos (Despacho → Devoluciones).** Cuando el cliente devuelve lo prestado, pulsa
 **Devolver** (en Préstamos o en Buscar) y el préstamo **sigue abierto**: 1) un **supervisor** verifica lo que
 llegó (estado: en buen estado / con daños / incompleto, y cuántas unidades); 2) un **operario** (o un supervisor)
@@ -633,6 +649,7 @@ core/
   loans.py                Checkout / checkin / vencidos (por capacidad)
   returns.py              Devolución en tres pasos: solicitud → verificación del supervisor → almacenamiento
   pieces.py               Retiro de piezas (Lego y similares) sin inventario por pieza
+  pick_route.py           Ruta obligatoria del picking: estantería → piso → contenedor → caja
   dispatch.py             Despacho: transiciones, picking, escenarios, listas de pedidos abiertos
   picking.py              Lecturas del picking en la memoria del proceso (por usuario y pedido)
   session.py              Sesión persistente: token firmado, época y cierres de sesión

@@ -67,6 +67,8 @@ SHEET_COLUMNS = {
         "description", "needed_at", "requester_id", "requester_name", "requester_email",
         "status", "reviewed_by", "reviewed_at", "review_notes", "email_notified",
         "email_error", "created_at", "updated_at",
+        # Pedido de varios productos: todas sus líneas comparten este código (vacío = pedido de un solo producto).
+        "order_id",
     ],
     "item_history": [
         "id", "item_id", "timestamp", "type", "quantity_change",
@@ -2193,25 +2195,34 @@ class LabStorage:
     # SOLICITUDES DE PRODUCTOS Y SERVICIOS
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _service_request_row(data: dict, user: dict, now: str, order_id: str = "") -> dict:
+        return {
+            "id": _new_id(), "request_type": data["request_type"],
+            "item_id": data.get("item_id", ""), "item_name": data.get("item_name", ""),
+            "quantity": int(data.get("quantity", 0)), "service_name": data.get("service_name", ""),
+            "description": data.get("description", ""), "needed_at": data.get("needed_at", ""),
+            "requester_id": user["id"], "requester_name": user.get("full_name", ""),
+            "requester_email": user.get("institutional_email", ""), "status": "pending",
+            "reviewed_by": "", "reviewed_at": "", "review_notes": "",
+            "email_notified": False, "email_error": "", "created_at": now, "updated_at": now,
+            "order_id": order_id or data.get("order_id", ""),
+        }
+
     def create_service_request(self, data: dict, user: dict) -> dict:
+        return self.create_service_requests([data], user)[0]
+
+    def create_service_requests(self, rows: list, user: dict, order_id: str = "") -> list:
+        """Crea varias solicitudes en UNA escritura (un pedido de varios productos: todo o nada)."""
         with _db_write():
             dfs = _read_excel()
             now = _now_str()
-            row = {
-                "id": _new_id(), "request_type": data["request_type"],
-                "item_id": data.get("item_id", ""), "item_name": data.get("item_name", ""),
-                "quantity": int(data.get("quantity", 0)), "service_name": data.get("service_name", ""),
-                "description": data.get("description", ""), "needed_at": data.get("needed_at", ""),
-                "requester_id": user["id"], "requester_name": user.get("full_name", ""),
-                "requester_email": user.get("institutional_email", ""), "status": "pending",
-                "reviewed_by": "", "reviewed_at": "", "review_notes": "",
-                "email_notified": False, "email_error": "", "created_at": now, "updated_at": now,
-            }
+            created = [self._service_request_row(data, user, now, order_id) for data in rows]
             dfs["service_requests"] = pd.concat(
-                [dfs["service_requests"], pd.DataFrame([row])], ignore_index=True
+                [dfs["service_requests"], pd.DataFrame(created)], ignore_index=True
             )
             _write_and_sync(dfs)
-            return row
+            return created
 
     @firestore_retry
     def get_service_request(self, request_id: str):

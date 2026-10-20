@@ -57,7 +57,16 @@ def request_product_form(storage, user: dict, item: dict, key_prefix: str, flash
                                    help=f"Hay {available} disponible(s).")
         note = st.text_input("Nota (opcional)", placeholder="Para qué lo necesitas")
         day = st.date_input("¿Para qué día? (opcional)", value=None, min_value=datetime.now(reservations.BOGOTA_TZ).date())
-        if st.form_submit_button(":material/send: Pedir este producto", type="primary", use_container_width=True):
+        send_col, add_col = st.columns(2)
+        send = send_col.form_submit_button(":material/send: Pedir este producto", type="primary", use_container_width=True)
+        add = add_col.form_submit_button(":material/add_shopping_cart: Agregar al pedido", use_container_width=True,
+                                         help="Suma este producto a un pedido con varios productos y envíalo todo junto.")
+        if add:
+            basket_add(item, int(quantity), available)
+            flash(f"«{item.get('name')}» × {int(quantity)} agregado al pedido. Sigue agregando o envíalo desde "
+                  "Solicitudes → Nueva solicitud.", key=flash_key)
+            st.rerun()
+        if send:
             try:
                 row, notified, message = service_requests.submit_request(
                     storage, user, service_requests.TYPE_PRODUCT, item["id"], quantity,
@@ -70,6 +79,82 @@ def request_product_form(storage, user: dict, item: dict, key_prefix: str, flash
                       "Sigue su avance en Solicitudes → Mis pedidos." + ("" if notified else f" ({message})"),
                       key=flash_key)
                 st.rerun()
+
+
+BASKET_KEY = "order_basket"      # carrito del pedido de varios productos (por sesión)
+
+
+def basket_lines() -> list:
+    return [dict(line) for line in st.session_state.get(BASKET_KEY, [])]
+
+
+def basket_add(item: dict, quantity: int, available: int = None) -> None:
+    """Suma ``quantity`` de ``item`` al carrito (tope: lo disponible)."""
+    lines = basket_lines()
+    st.session_state.pop(f"basket_qty_{item['id']}", None)       # que la cantidad nueva reemplace a la del campo
+    for line in lines:
+        if line["item_id"] == item["id"]:
+            line["quantity"] += quantity
+            break
+    else:
+        lines.append({"item_id": item["id"], "name": item.get("name") or item["id"], "quantity": quantity})
+    if available is not None:
+        for line in lines:
+            if line["item_id"] == item["id"]:
+                line["quantity"] = max(1, min(line["quantity"], int(available)))
+    st.session_state[BASKET_KEY] = lines
+
+
+def basket_remove(item_id: str) -> None:
+    st.session_state.pop(f"basket_qty_{item_id}", None)
+    st.session_state[BASKET_KEY] = [line for line in basket_lines() if line["item_id"] != item_id]
+
+
+def _render_basket(storage, user: dict) -> None:
+    """El pedido de varios productos: lo agregado, una nota para todos y el envío en una sola solicitud."""
+    lines = basket_lines()
+    if not lines:
+        return
+    st.divider()
+    section_title(f"Tu pedido ({len(lines)} producto{'s' if len(lines) != 1 else ''})", icon=":material/shopping_cart:",
+                  caption="Se envía como UNA solicitud: el supervisor la aprueba completa y el laboratorio la prepara junta.")
+    for line in lines:
+        c1, c2, c3 = st.columns([4, 1, 1], vertical_alignment="center")
+        c1.markdown(f"**{esc(line['name'])}** · `{esc(line['item_id'])}`")
+        available = storage.get_available_quantity(line["item_id"])
+        quantity = c2.number_input("Cantidad", min_value=1, max_value=max(1, int(available)),
+                                   value=min(int(line["quantity"]), max(1, int(available))), step=1,
+                                   key=f"basket_qty_{line['item_id']}", label_visibility="collapsed",
+                                   help=f"Hay {available} disponible(s).")
+        if int(quantity) != int(line["quantity"]):
+            line["quantity"] = int(quantity)
+            st.session_state[BASKET_KEY] = [dict(line) if row["item_id"] == line["item_id"] else row for row in lines]
+        if c3.button(":material/delete:", key=f"basket_del_{line['item_id']}", help="Quitar del pedido",
+                     use_container_width=True):
+            basket_remove(line["item_id"])
+            st.rerun()
+    with st.form("basket_send_form"):
+        note = st.text_input("Nota para el laboratorio (opcional)", placeholder="Para qué lo necesitas")
+        day = st.date_input("¿Para qué día? (opcional)", value=None, min_value=datetime.now(reservations.BOGOTA_TZ).date())
+        c1, c2 = st.columns([3, 1])
+        send = c1.form_submit_button(f":material/send: Enviar pedido de {len(lines)} producto(s)", type="primary",
+                                     use_container_width=True)
+        clear = c2.form_submit_button("Vaciar", use_container_width=True)
+    if clear:
+        st.session_state[BASKET_KEY] = []
+        st.rerun()
+    if send:
+        try:
+            rows, notified, message = service_requests.submit_order(
+                storage, user, [{"item_id": line["item_id"], "quantity": line["quantity"]} for line in lines],
+                description=note, needed_at=_needed_at(day))
+        except ValueError as exc:
+            st.error(str(exc))
+        else:
+            st.session_state[BASKET_KEY] = []
+            flash(f"Pedido enviado: {len(rows)} producto(s) en una sola solicitud. Sigue su avance en Mis pedidos."
+                  + ("" if notified else f" ({message})"), key=_FLASH)
+            st.rerun()
 
 
 def _pick_product(storage, key: str):
@@ -103,6 +188,7 @@ def _render_new(storage, user: dict) -> None:
     if request_type == service_requests.TYPE_PRODUCT:
         item = _pick_product(storage, "request_product")
         if item is None:
+            _render_basket(storage, user)
             return
         parent = storage.get_item(item.get("parent_id")) if item.get("parent_id") else None
         c1, c2 = st.columns([1, 2], vertical_alignment="center")
@@ -111,6 +197,7 @@ def _render_new(storage, user: dict) -> None:
         with st.expander(":material/pin_drop: ¿Dónde está?", expanded=False):
             render_location_guide(item, parent, key_prefix=f"request_guide_{item['id']}")
         request_product_form(storage, user, item, key_prefix=f"new_{item['id']}")
+        _render_basket(storage, user)
         return
 
     with st.form("service_request_form"):
@@ -191,6 +278,28 @@ def render_request_status(storage, user: dict, row: dict, events: list = None, l
                 render_verifiable_route(storage, row, user, key_prefix="trace_route")
 
 
+def _order_status(storage, user: dict, order: dict) -> None:
+    """Pedido de varios productos: encabezado con el resumen y cada producto con su propio avance."""
+    lines = order["lines"]
+    first = lines[0][0]
+    total = sum(int(row.get("quantity") or 0) for row, *_ in lines)
+    open_lines = [row for row, events, _, closed in lines
+                  if not closed and row.get("status") in ("pending", "approved")
+                  and not traceability.dispatch_started(events)
+                  and not traceability.first_event(events, traceability.EVENT_PICKED_UP)]
+    with st.container(border=True):
+        st.markdown(f"**Pedido {esc(order['order_id'].upper())}** · {len(lines)} productos · {total} unidades")
+        st.caption(f"Enviado {_local(first.get('created_at'))}. El supervisor lo aprueba completo y el laboratorio lo "
+                   "prepara junto; cada producto muestra su avance.")
+        for row, events, loan, _ in lines:
+            render_request_status(storage, user, row, events, loan, key_prefix=f"order_{order['order_id']}")
+        if open_lines and permissions.has_cap(user, permissions.CAP_CANCEL_OWN_REQUEST):
+            if st.button("Cancelar todo el pedido", key=f"order_cancel_{order['order_id']}", use_container_width=True):
+                ok, message = service_requests.cancel_order(storage, order["order_id"], user)
+                flash(message, "success" if ok else "error", key=_FLASH)
+                st.rerun()
+
+
 def _reservation_status(storage, row: dict, user: dict) -> None:
     progress = tracker.reservation_tracker(row)
     with st.container(border=True):
@@ -218,12 +327,20 @@ def _render_mine(storage, user: dict) -> None:
     loans = {loan["id"]: loan for loan in storage.get_all_loans() if loan.get("user_id") == user["id"]}
 
     entries = []
-    for row in requests:
-        events = index.get(row["id"], [])
-        pickup = traceability.first_event(events, traceability.EVENT_PICKED_UP)
-        loan = loans.get(pickup.get("loan_id")) if pickup else None
-        entries.append((row.get("created_at") or "", "request", row, events, loan,
-                        _is_closed(tracker.client_tracker(row, events, loan))))
+    for group in service_requests.group_by_order(requests):
+        lines = []
+        for row in group["rows"]:
+            events = index.get(row["id"], [])
+            pickup = traceability.first_event(events, traceability.EVENT_PICKED_UP)
+            loan = loans.get(pickup.get("loan_id")) if pickup else None
+            lines.append((row, events, loan, _is_closed(tracker.client_tracker(row, events, loan))))
+        if len(lines) == 1:
+            row, events, loan, closed = lines[0]
+            entries.append((row.get("created_at") or "", "request", row, events, loan, closed))
+        else:        # pedido de varios productos: una sola tarjeta con sus líneas
+            first = group["rows"][0]
+            entries.append((first.get("created_at") or "", "order", {"order_id": group["order_id"], "lines": lines},
+                            [], None, all(line[3] for line in lines)))
     for row in mine_reservations:
         entries.append((row.get("created_at") or "", "reservation", row, [], None,
                         _is_closed(tracker.reservation_tracker(row))))
@@ -233,6 +350,8 @@ def _render_mine(storage, user: dict) -> None:
         _, kind, row, events, loan, _ = entry
         if kind == "request":
             render_request_status(storage, user, row, events, loan)
+        elif kind == "order":
+            _order_status(storage, user, row)
         else:
             _reservation_status(storage, row, user)
 
@@ -253,12 +372,44 @@ def _render_mine(storage, user: dict) -> None:
 # Gestionar (quien aprueba)
 # ---------------------------------------------------------------------------
 
+def _review_order(storage, user: dict, group: dict) -> None:
+    """Pedido de varios productos pendiente: se aprueba o rechaza completo."""
+    rows = group["rows"]
+    first = rows[0]
+    with st.expander(f"Pedido de {len(rows)} productos · {first.get('requester_name')} · "
+                     f"{_local(first.get('needed_at'))}", expanded=False):
+        st.markdown(f"**Pedido {esc(group['order_id'].upper())}** · {esc(first.get('requester_name'))}")
+        for row in rows:
+            st.markdown(f"- {esc(_request_title(row))} × {esc(row.get('quantity'))} "
+                        f"(disponibles ahora: {storage.get_available_quantity(row.get('item_id'))})")
+        if first.get("description"):
+            st.info(f"Nota del cliente: {first['description']}", icon=":material/sticky_note_2:")
+        with st.form(f"review_order_{group['order_id']}"):
+            notes = st.text_input("Respuesta para el solicitante (opcional)")
+            own = first.get("requester_id") == user["id"] and not dispatch.allow_self_approval()
+            if own:
+                st.caption("Es tu propio pedido: lo aprueba otra persona.")
+            c1, c2 = st.columns(2)
+            approve = c1.form_submit_button("Aprobar pedido completo", type="primary",
+                                            use_container_width=True, disabled=own)
+            reject = c2.form_submit_button("Rechazar pedido completo", use_container_width=True)
+            if approve or reject:
+                decision = service_requests.STATUS_APPROVED if approve else service_requests.STATUS_REJECTED
+                ok, message = service_requests.review_order(storage, group["order_id"], decision, user, notes)
+                flash(message, "success" if ok else "error", key=_FLASH)
+                st.rerun()
+
+
 def _render_manage(storage, user: dict) -> None:
     pending = storage.get_service_requests(status=service_requests.STATUS_PENDING)
     section_title(f"Solicitudes por revisar ({len(pending)})", icon=":material/fact_check:")
     if not pending:
         st.success("No hay solicitudes pendientes.")
-    for row in paginate(pending, "requests_pending"):
+    for group in paginate(service_requests.group_by_order(pending), "requests_pending"):
+        if len(group["rows"]) > 1:
+            _review_order(storage, user, group)
+            continue
+        row = group["rows"][0]
         with st.expander(
             f"{_request_title(row)} · {row.get('requester_name')} · {_local(row.get('needed_at'))}", expanded=False,
         ):

@@ -223,6 +223,40 @@ def tap_code(event: dict) -> str:
     return str((event or {}).get("item_id") or traceability.event_details(event).get("code") or "")
 
 
+# Dónde van los chips: solo estanterías, pisos y contenedores. Al tocarlos la app reconoce que la persona llegó.
+ARRIVAL_SHELF, ARRIVAL_FLOOR, ARRIVAL_CONTAINER = "estantería", "piso", "contenedor"
+_ARRIVAL_ARTICLE = {ARRIVAL_SHELF: "a la", ARRIVAL_FLOOR: "al", ARRIVAL_CONTAINER: "al"}
+
+
+def arrival_kind(item: dict) -> str:
+    """«estantería», «piso» o «contenedor» si ``item`` es uno de los lugares donde van chips NFC; si no, ''."""
+    item = item or {}
+    if item.get("item_type") == "master":
+        return ARRIVAL_CONTAINER
+    if item.get("item_type") == "location":
+        place = barcode.location_code(str(item.get("id") or ""))
+        if place and place.get("kind") == barcode.LOCATION_SHELF:
+            return ARRIVAL_SHELF
+        if place and place.get("kind") == barcode.LOCATION_FLOOR:
+            return ARRIVAL_FLOOR
+    return ""
+
+
+def arrival_message(storage, item: dict) -> str:
+    """«Llegaste al contenedor «X» (código) · 5 producto(s).» o '' si el chip no es de un lugar."""
+    kind = arrival_kind(item)
+    if not kind:
+        return ""
+    text = f"Llegaste {_ARRIVAL_ARTICLE[kind]} {kind} «{item.get('name') or item.get('id')}» ({item.get('id')})"
+    if kind == ARRIVAL_CONTAINER:
+        try:
+            count = len(storage.get_children(item["id"]))
+        except Exception:
+            count = 0
+        text += f" · {count} producto(s) dentro" if count else " · todavía sin productos"
+    return text
+
+
 def record_tap(storage, user: dict, code: str, item: dict = None, signed: bool = False,
                count_session: str = "", now=None):
     """Guarda UN evento `nfc_tap` y devuelve (evento, repetido).
@@ -240,6 +274,8 @@ def record_tap(storage, user: dict, code: str, item: dict = None, signed: bool =
         if when and same_context and 0 <= (now - when).total_seconds() < DEDUP_SECONDS:
             return last, True
     details = {"code": code, "item_name": (item or {}).get("name", ""), "signed": bool(signed)}
+    if arrival_kind(item):
+        details["arrival"] = arrival_kind(item)
     if count_session:
         details["count_session"] = count_session
     event = storage.add_trace_event({
@@ -408,14 +444,17 @@ def handle_tap(storage, user: dict, code: str, signature: str = "", secret: str 
 
     routes = [] if manager else requests_for_code(storage, user, code)
     event, duplicate = record_tap(storage, user, code, item, signed, now=now)
-    outcome.update(ok=True, event=event, duplicate=duplicate)
+    arrival = arrival_message(storage, item)
+    outcome.update(ok=True, event=event, duplicate=duplicate, arrival=arrival_kind(item))
     if routes:
         request = routes[0]
-        message = (f"Toque registrado en tu ruta hacia «{traceability.request_title(request)}»"
+        message = ((arrival + ". " if arrival else "")
+                   + f"Toque registrado en tu ruta hacia «{traceability.request_title(request)}»"
                    + (repeat if duplicate else "") + ".")
         return {**outcome, "tone": "success", "target": TARGET_ROUTE, "request_id": request["id"], "message": message}
 
-    message = f"Toque registrado: «{name}» ({code})" + (repeat if duplicate else "") + "."
+    message = ((arrival + (repeat if duplicate else "")) if arrival
+               else f"Toque registrado: «{name}» ({code})" + (repeat if duplicate else "")) + "."
     pending = [] if manager else open_route_requests(storage, user)
     if pending:
         return {**outcome, "tone": "warning",

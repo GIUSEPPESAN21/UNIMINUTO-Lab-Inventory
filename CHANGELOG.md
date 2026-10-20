@@ -1,5 +1,34 @@
 # Changelog
 
+## v1.20.0 — Pedidos de varios productos, ruta obligatoria en el picking y llegada por NFC
+
+### Pedido de varios productos (cliente)
+- En **Solicitudes → Nueva solicitud** el formulario del producto tiene **«Agregar al pedido»** (y sigue «Pedir este producto»). El carrito muestra cada producto con su cantidad (tope: lo disponible), una nota para todos y **un solo envío**
+  (`service_requests.submit_order`): se validan todas las líneas antes de crear nada y se guardan juntas con el mismo
+  `order_id` (columna nueva de `service_requests`; vacía en pedidos de un solo producto). También se puede agregar desde
+  la ficha de Buscar. Un pedido admite hasta 30 productos distintos; los repetidos se suman.
+- **Mis pedidos:** una tarjeta por pedido con el avance de cada producto y «Cancelar todo el pedido».
+- **Gestionar:** el supervisor aprueba o rechaza el pedido completo (`review_order`).
+- **Despacho:** el pedido aparece agrupado con **«Tomar todo el pedido»**, y en revisión **«Confirmar recepción / Entregar
+  todo el pedido»**. El picking sigue siendo producto por producto. La nota del cliente se ve en cada línea.
+
+### Ruta obligatoria en el picking (nuevo)
+- Antes de las unidades hay que leer, **en orden: estantería → piso → contenedor → caja**. Estanterías, pisos y contenedores
+  llevan chip NFC (también sirve su código de barras); las cajas y los productos, código de barras. Una lectura fuera de
+  orden o de otro lugar no avanza y queda como lectura rechazada con lo que falta leer. El panel de picking muestra la ruta
+  con el siguiente punto resaltado y «Completar picking» espera a que esté completa; la confirmación manual tampoco la salta.
+- Estantería y piso solo se exigen si están registrados en Inventario → Ubicaciones; los productos con código libre no
+  tienen ruta que leer. El administrador puede apagar la exigencia en **Despacho → Ajustes → Ruta obligatoria del picking**.
+- La ruta leída (con método y hora) queda en el evento del picking. Módulo nuevo `core/pick_route.py`.
+
+### NFC: reconoce que llegaste (nuevo)
+- Tocar el chip de una **estantería, piso o contenedor** dice «Llegaste al contenedor «X» · N producto(s) dentro» y
+  guarda el tipo de llegada en el toque; si hay un picking abierto, el toque confirma el siguiente punto de la ruta aunque
+  llegue en otra pestaña. **Chips NFC** muestra por omisión «Estanterías, pisos y contenedores», que es dónde van los chips.
+
+### Pruebas
+- `tests/test_pick_route.py`, `tests/test_multi_item_orders.py`.
+
 ## v1.19.0 — Despacho abierto, devoluciones verificadas y retiro de piezas
 
 ### Despacho

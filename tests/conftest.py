@@ -230,15 +230,21 @@ class FakeStorage:
 
     # --- service requests ---
     def create_service_request(self, data, user):
-        row = {
-            **data, "id": uuid.uuid4().hex[:10], "requester_id": user["id"],
-            "requester_name": user.get("full_name", ""),
-            "requester_email": user.get("institutional_email", ""),
-            "status": "pending", "reviewed_by": "", "review_notes": "",
-            "email_notified": False, "email_error": "",
-        }
-        self.service_requests[row["id"]] = row
-        return dict(row)
+        return self.create_service_requests([data], user)[0]
+
+    def create_service_requests(self, rows, user, order_id=""):
+        created = []
+        for data in rows:
+            row = {
+                **data, "id": uuid.uuid4().hex[:10], "requester_id": user["id"],
+                "requester_name": user.get("full_name", ""),
+                "requester_email": user.get("institutional_email", ""),
+                "status": "pending", "reviewed_by": "", "review_notes": "",
+                "email_notified": False, "email_error": "", "order_id": order_id or data.get("order_id", ""),
+            }
+            self.service_requests[row["id"]] = row
+            created.append(dict(row))
+        return created
 
     def get_service_request(self, request_id):
         row = self.service_requests.get(request_id)

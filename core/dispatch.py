@@ -12,7 +12,7 @@ import logging
 import threading
 from datetime import datetime, timezone
 
-from core import permissions, picking, traceability
+from core import permissions, pick_route, picking, traceability
 from core.config import safe_secret
 
 logger = logging.getLogger(__name__)
@@ -444,6 +444,43 @@ def claim_request(storage, request_id: str, actor: dict):
     )
 
 
+def _order_batch(rows: list, action, verb: str):
+    """Aplica ``action(request_id) -> (ok, mensaje, …)`` a cada línea y resume. Devuelve ``(ok, mensaje, hechas)``."""
+    done, problems = [], []
+    for row in rows:
+        result = action(row["id"])
+        (done if result[0] else problems).append((row, result[1]))
+    if not rows:
+        return False, "No hay líneas de este pedido en ese paso.", []
+    text = f"{verb} {len(done)} de {len(rows)} producto(s) del pedido."
+    if problems:
+        text += f" {problems[0][1]}"
+    return bool(done), text, [row for row, _ in done]
+
+
+def claim_order(storage, order_id: str, actor: dict):
+    """Toma de una vez todas las líneas disponibles de un pedido de varios productos."""
+    permissions.require_cap(actor, permissions.CAP_CLAIM)
+    lines = [row for row in queue_for(storage, actor) if order_id and row.get("order_id") == order_id]
+    return _order_batch(lines, lambda rid: claim_request(storage, rid, actor), "Tomaste")
+
+
+def receive_order(storage, order_id: str, actor: dict):
+    permissions.require_cap(actor, permissions.CAP_RECEIVE_AND_DELIVER)
+    lines = [order["request"] for order in open_orders(storage)
+             if order_id and order["request"].get("order_id") == order_id
+             and order["stage"] == traceability.STAGE_PICKED]
+    return _order_batch(lines, lambda rid: receive_request(storage, rid, actor), "Recibiste")
+
+
+def deliver_order(storage, order_id: str, actor: dict):
+    permissions.require_cap(actor, permissions.CAP_RECEIVE_AND_DELIVER)
+    lines = [order["request"] for order in open_orders(storage)
+             if order_id and order["request"].get("order_id") == order_id
+             and order["stage"] == traceability.STAGE_RECEIVED]
+    return _order_batch(lines, lambda rid: deliver_request(storage, rid, actor), "Entregaste")
+
+
 def release_request(storage, request_id: str, actor: dict, reason: str = ""):
     permissions.require_cap(actor, permissions.CAP_RELEASE)
     previous = assigned_picker(storage.get_trace_events(request_id=request_id))
@@ -514,9 +551,19 @@ def register_reading(storage, request_id: str, actor: dict, code: str, method: s
     user_id = actor.get("id")
     needed = int(request.get("quantity") or 0)
     current = len(picking.readings(user_id, request_id))
+    code = str(code or "").strip()
+    if pick_route.required(storage):
+        route = pick_route.read(storage, request, picking.route_steps(user_id, request_id), code)
+        if route is not None:
+            ok, message, point = route
+            if point is not None:
+                picking.add_route_step(user_id, request_id, point["key"], code, method, _stamp(now))
+            elif not ok:
+                picking.add_failed(user_id, request_id, code, message, method, _stamp(now))
+            return ok, message, current
     ok, message = validate_reading(request, code)
     if not ok:
-        picking.add_failed(user_id, request_id, str(code or "").strip(), message, method, _stamp(now))
+        picking.add_failed(user_id, request_id, code, message, method, _stamp(now))
         return False, message, current
     if current >= needed:
         return False, "Ya están todas las unidades requeridas.", current
@@ -566,6 +613,9 @@ def complete_picking(storage, request_id: str, actor: dict, readings: list = Non
     Sin ``readings`` usa las acumuladas en :mod:`core.picking`; las lecturas
     fallidas viajan en la misma escritura (un único evento de rechazos)."""
     permissions.require_cap(actor, permissions.CAP_PICK)
+    pending_route = route_pending(storage, request_id, actor)
+    if pending_route:
+        return False, pending_route, None
     from_store = readings is None
     source = picking.readings(actor.get("id"), request_id) if from_store else readings
     default = normalize_method(method) or typed_method(storage)
@@ -579,6 +629,9 @@ def complete_picking(storage, request_id: str, actor: dict, readings: list = Non
         else:
             clean.append({"code": str(value or "").strip(), "method": default, "at": now})
     details = {"picker_id": actor.get("id", ""), "readings": clean}
+    steps = picking.route_steps(actor.get("id"), request_id)
+    if steps:
+        details["route"] = steps
     details.update(extra_details or {})
     failed = picking.failed(actor.get("id"), request_id) if from_store else []
     if failed:
@@ -589,6 +642,28 @@ def complete_picking(storage, request_id: str, actor: dict, readings: list = Non
         if not traceability.event_details(result[2]).get("reused_loan"):
             _notify_dispatched_loan(storage, request_id)
     return result
+
+
+def route_pending(storage, request_id: str, actor: dict) -> str:
+    """Mensaje si todavía falta leer puntos de la ruta (estantería → piso → contenedor → caja); '' si no."""
+    if not pick_route.required(storage):
+        return ""
+    request = storage.get_service_request(request_id)
+    if not request:
+        return ""
+    state = pick_route.progress(storage, request.get("item_id"), picking.route_steps(actor.get("id"), request_id))
+    if state["complete"]:
+        return ""
+    return f"Antes de completar el picking lee la ruta: falta {pick_route.hint(state['next'])}."
+
+
+def route_progress(storage, actor: dict, request_id: str) -> dict:
+    """Avance de la ruta del picking de ``actor`` (para el panel): ``{"required", "points", "done", "next", "complete"}``."""
+    request = storage.get_service_request(request_id)
+    if not request or not pick_route.required(storage):
+        return {"required": False, "points": [], "done": 0, "next": None, "complete": True}
+    state = pick_route.progress(storage, request.get("item_id"), picking.route_steps(actor.get("id"), request_id))
+    return {"required": bool(state["points"]), **state}
 
 
 def manual_confirmation_message(actor: dict, request: dict) -> str:
@@ -612,6 +687,9 @@ def confirm_manual_picking(storage, request_id: str, actor: dict, authorized: bo
     if (not request or traceability.request_stage_key(request, events) != traceability.STAGE_CLAIMED
             or assigned_picker(events) != actor.get("id")):
         return False, "Este pedido ya no está en tu picking.", None
+    pending_route = route_pending(storage, request_id, actor)
+    if pending_route:
+        return False, pending_route, None
     needed = int(request.get("quantity") or 0)
     now = _stamp()
     readings = [{"code": request.get("item_id"), "method": METHOD_MANUAL, "at": now} for _ in range(needed)]

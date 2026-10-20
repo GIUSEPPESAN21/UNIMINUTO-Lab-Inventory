@@ -34,8 +34,9 @@ _SCOPE_CHOICES = {
     "Un contenedor": counting.SCOPE_CONTAINER,
 }
 _STATUS_FILTERS = ("Todos", nfc.NO_TAG_LABEL, nfc.TAG_STATUS_LABELS[nfc.TAG_WRITTEN], nfc.TAG_STATUS_LABELS[nfc.TAG_TESTED])
+WHERE_CHIPS = "Estanterías, pisos y contenedores"     # dónde van los chips: es la vista por omisión
 _TYPE_FILTERS = {
-    "Todo": None, "Productos": ("standalone", "child"), "Contenedores": ("master",), "Ubicaciones": ("location",),
+    WHERE_CHIPS: "chips", "Todo": None, "Productos": ("standalone", "child"), "Contenedores": ("master",), "Ubicaciones": ("location",),
 }
 _STATUS_TONE = {nfc.TAG_TESTED: "success", nfc.TAG_WRITTEN: "warning"}
 CARDS_PER_ROW = 2
@@ -488,14 +489,17 @@ def _render_tags(storage, user: dict, rows: list, base: str) -> None:
     search_col, type_col = st.columns([3, 2])
     search = search_col.text_input(":material/search: Buscar", key="nfc_tag_search",
                                   placeholder="Código, nombre o ubicación").strip().lower()
-    type_label = type_col.selectbox("Tipo", list(_TYPE_FILTERS), key="nfc_tag_type")
+    type_label = type_col.selectbox("Tipo", list(_TYPE_FILTERS), key="nfc_tag_type",
+                                    help="Los chips NFC van en estanterías, pisos y contenedores; las cajas y los "
+                                         "productos se leen con su código de barras.")
     status_filter = st.segmented_control("Estado del chip", _STATUS_FILTERS, default="Todos", key="nfc_tag_status") or "Todos"
     kinds = _TYPE_FILTERS[type_label]
     shown = [
         row for row in rows
         if (not search or search in " ".join(str(row["item"].get(k) or "") for k in ("id", "name", "location")).lower())
         and (status_filter == "Todos" or row["status"] == status_filter)
-        and (kinds is None or row["item"].get("item_type") in kinds)
+        and (kinds is None or (nfc.arrival_kind(row["item"]) != "" if kinds == "chips"
+                               else row["item"].get("item_type") in kinds))
     ]
     if not shown:
         empty_state("Ningún producto coincide", "Prueba con otra búsqueda o cambia los filtros.", icon=":material/search:")
