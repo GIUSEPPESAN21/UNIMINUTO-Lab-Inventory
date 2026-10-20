@@ -7,13 +7,16 @@ de la navegacion mientras la cuenta tenga una clave temporal."""
 
 import streamlit as st
 
-from core import auth
+from core import auth, session
 from core.ui import (
     ROLE_LABELS, badge_html, card, centered_columns, esc, footer, initials, kv_list, page_header,
     section_title,
 )
 
-_ROLE_TONES = {"estudiante": "success", "profesor": "info", "maestro": "warning"}
+_ROLE_TONES = {
+    "estudiante": "success", "operario": "neutral", "encargado": "info",
+    "profesor": "info", "maestro": "warning",
+}
 
 
 def render():
@@ -58,8 +61,27 @@ def render():
                 elif new_pw != new_pw2:
                     st.error("Las nuevas contrasenas no coinciden.")
                 else:
-                    storage.update_user(user["id"], {"password_hash": auth.hash_password(new_pw)})
+                    updated = storage.update_user(
+                        user["id"], {"password_hash": auth.hash_password(new_pw)}
+                    )
+                    public = auth.public_user(updated)
+                    st.session_state.user = public
+                    token, claims = session.issue_token(public)
+                    st.session_state.session_token = token
+                    st.session_state.session_claims = claims
+                    if token:
+                        session.queue_cookie(token)
                     st.success("Contrasena actualizada correctamente.")
+
+        if st.button("Cerrar todas mis sesiones", icon=":material/lock:",
+                     use_container_width=True, key="revoke_all_sessions"):
+            storage.revoke_user_sessions(user["id"], user)
+            session.revoke(st.session_state.get("session_token", ""))
+            session.queue_cookie(clear=True)
+            st.session_state.user = None
+            st.session_state.session_token = ""
+            st.session_state.session_notice = "Todas tus sesiones fueron cerradas."
+            st.rerun()
 
 
 def render_forced_password_change():
@@ -96,14 +118,20 @@ def render_forced_password_change():
                     st.error(error)
                 else:
                     st.session_state.user = updated
-                    # La sesion actual arranca con la clave nueva: no la cierra el
-                    # control de `password_changed_at` de auth.validate_session.
                     st.session_state.login_at = changed_at
+                    token, claims = session.issue_token(updated)
+                    st.session_state.session_token = token
+                    st.session_state.session_claims = claims
+                    if token:
+                        session.queue_cookie(token)
                     st.toast("Contraseña actualizada. ¡Bienvenido!", icon=":material/check_circle:")
                     st.rerun()
         if st.button("Cerrar sesión", icon=":material/logout:", key="forced_password_logout",
                      use_container_width=True):
+            session.revoke(st.session_state.get("session_token", ""))
+            session.queue_cookie(clear=True)
             st.session_state.user = None
             st.session_state.login_at = None
+            st.session_state.session_token = ""
             st.rerun()
     footer()

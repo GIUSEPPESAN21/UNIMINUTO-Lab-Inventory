@@ -12,7 +12,7 @@ from core import data_quality
 from core import loans as loans_core
 from core import permissions, reports
 from core.ui import (
-    BRAND_BLUE, CHART_COLORS, badge_html, empty_state, esc, guard_role, icon_html, material, page_header,
+    BRAND_BLUE, CHART_COLORS, badge_html, empty_state, esc, guard_cap, icon_html, material, page_header,
     section_title, stat_cards,
 )
 from views.correos import render_email_settings
@@ -41,7 +41,7 @@ def _transparent(fig):
 def render():
     storage = st.session_state.storage
 
-    if not guard_role(st.session_state.user, permissions.MANAGER_ROLES, "los Reportes"):
+    if not guard_cap(st.session_state.user, permissions.CAP_REPORTS, "los Reportes"):
         return
 
     page_header("Reportes", icon=":material/bar_chart:", subtitle="Analítica de uso y salud del inventario")
@@ -56,7 +56,7 @@ def render():
 
     titles = [":material/trending_up: Uso del laboratorio", ":material/monitor_heart: Salud del inventario", ":material/warning: Vencidos", ":material/download: Exportar base de datos"]
     # Los correos automaticos solo los configura el perfil maestro.
-    is_master = permissions.has_role(st.session_state.user, permissions.ADMIN_ROLES)
+    is_master = permissions.has_cap(st.session_state.user, permissions.CAP_MANAGE_EMAIL)
     if is_master:
         titles.append(":material/mail: Correos")
     tabs = st.tabs(titles)

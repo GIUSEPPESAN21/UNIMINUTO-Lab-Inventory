@@ -8,9 +8,11 @@ chequeable de solicitudes, préstamos y servicios.
   validación de comprobantes, cadena de custodia de un producto y avance de
   servicios (en curso / entregado)."""
 
+import json
+
 import streamlit as st
 
-from core import location, service_requests, traceability
+from core import live_data, location, permissions, service_requests, traceability
 from core.ui import badge_html, empty_state, esc, material, page_header, section_title, stat_cards, timeline
 from views.location_guide import render_route_record, render_verifiable_route
 
@@ -19,6 +21,9 @@ _STATUS_FILTERS = {
     "Rechazadas": service_requests.STATUS_REJECTED, "Canceladas": service_requests.STATUS_CANCELLED,
 }
 _TYPE_FILTERS = {"Todos": None, "Productos": service_requests.TYPE_PRODUCT, "Servicios": service_requests.TYPE_SERVICE}
+_STAGE_FILTERS = {"Todas las etapas": None, **{
+    label: key for key, (label, _tone) in traceability.STAGES.items()
+}}
 _FEEDBACK = {"success": st.success, "warning": st.warning, "info": st.info, "danger": st.error}
 MAX_RESULTS = 20
 MAX_CUSTODY_STEPS = 40
@@ -60,6 +65,9 @@ def _request_header(row: dict, events: list, loan: dict, show_requester: bool) -
         f"<span class=\"lab-section__caption\">{esc(meta)}</span></div>",
         unsafe_allow_html=True,
     )
+    if show_requester and traceability.is_stuck(
+            row, events, minutes=live_data.stuck_minutes()):
+        st.warning(f"Atascada: más de {live_data.stuck_minutes()} min en la misma etapa.")
 
 
 def _request_card(row: dict, events: list, loan: dict, names: dict, show_requester: bool) -> None:
@@ -71,6 +79,21 @@ def _request_card(row: dict, events: list, loan: dict, names: dict, show_request
             if route:
                 st.markdown("**Ruta registrada**")
                 render_route_record(route)
+        if show_requester:
+            with st.expander("Auditoría completa", expanded=False):
+                for event in events:
+                    details = traceability.event_details(event)
+                    title = traceability.EVENT_LABELS.get(
+                        event.get("event_type"), event.get("event_type", "Evento")
+                    )
+                    actor = event.get("actor_name") or permissions.role_label(event.get("actor_role"))
+                    st.markdown(
+                        f"**#{event.get('seq') or '—'} · {esc(title)}** — "
+                        f"{esc(actor)} ({esc(event.get('actor_role') or 'rol legado')}) · "
+                        f"{esc(traceability.fmt_local(event.get('created_at')))}"
+                    )
+                    if details:
+                        st.code(json.dumps(details, ensure_ascii=False, indent=2), language="json")
 
 
 # ---------------------------------------------------------------------------
@@ -137,13 +160,29 @@ def _render_search(requests: list, events: list, index: dict, loans: dict, names
         "Buscar", key="trace_query",
         placeholder="Solicitud (#a1b2c3), código o nombre del producto, estudiante o comprobante",
     )
-    status_col, type_col = st.columns(2)
+    status_col, type_col, stage_col = st.columns(3)
     status = _STATUS_FILTERS[status_col.selectbox("Estado", list(_STATUS_FILTERS), key="trace_status")]
     kind = _TYPE_FILTERS[type_col.selectbox("Tipo", list(_TYPE_FILTERS), key="trace_type")]
-    results = [
-        row for row in traceability.search_requests(requests, query, events)
-        if (status is None or row.get("status") == status) and (kind is None or row.get("request_type") == kind)
-    ]
+    stage = _STAGE_FILTERS[stage_col.selectbox("Etapa", list(_STAGE_FILTERS), key="trace_stage")]
+    dates = st.date_input("Rango de fechas", value=(), key="trace_dates")
+    start = dates[0] if isinstance(dates, (list, tuple)) and dates else None
+    end = dates[-1] if isinstance(dates, (list, tuple)) and len(dates) > 1 else start
+
+    def included(row):
+        if status is not None and row.get("status") != status:
+            return False
+        if kind is not None and row.get("request_type") != kind:
+            return False
+        if stage is not None and traceability.request_stage_key(row, index.get(row["id"], [])) != stage:
+            return False
+        created = traceability.to_datetime(row.get("created_at"))
+        if start and (not created or created.date() < start):
+            return False
+        if end and (not created or created.date() > end):
+            return False
+        return True
+
+    results = [row for row in traceability.search_requests(requests, query, events) if included(row)]
     if not results:
         empty_state("Sin resultados",
                     "Prueba con el código del producto, el nombre del estudiante o el número de la solicitud.",
@@ -294,9 +333,14 @@ def _render_manager(storage, user: dict) -> None:
              for row in storage.get_all_users() if row.get("institutional_email")}
     stat_cards(traceability.manager_summary(requests, events))
 
-    tab_search, tab_receipt, tab_custody, tab_services = st.tabs(
-        [":material/search: Seguimiento", ":material/verified: Validar comprobante", ":material/link: Cadena de custodia", ":material/build: Servicios"]
-    )
+    tab_titles = [
+        ":material/search: Seguimiento", ":material/verified: Validar comprobante",
+        ":material/link: Cadena de custodia", ":material/build: Servicios",
+    ]
+    if permissions.has_cap(user, permissions.CAP_REPORTS):
+        tab_titles.append(":material/shield: Integridad")
+    tabs = st.tabs(tab_titles)
+    tab_search, tab_receipt, tab_custody, tab_services = tabs[:4]
     with tab_search:
         _render_search(requests, events, index, loans, names)
     with tab_receipt:
@@ -305,12 +349,41 @@ def _render_manager(storage, user: dict) -> None:
         _render_custody(storage, requests, names)
     with tab_services:
         _render_services(storage, user, requests, index, names)
+    if len(tabs) > 4:
+        with tabs[4]:
+            issues = traceability.reconcile(storage)
+            st.metric("Inconsistencias", len(issues))
+            if issues:
+                st.dataframe(issues, use_container_width=True, hide_index=True)
+            else:
+                st.success("No se detectaron inconsistencias en solicitudes y préstamos.")
+            st.download_button(
+                "Exportar trazas seudonimizadas",
+                traceability.export_trace_csv(events, "uniminuto-trace-v1"),
+                "trazabilidad-sin-pii.csv", "text/csv", use_container_width=True,
+            )
+
+
+@st.fragment(run_every=live_data.run_every(live_data.list_refresh_seconds()))
+def _live_overview(storage, user: dict) -> None:
+    requests = traceability.visible_requests(storage, user)
+    stuck = 0
+    if permissions.has_cap(user, permissions.CAP_VIEW_ALL_TRACES):
+        for request in requests:
+            events = storage.get_trace_events(request_id=request["id"])
+            stuck += int(traceability.is_stuck(request, events, live_data.stuck_minutes()))
+    st.caption(f"{len(requests)} solicitud(es) visibles" + (f" · {stuck} atascada(s)" if stuck else ""))
 
 
 def render():
     storage = st.session_state.storage
     user = st.session_state.user
+    if not (permissions.has_cap(user, permissions.CAP_VIEW_OWN_REQUESTS)
+            or permissions.has_cap(user, permissions.CAP_VIEW_ALL_TRACES)):
+        st.error("No tienes permiso para acceder a Trazabilidad.")
+        return
     page_header("Trazabilidad", icon=":material/explore:", subtitle="Ruta verificable y seguimiento de solicitudes")
+    _live_overview(storage, user)
     if traceability.is_manager(user):
         _render_manager(storage, user)
     else:

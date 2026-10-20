@@ -211,6 +211,7 @@ def _actor_fields(actor: dict) -> dict:
     return {
         "actor_id": actor.get("id", ""), "actor_name": actor.get("full_name", ""),
         "actor_email": actor.get("institutional_email", ""),
+        "actor_role": actor.get("role", ""),
     }
 
 

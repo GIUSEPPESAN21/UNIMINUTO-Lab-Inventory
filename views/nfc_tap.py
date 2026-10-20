@@ -12,11 +12,12 @@ core/nfc.py). Al tocarlo, el telefono abre esa URL en el navegador:
    navega.
 3. `render_tap_banner` muestra el resultado arriba de la pagina."""
 
+from datetime import datetime, timezone
 import time
 
 import streamlit as st
 
-from core import barcode, nfc
+from core import barcode, dispatch, nfc
 
 PENDING_KEY = "nfc_pending"          # toque esperando el login o su proceso
 HANDLED_KEY = "nfc_handled"          # ultimo toque procesado en esta sesion (codigo|firma y hora)
@@ -68,6 +69,28 @@ def render_login_hint() -> None:
 
 def apply_outcome(storage, outcome: dict) -> None:
     """Deja lista la pagina de destino de un toque ya procesado."""
+    active = st.session_state.get("dispatch_active_request")
+    user = st.session_state.get("user") or {}
+    if active and outcome.get("code"):
+        request = storage.get_service_request(active)
+        ok, message = dispatch.validate_reading(request, outcome["code"])
+        if ok:
+            key = f"dispatch_readings_{active}"
+            readings = st.session_state.setdefault(key, [])
+            needed = int((request or {}).get("quantity") or 0)
+            if len(readings) < needed:
+                readings.append({
+                    "code": outcome["code"], "method": "nfc",
+                    "at": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                })
+                message = f"Lectura NFC agregada ({len(readings)}/{needed})."
+            else:
+                message = "El picking ya tiene todas las unidades requeridas."
+        else:
+            dispatch.record_failed_scan(storage, active, user, outcome.get("code", ""), message)
+        st.session_state[RESULT_KEY] = {"tone": "success" if ok else "warning", "message": message}
+        outcome["target"] = "despacho"
+        return
     target = outcome.get("target")
     if target == nfc.TARGET_COUNT:
         st.session_state[COUNT_FOCUS_KEY] = {"code": outcome["code"], "method": "nfc",

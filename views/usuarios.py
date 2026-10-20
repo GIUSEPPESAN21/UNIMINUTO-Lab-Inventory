@@ -5,12 +5,15 @@ import streamlit as st
 
 from core import auth, permissions
 from core.ui import (
-    ROLE_LABELS, badge_html, card, card_header_html, empty_state, guard_role, initials, page_header,
+    ROLE_LABELS, badge_html, card, card_header_html, empty_state, guard_cap, initials, page_header,
     section_title, stat_cards,
 )
 
-ROLES = ["estudiante", "profesor", "maestro"]
-_ROLE_TONES = {"estudiante": "success", "profesor": "info", "maestro": "warning"}
+ROLES = list(permissions.ROLES)
+_ROLE_TONES = {
+    "estudiante": "success", "operario": "neutral", "encargado": "info",
+    "profesor": "info", "maestro": "warning",
+}
 
 # Restablecer contraseña (core/auth.admin_reset_password): modos del selector.
 _RESET_GENERATE = "generate"
@@ -139,11 +142,13 @@ def _user_card(storage, user: dict, current_user: dict) -> None:
             key=f"role_{user['id']}", label_visibility="collapsed",
         )
         if new_role != user.get("role"):
-            if user["id"] == current_user["id"] and new_role != "maestro":
-                c3.error("No puedes quitarte tu propio rol de maestro.")
+            if user["id"] == current_user["id"]:
+                c3.error("No puedes cambiar tu propio rol.")
             elif c3.button("Guardar rol", key=f"save_role_{user['id']}"):
-                storage.update_user(user["id"], {"role": new_role})
-                st.success(f"Rol de {user['full_name']} actualizado a {new_role}.")
+                storage.update_user(user["id"], {"role": new_role}, actor=current_user)
+                st.success(
+                    f"Rol de {user['full_name']} actualizado a {permissions.role_label(new_role)}."
+                )
                 st.rerun()
 
         toggle_label = ":material/block: Deshabilitar" if is_active else ":material/check_circle: Habilitar"
@@ -153,7 +158,10 @@ def _user_card(storage, user: dict, current_user: dict) -> None:
             c4.markdown(f'<div style="text-align:center">{badge_html("Tu cuenta", "info", "👤")}</div>',
                         unsafe_allow_html=True)
         elif c4.button(toggle_label, key=f"toggle_{user['id']}", use_container_width=True):
-            storage.update_user(user["id"], {"status": "disabled" if is_active else "active"})
+            storage.update_user(
+                user["id"], {"status": "disabled" if is_active else "active"},
+                actor=current_user,
+            )
             st.rerun()
 
         with st.expander(":material/edit: Corregir datos del usuario", expanded=False):
@@ -195,7 +203,7 @@ def render():
     storage = st.session_state.storage
     current_user = st.session_state.user
 
-    if not guard_role(current_user, permissions.ADMIN_ROLES, "la gestión de usuarios"):
+    if not guard_cap(current_user, permissions.CAP_MANAGE_USERS, "la gestión de usuarios"):
         return
 
     page_header(

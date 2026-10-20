@@ -327,11 +327,11 @@ def remove_remote(path: str, sha: str, message: str, session=None) -> None:
 # ---------------------------------------------------------------------------
 
 def can_add(user: dict) -> bool:
-    return permissions.has_role(user, permissions.MANAGER_ROLES)
+    return permissions.has_cap(user, permissions.CAP_EDIT_INVENTORY)
 
 
 def can_delete(user: dict) -> bool:
-    return permissions.has_role(user, permissions.ADMIN_ROLES)
+    return permissions.has_cap(user, permissions.CAP_DELETE_PHOTOS)
 
 
 def _clean_note(note) -> str:
@@ -346,7 +346,8 @@ def _trace_event(event_type: str, record: dict, actor: dict, now: datetime, extr
     return {
         "event_type": event_type, "request_id": "", "item_id": record.get("item_id", ""), "loan_id": "",
         "user_id": "", "actor_id": actor.get("id", ""), "actor_name": actor.get("full_name", ""),
-        "actor_email": actor.get("institutional_email", ""), "receipt": "",
+        "actor_email": actor.get("institutional_email", ""), "actor_role": actor.get("role", ""),
+        "receipt": "",
         "details": json.dumps(details, ensure_ascii=False), "created_at": now.isoformat(),
     }
 

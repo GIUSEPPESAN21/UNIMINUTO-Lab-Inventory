@@ -21,7 +21,7 @@ from core.labels import (
     ITEM_TYPE_BY_CHOICE, ITEM_TYPE_CHOICES, ITEM_TYPE_HELP, ITEM_TYPE_ICONS, ITEM_TYPE_LABELS, ITEM_TYPE_NAMES,
 )
 from core.ui import (
-    badge_html, centered_columns, empty_state, esc, guard_role, icon_html, page_header, section_title, stat_cards,
+    badge_html, centered_columns, empty_state, esc, guard_cap, icon_html, page_header, section_title, stat_cards,
     timeline,
 )
 from views import label_settings, photo_panel, ubicaciones
@@ -725,7 +725,7 @@ def render():
     storage = st.session_state.storage
     user = st.session_state.user
 
-    if not guard_role(user, permissions.MANAGER_ROLES, "el Inventario"):
+    if not guard_cap(user, permissions.CAP_EDIT_INVENTORY, "el Inventario"):
         return
 
     page_header("Inventario", icon=":material/inventory_2:", subtitle="Catálogo por contenedor, alta, edición e importación masiva")

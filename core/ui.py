@@ -39,7 +39,7 @@ LOGO_PATH = ASSETS_DIR / "uniminuto-logo.png"
 # icono de la pestaña del navegador y de la barra superior en celular, donde el
 # logotipo completo seria ilegible.
 SYMBOL_PATH = ASSETS_DIR / "uniminuto-simbolo.png"
-ROLE_LABELS = {"estudiante": "Estudiante", "profesor": "Profesor", "maestro": "Perfil maestro"}
+ROLE_LABELS = permissions.ROLE_LABELS
 
 # Colores institucionales para las graficas (azul Pantone 287 C, amarillo
 # Pantone 116 C y sus matices), los mismos de style.css.
@@ -110,10 +110,16 @@ def esc(value) -> str:
 
 
 def guard_role(user: dict, roles, section: str = "esta seccion") -> bool:
-    """Comprueba el rol dentro de la propia vista (defensa en profundidad: la
-    navegacion ya oculta la pagina, pero ocultar no es autorizar). Si no hay
-    permiso muestra el aviso y devuelve False; la vista debe terminar."""
+    """Compatibilidad para vistas aún basadas en roles."""
     if permissions.has_role(user, roles):
+        return True
+    st.error(f"No tienes permiso para acceder a {section}.")
+    return False
+
+
+def guard_cap(user: dict, capability: str, section: str = "esta sección") -> bool:
+    """Defensa en profundidad para vistas y URLs escritas manualmente."""
+    if permissions.has_cap(user, capability):
         return True
     st.error(f"No tienes permiso para acceder a {section}.")
     return False
@@ -458,7 +464,7 @@ def sync_status_banner(storage, user: dict) -> None:
     datos se guardan solo en el disco temporal de la app y se PIERDEN al
     reiniciarse, sin que nadie lo note (el error solo queda en los logs del
     servidor, no en la interfaz)."""
-    if user.get("role") not in permissions.MANAGER_ROLES:
+    if not permissions.has_cap(user, permissions.CAP_EDIT_INVENTORY):
         return
 
     status = storage.get_sync_status()
