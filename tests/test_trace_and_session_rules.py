@@ -22,6 +22,7 @@ def lab(storage):
     storage.add_item(ITEM, name="Arduino UNO", item_type="child", parent_id="2-1-01-00-000", quantity=5)
     for person in (STUDENT, OPERATOR, SUPERVISOR, ADMIN):
         storage.users[person["id"]] = {**person, "status": "active"}
+    storage.set_setting("picking_route_required", "0")      # aquí se prueban las transiciones, no la ruta (test_pick_route)
     return storage
 
 

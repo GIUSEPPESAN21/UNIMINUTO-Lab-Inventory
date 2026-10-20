@@ -251,6 +251,16 @@ Buscar). Los servicios requieren nombre y descripción; la fecha es opcional. Si
 administradores reciben un correo; si falla, la solicitud permanece guardada y muestra la advertencia.
 Los avisos (pedido enviado, aprobado…) **sobreviven a la recarga** de la página.
 
+### Imprimir las etiquetas de un contenedor y de todos sus productos
+
+Funciona igual que el PDF de una estantería con sus pisos en **Ubicaciones**: en **Inventario**, cada Contenedor
+Principal con productos muestra **«Etiquetas del contenedor y sus N productos»**, un PDF con **una página por etiqueta
+en seguidilla** (primero la del contenedor y luego la de cada producto, en orden de código), del tamaño real de la
+etiqueta configurada (Configuración de etiquetas). Se imprime de una vez desde Edge o Chrome (Ctrl + P, papel USER).
+Incluye todos los productos del contenedor aunque los filtros muestren solo algunos. Arriba de la lista hay además
+**«PDF con las N etiquetas de estos contenedores y sus productos»**, con cada contenedor seguido de sus productos y que
+respeta los filtros. Los códigos no imprimibles se omiten.
+
 ### Retirar piezas de un producto (Lego, bloques, kits…)
 
 En **Inventario → editar** (o al registrar el producto) se marca **«Se retiran por piezas»**. Entonces, en la ficha
@@ -277,6 +287,22 @@ descuenta dos veces) o **devuelve al estante** (cierra el préstamo y repone la 
 frescos y bajo el bloqueo, en `LabStorage.transition_request`; un intento rechazado solo deja un
 evento de auditoría. Un supervisor **no aprueba su propia solicitud** (`ALLOW_SELF_APPROVAL`, apagado
 por omisión, lo permite en una demostración con una sola persona).
+
+**Ruta obligatoria del picking.** Antes de leer las unidades, el operario confirma la ruta **en orden**:
+**estantería → piso → contenedor → caja**. Estanterías, pisos y contenedores llevan **chip NFC** (o su código de
+barras); las cajas y los productos, código de barras. Una lectura fuera de orden no avanza (queda como lectura
+rechazada y el panel dice qué leer), «Completar picking» y la confirmación manual esperan a que la ruta esté completa y
+la ruta leída queda en la trazabilidad. Estantería y piso se exigen si están registrados en Inventario → Ubicaciones; los
+códigos libres no tienen ruta. El administrador la apaga en **Despacho → Ajustes** (`core/pick_route.py`).
+
+**Chips NFC: llegada.** Al tocar el chip de una estantería, un piso o un contenedor la app responde «Llegaste al
+contenedor «X» · N producto(s) dentro» (y, con un picking abierto, confirma ese punto de la ruta aunque el toque abra otra
+pestaña). En **Chips NFC** la vista por omisión es «Estanterías, pisos y contenedores».
+
+**Pedidos de varios productos.** El cliente usa **Agregar al pedido** en Solicitudes (o en la ficha de Buscar), ajusta
+cantidades en el carrito y lo envía todo como **una solicitud** (`order_id` compartido en `service_requests`, hasta 30
+productos distintos). El supervisor aprueba o rechaza el pedido completo, el operario lo toma completo («Tomar todo el
+pedido») y el supervisor recibe y entrega todo de una vez; el picking sigue siendo producto por producto.
 
 **Devoluciones en tres pasos (Despacho → Devoluciones).** Cuando el cliente devuelve lo prestado, pulsa
 **Devolver** (en Préstamos o en Buscar) y el préstamo **sigue abierto**: 1) un **supervisor** verifica lo que
@@ -627,6 +653,7 @@ core/
   loans.py                Checkout / checkin / vencidos (por capacidad)
   returns.py              Devolución en tres pasos: solicitud → verificación del supervisor → almacenamiento
   pieces.py               Retiro de piezas (Lego y similares) sin inventario por pieza
+  pick_route.py           Ruta obligatoria del picking: estantería → piso → contenedor → caja
   dispatch.py             Despacho: transiciones, picking, escenarios, listas de pedidos abiertos
   picking.py              Lecturas del picking en la memoria del proceso (por usuario y pedido)
   session.py              Sesión persistente: token firmado, época y cierres de sesión

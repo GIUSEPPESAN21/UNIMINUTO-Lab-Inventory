@@ -7,6 +7,8 @@ eso las lecturas se guardan aquí, por ``(user_id, request_id)``, y cualquier
 pestaña de la misma persona las ve y las suma.
 
 - Las lecturas válidas esperan hasta «Completar picking» (una sola escritura).
+- Antes de las unidades se lee la **ruta** (estantería → piso → contenedor → caja): cada punto
+  confirmado queda en ``route`` con su código, método y hora.
 - Las lecturas fallidas también se acumulan aquí y se guardan en UN solo evento
   al completar (antes cada error escribía en el Excel y en GitHub).
 - Nada de esto se escribe en la base: si el proceso se reinicia, el picking
@@ -23,7 +25,7 @@ MAX_ENTRIES = 500
 MAX_FAILED = 200          # más fallos que esto no aportan información nueva
 
 _lock = threading.RLock()
-_entries: dict = {}       # (user_id, request_id) -> {"readings", "failed", "touched"}
+_entries: dict = {}       # (user_id, request_id) -> {"readings", "failed", "route", "touched"}
 _active: dict = {}        # user_id -> request_id del picking abierto
 
 
@@ -58,7 +60,7 @@ def _entry(user_id, request_id, now=None, create: bool = True):
     if entry is None:
         if not create:
             return None
-        entry = _entries[key] = {"readings": [], "failed": [], "touched": moment}
+        entry = _entries[key] = {"readings": [], "failed": [], "route": [], "touched": moment}
         _purge(moment)  # tras insertar: el tope incluye la entrada nueva
     entry["touched"] = moment
     return entry
@@ -110,11 +112,30 @@ def add_reading(user_id, request_id, code: str, method: str, at: str, now=None) 
         return len(entry["readings"])
 
 
+def route_steps(user_id, request_id) -> list:
+    """Puntos de la ruta ya confirmados: ``[{"key", "code", "method", "at"}]`` en el orden en que se leyeron."""
+    with _lock:
+        entry = _entries.get(_key(user_id, request_id))
+        return [dict(row) for row in entry.get("route", [])] if entry else []
+
+
+def add_route_step(user_id, request_id, key: str, code: str, method: str, at: str, now=None) -> int:
+    """Confirma el siguiente punto de la ruta y devuelve cuántos van."""
+    with _lock:
+        entry = _entry(user_id, request_id, now)
+        entry.setdefault("route", []).append({"key": key, "code": code, "method": method, "at": at})
+        return len(entry["route"])
+
+
 def undo_last(user_id, request_id, now=None) -> int:
+    """Quita la última lectura de unidad; si no hay, el último punto de la ruta."""
     with _lock:
         entry = _entry(user_id, request_id, now, create=False)
         if entry and entry["readings"]:
             entry["readings"].pop()
+        elif entry and entry.get("route"):
+            entry["route"].pop()
+        if entry:
             entry["touched"] = _now(now)
         return len(entry["readings"]) if entry else 0
 

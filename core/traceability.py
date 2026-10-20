@@ -623,6 +623,9 @@ def describe_event(event: dict) -> str:
         units = int(details.get("quantity") or len(details.get("readings") or []) or 0)
         how = _PICK_METHODS.get(str(details.get("method") or ""), "")
         text = f"Terminó el picking de {units} unidad(es)" + (f" con {how}" if how else "")
+        route = details.get("route") or []
+        if route:
+            text += ". Ruta leída: " + " › ".join(str(step.get("key") or "") for step in route)
         proof = details.get("manual_confirmation") or {}
         if proof:
             text += f". Confirmación manual de {proof.get('operator_name') or 'el operario'}: «{proof.get('message', '')}»"
