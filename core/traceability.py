@@ -594,6 +594,7 @@ def event_details(event: dict) -> dict:
 
 ROLE_LABELS_SHORT = permissions.ROLE_SHORT_LABELS
 _PICK_METHODS = {"barcode_gun": "pistola de códigos", "camera": "cámara", "nfc": "chip NFC", "manual": "confirmación manual",
+                 "count": "conteo de las unidades",
                  "mixed": "varios métodos"}
 
 
@@ -623,6 +624,9 @@ def describe_event(event: dict) -> str:
         units = int(details.get("quantity") or len(details.get("readings") or []) or 0)
         how = _PICK_METHODS.get(str(details.get("method") or ""), "")
         text = f"Terminó el picking de {units} unidad(es)" + (f" con {how}" if how else "")
+        label = details.get("label_read") or {}
+        if label:
+            text += f". Etiqueta de la caja leída con {_PICK_METHODS.get(str(label.get('method') or ''), 'un lector')}"
         route = details.get("route") or []
         if route:
             text += ". Ruta leída: " + " › ".join(str(step.get("key") or "") for step in route)
@@ -1055,7 +1059,9 @@ def _dispatch_timeline(request: dict, events: list, now=None) -> list:
             detail = f"{actor} · " + (f"{len(allowed)} operario(s) autorizado(s)"
                                       if allowed else "abierto a todos los operarios")
         elif event.get("event_type") == EVENT_ORDER_PICKED:
-            detail = f"{actor} · {len(details.get('readings') or [])} unidad(es) leída(s)"
+            counted = details.get("method") == "count"
+            detail = (f"{actor} · {len(details.get('readings') or [])} unidad(es) "
+                      + ("contadas" if counted else "leídas"))
         elif details.get("reason"):
             detail = f"{actor} · {details['reason']}"
         steps.append({

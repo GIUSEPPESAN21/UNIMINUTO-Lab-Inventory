@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.20.1 — Las unidades de la caja no llevan código
+
+- **Picking:** ya no se lee cada unidad. Después de la ruta (estantería → piso → contenedor → caja) se lee **una sola vez**
+  la etiqueta de la caja o del producto y el operario **cuenta y confirma** cuántas unidades saca
+  (**«Confirmar unidades y completar picking»**, `dispatch.confirm_units`). La cuenta debe ser la cantidad pedida; si no
+  alcanzan, se libera el pedido. Leer la etiqueta otra vez (por ejemplo un toque NFC repetido) no suma nada.
+- Cada unidad queda registrada con el nuevo método **«conteo de unidades»** (`count`) y el evento guarda cómo se leyó la
+  etiqueta de la caja (`label_read`); la trazabilidad lo dice en palabras. El método `count` no sirve para simular una
+  lectura de etiqueta. La confirmación manual (sin lector) sigue igual.
+- El escenario C ya no habla de tocar el chip de cada unidad: los chips están en estantería, piso y contenedor.
+
 ## v1.20.0 — Pedidos de varios productos, ruta obligatoria en el picking y llegada por NFC
 
 ### Pedido de varios productos (cliente)

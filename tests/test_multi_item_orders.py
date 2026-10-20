@@ -241,5 +241,18 @@ def test_the_picking_panel_shows_the_route_steps_in_order():
     at = _open("despacho", people["operario"])
     text = " ".join(str(m.value) for m in at.markdown)
     assert "Estantería 2" in text and "lee `2-0-00-00-000`" in text and "Contenedor 01" in text
-    complete = [b for b in at.button if b.label == "Completar picking"][0]
-    assert complete.disabled                                        # la ruta está incompleta
+    confirm = [b for b in at.button if b.label == "Confirmar unidades y completar picking"][0]
+    assert confirm.disabled                                         # la ruta está incompleta
+
+    # Con la ruta y la etiqueta de la caja leídas, el panel pide contar las unidades (no llevan código).
+    for code in ("2-0-00-00-000", "2-1-01-00-000", "2-1-01-02-000"):
+        assert dispatch.register_reading(storage, rows[0]["id"], people["operario"], code, "nfc")[0]
+    assert dispatch.register_reading(storage, rows[0]["id"], people["operario"], "2-1-01-02-005", "barcode_gun")[0]
+    ready = _open("despacho", people["operario"])
+    assert any("Etiqueta de la caja leída" in str(m.value) for m in ready.markdown)
+    confirm = [b for b in ready.button if b.label == "Confirmar unidades y completar picking"][0]
+    assert not confirm.disabled
+    confirm.click().run()
+    assert not ready.exception
+    events = storage.get_trace_events(request_id=rows[0]["id"])
+    assert traceability.request_stage_key(storage.get_service_request(rows[0]["id"]), events) == traceability.STAGE_PICKED
