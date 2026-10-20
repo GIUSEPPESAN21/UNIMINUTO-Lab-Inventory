@@ -660,6 +660,19 @@ Cómo se protege la base (Excel + GitHub):
   conflicto si el archivo remoto de verdad cambió; un límite de tasa de GitHub (403/429 con `Retry-After`)
   se espera si es corto y, si no, se explica como tal en vez de acusar al token. Las fotos usan el mismo
   candado de publicación que la base, así que dos commits no llegan a la vez al repositorio.
+- **Guardado rápido del libro (`core/fastxlsx.py`):** cada cambio reescribe el Excel completo, y con
+  `pandas.to_excel` una base de un año de uso (≈800 mil celdas: 32 000 eventos, 6 000 préstamos, 4 000 pedidos)
+  tardaba **12 s** por cambio. La app arma ahora el XML de las hojas directamente y reutiliza las hojas que no
+  cambiaron: **0.7 s** (≈16 veces menos) con el mismo archivo `.xlsx`, que sigue abriéndose en Excel, pandas y
+  openpyxl. Si el escritor rápido fallara, la app guarda con pandas. `scripts/bench_storage.py` repite la medición
+  con una base sintética y temporal.
+- **Lecturas sin copiar la base:** buscar un producto, calcular la disponibilidad o listar préstamos ya no copia
+  hojas enteras ni recorre fila por fila (`get_all_items` 194 → 14 ms, `get_all_loans` 628 → 55 ms,
+  `dispatch_metrics` 6.5 s → 0.1 s con 4 000 pedidos). Las listas largas (Inventario, Préstamos, Usuarios,
+  Solicitudes → Gestionar) dibujan una página y piden **Mostrar más**: Inventario con 2 000 productos pasó de
+  46 s a 1 s por clic. Los CSV de Despacho se generan al pulsar el botón.
+- **Estado de la base** (Usuarios → Datos): tamaño del Excel, celdas, duración de la última escritura y estado de
+  la sincronización, con un aviso cuando la base es grande (> 15 MB) o lenta de guardar (p95 > 2 s).
 - **Rendimiento con varias personas (`SYNC_MODE`).** Por omisión cada escritura serializa el libro
   y lo publica antes de devolver el control. Con una lúdica de **8 operarios y 4 supervisores y
   1–2 s por llamada a GitHub** (`scripts/bench_concurrency.py`, base temporal) eso da escrituras con
@@ -806,6 +819,8 @@ Despacho y rendimiento (todos opcionales): `ALLOW_SELF_APPROVAL` (false), `AUTO_
 - **Lectura por cámara:** el método `camera` existe en el registro de lecturas, pero la app aún no decodifica
   códigos de barras con la cámara (haría falta una librería de decodificación o la API `BarcodeDetector`
   del navegador); hoy se usa pistola, chip NFC o teclado.
+- **Arranque en frío:** al iniciar, la app lee el libro completo con pandas; con una base de ≈800 mil celdas son ~7 s
+  (con la base real de hoy, milisegundos). Las escrituras y las lecturas posteriores no lo repiten.
 - **Un solo proceso:** el almacén de lecturas del picking (`core/picking.py`), la caché de pedidos abiertos y los
   latidos de sesión viven en la memoria del proceso. Streamlit Community Cloud corre uno solo; con varias
   réplicas habría que moverlos a la base.

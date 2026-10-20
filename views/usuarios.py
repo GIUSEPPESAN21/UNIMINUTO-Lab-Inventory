@@ -6,7 +6,7 @@ import streamlit as st
 from core import auth, permissions
 from core.ui import (
     ROLE_LABELS, badge_html, card, card_header_html, empty_state, guard_cap, initials, page_header,
-    flash, persistent_tabs, section_title, show_flash, stat_cards,
+    flash, more_button, paginate, persistent_tabs, section_title, show_flash, stat_cards,
 )
 
 ROLES = list(permissions.ROLES)
@@ -240,8 +240,9 @@ def render():
                 or value in (user.get("student_id") or "").lower()
             ]
         section_title(f"{len(users)} usuario(s)", icon=":material/contacts:")
-        for user in users:
+        for user in paginate(users, "users_list", 30):
             _user_card(storage, user, current_user)
+        more_button(len(users), "users_list", 30)
 
     with tab_whitelist:
         st.caption(
@@ -275,6 +276,29 @@ def render():
 
 
 _CONFIRM_WORD = "BORRAR"
+_SLOW_WRITE_MS = 2000
+_BIG_WORKBOOK_MB = 15
+
+
+def _render_health(storage) -> None:
+    """Tamaño y velocidad de la base, con aviso cuando conviene limpiar o archivar."""
+    health = storage.get_health()
+    write = health["write"]
+    sync = health["sync"]
+    section_title("Estado de la base", icon=":material/monitor_heart:")
+    stat_cards([
+        {"label": "Tamaño del Excel", "value": f"{health['workbook_mb']} MB", "icon": "📦",
+         "tone": "warning" if health["workbook_mb"] > _BIG_WORKBOOK_MB else "success"},
+        {"label": "Celdas", "value": f"{health['cells']:,}".replace(",", "."), "icon": "🧮", "tone": "neutral"},
+        {"label": "Última escritura", "value": "—" if write["last_ms"] is None else f"{write['last_ms']} ms",
+         "icon": "⏱️", "tone": "warning" if (write["p95_ms"] or 0) > _SLOW_WRITE_MS else "success"},
+        {"label": "Sincronización", "value": "Pendiente" if sync.get("pending") else (
+            "Al día" if sync.get("ok") is not False else "Con error"), "icon": "☁️",
+         "tone": "success" if sync.get("ok") is not False and not sync.get("pending") else "warning"},
+    ])
+    if health["workbook_mb"] > _BIG_WORKBOOK_MB or (write["p95_ms"] or 0) > _SLOW_WRITE_MS:
+        st.warning("La base ya es grande o lenta de guardar. Borra lo que no uses (abajo) o pasa a `SYNC_MODE = \"deferred\"` "
+                   "en los Secrets; si sigue creciendo, conviene migrar a una base de datos.")
 
 
 def _render_data_tab(storage, user: dict) -> None:
@@ -285,6 +309,7 @@ def _render_data_tab(storage, user: dict) -> None:
     section_title("Empezar de cero", icon=":material/cleaning_services:",
                   caption="Borra lo operativo de prueba. No toca personas, productos, ubicaciones, fotos ni ajustes, "
                           "y los préstamos abiertos se conservan porque de ellos depende la disponibilidad.")
+    _render_health(storage)
     counts = storage.operational_data_counts()
     stat_cards([
         {"label": "Solicitudes", "value": counts["solicitudes"], "icon": "📝", "tone": "neutral"},

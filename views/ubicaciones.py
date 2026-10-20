@@ -16,7 +16,8 @@ import streamlit as st
 
 from core import barcode, labels, permissions, places
 from core.ui import (
-    badge_html, empty_state, esc, guard_cap, icon_html, page_header, section_title, stat_cards,
+    badge_html, empty_state, esc, guard_cap, icon_html, load_error, page_header, section_title,
+    stat_cards,
 )
 from views.location_guide import render_location_guide
 
@@ -233,7 +234,7 @@ def render(storage, user: dict, spec) -> None:
     try:
         items = storage.get_all_items()
     except Exception as exc:
-        st.error(f"No se pudieron cargar las ubicaciones: {exc}")
+        load_error("No se pudieron cargar las ubicaciones", exc)
         items = []
     counts = places.count_by_kind(items)
     stat_cards([

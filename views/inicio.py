@@ -8,8 +8,8 @@ from core import dispatch, permissions
 from core import loans as loans_core
 from core.labels import ITEM_TYPE_NAMES
 from core.ui import (
-    ROLE_LABELS, ROLE_SHORT_LABELS, alert_list, empty_state, greeting, hero, long_date_es, quick_actions,
-    section_title, stat_cards,
+    ROLE_LABELS, ROLE_SHORT_LABELS, alert_list, empty_state, greeting, hero, load_error, long_date_es,
+    quick_actions, section_title, stat_cards,
 )
 
 _ROLE_PITCH = {
@@ -123,14 +123,14 @@ def render():
             my_open_loans = storage.get_open_loans_for_user(user["id"])
             overdue = loans_core.get_overdue_loans(storage)
         except Exception as e:
-            st.error(f"No se pudieron cargar las estadisticas: {e}")
+            load_error("No se pudieron cargar las estadísticas", e)
             items, my_open_loans, overdue = [], [], []
 
     if operator_only:
         try:
             queue, mine = dispatch.queue_for(storage, user), dispatch.my_orders(storage, user)
         except Exception as e:
-            st.error(f"No se pudo cargar la cola de despacho: {e}")
+            load_error("No se pudo cargar la cola de despacho", e)
             queue, mine = [], []
         stat_cards([
             {"label": "Pedidos por tomar", "value": len(queue), "icon": "📥", "tone": "info"},
@@ -176,7 +176,7 @@ def render():
         try:
             rows = _alerts(user, items, storage.get_availability_map(), my_open_loans, overdue)
         except Exception as e:
-            st.error(f"No se pudieron cargar las alertas: {e}")
+            load_error("No se pudieron cargar las alertas", e)
 
     # Una sola columna centrada: las alertas pendientes van primero (son lo que
     # hay que atender); sin alertas, la confirmacion va despues de los accesos.

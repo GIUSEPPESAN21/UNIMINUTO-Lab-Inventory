@@ -22,7 +22,7 @@ DEFAULT_MAX_HOURS = 12
 ROTATE_EVERY_SECONDS = 60
 _REVOKED_LIMIT = 10000
 _revoked_lock = threading.Lock()
-_revoked: set = set()
+_revoked: dict = {}          # sid -> None; conserva el orden de inserción (los más antiguos salen primero)
 
 
 def _now(now=None) -> datetime:
@@ -168,8 +168,11 @@ def revoke(token_or_claims, storage=None) -> None:
         return
     with _revoked_lock:
         if len(_revoked) >= _REVOKED_LIMIT:
-            _revoked.clear()
-        _revoked.add(sid)
+            # Antes se vaciaba todo y las sesiones cerradas volvían a ser válidas hasta su vencimiento;
+            # ahora solo salen las más antiguas (la base conserva el resto, ver add_revoked_session).
+            for old in list(_revoked)[: _REVOKED_LIMIT // 10]:
+                del _revoked[old]
+        _revoked[sid] = None
     if storage is not None:
         try:
             storage.add_revoked_session(sid, int((claims or {}).get("exp") or 0))

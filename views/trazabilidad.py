@@ -302,9 +302,9 @@ def _live_overview(storage, user: dict) -> None:
     requests = traceability.visible_requests(storage, user)
     stuck = 0
     if permissions.has_cap(user, permissions.CAP_VIEW_ALL_TRACES):
+        index = storage.get_events_index()       # una lectura compartida, no una por pedido
         for request in requests:
-            events = storage.get_trace_events(request_id=request["id"])
-            stuck += int(traceability.is_stuck(request, events, live_data.stuck_minutes()))
+            stuck += int(traceability.is_stuck(request, index.get(request["id"], []), live_data.stuck_minutes()))
     st.caption(f"{len(requests)} solicitud(es) visibles" + (f" · {stuck} atascada(s)" if stuck else ""))
 
 

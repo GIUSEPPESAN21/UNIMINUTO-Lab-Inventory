@@ -233,6 +233,10 @@ def test_page_rejects_unknown_codes_in_a_count():
     assert storage.get_trace_events(event_type=traceability.EVENT_COUNT_MARK) == []
 
 
+def _page_text(page) -> str:
+    return " ".join(str(e.value) for e in list(page.markdown) + list(page.caption) + list(page.warning))
+
+
 def test_tags_tab_lists_the_url_of_each_product(monkeypatch):
     monkeypatch.setattr(nfc, "safe_secret", lambda key, default=None: {
         "APP_URL": "https://lab.example.edu.co", "NFC_SECRET": "secreto"}.get(key, default))
@@ -243,9 +247,54 @@ def test_tags_tab_lists_the_url_of_each_product(monkeypatch):
     expected = nfc.build_tag_url("2-1-01-00-000", "https://lab.example.edu.co", "secreto")
     assert any(value in (expected, nfc.build_tag_url("2-1-01-01-001", "https://lab.example.edu.co", "secreto"))
                for value in codes)
-    _button(page, "Marcar chip como grabado").click().run()
+    first = next(b for b in page.button if "Marcar grabado" in b.label)
+    code = first.key.removeprefix("nfc_written_")
+    first.click().run()
     assert not page.exception
-    assert nfc.load_registry(storage)[page.selectbox(key="nfc_tag_pick").value]["status"] == nfc.TAG_WRITTEN
+    assert nfc.load_registry(storage)[code]["status"] == nfc.TAG_WRITTEN
+    assert any(b.key == f"nfc_removed_{code}" for b in page.button)            # ahora se ofrece quitarlo
+
+
+def test_locations_show_their_url_instead_of_an_error(monkeypatch):
+    """Regresión: Estantería 2 / Piso 1 decían «No se puede generar la URL… Contenedor inválido»."""
+    monkeypatch.setattr(nfc, "safe_secret", lambda key, default=None: {"APP_URL": "https://lab.example.edu.co"}.get(key, default))
+    at, storage = _start()
+    users = _seed(storage)
+    storage.save_item({"name": "Estantería 2", "item_type": "location"}, "2-0-00-00-000", is_new=True)
+    storage.save_item({"name": "Piso 1", "item_type": "location"}, "2-1-00-00-000", is_new=True)
+    page = _open_page(users["prof"])
+    assert not any("No se puede generar la URL" in w.value for w in page.warning)
+    urls = [c.value for c in page.code]
+    assert any("nfc=2-0-00-00-000" in u for u in urls) and any("nfc=2-1-00-00-000" in u for u in urls)
+
+
+def test_overview_progress_and_filters(monkeypatch):
+    monkeypatch.setattr(nfc, "safe_secret", lambda key, default=None: {"APP_URL": "https://lab.example.edu.co"}.get(key, default))
+    at, storage = _start()
+    users = _seed(storage)
+    nfc.register_tag(storage, "2-1-01-01-001", users["prof"])
+    page = _open_page(users["prof"])
+    text = _page_text(page)
+    assert "Con chip probado" in text and "Grabados sin probar" in text and "Sin chip" in text
+    page.segmented_control(key="nfc_tag_status").set_value(nfc.TAG_STATUS_LABELS[nfc.TAG_WRITTEN]).run()
+    cards = [b for b in page.button if b.key and b.key.startswith(("nfc_removed_", "nfc_written_"))]
+    assert [b.key for b in cards] == ["nfc_removed_2-1-01-01-001"]
+    page.segmented_control(key="nfc_tag_status").set_value("Todos").run()
+    page.selectbox(key="nfc_tag_type").set_value("Contenedores").run()
+    assert {b.key for b in page.button if b.key and b.key.startswith("nfc_written_")} == {"nfc_written_2-1-01-00-000"}
+    page.text_input(key="nfc_tag_search").input("zzz-no-existe").run()
+    assert "Ningún producto coincide" in _page_text(page)
+
+
+def test_recent_taps_are_listed_as_a_readable_timeline(monkeypatch):
+    monkeypatch.setattr(nfc, "safe_secret", lambda key, default=None: {"APP_URL": "https://lab.example.edu.co"}.get(key, default))
+    at, storage = _start()
+    users = _seed(storage)
+    item = storage.get_item("2-1-01-01-001")
+    nfc.record_tap(storage, users["prof"], "2-1-01-01-001", item=item, signed=True)
+    page = _open_page(users["prof"])
+    text = _page_text(page)
+    assert "tocó «Arduino UNO»" in text and "Firmado" in text
 
 
 def nfc_pending_key():

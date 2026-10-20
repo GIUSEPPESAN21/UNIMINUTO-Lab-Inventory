@@ -23,6 +23,7 @@ Componentes adicionales (también estables, documentados en cada función):
 Todo texto se escapa con esc(): puede venir de usuarios.
 """
 
+import logging
 import base64
 import html
 from datetime import datetime
@@ -249,6 +250,38 @@ def show_flash(key: str = "page") -> None:
         return
     kind, message = shown
     {"success": st.success, "warning": st.warning, "info": st.info}.get(kind, st.error)(message)
+
+
+def load_error(what: str, exc: Exception) -> None:
+    """Aviso claro cuando algo no se pudo cargar: el detalle técnico va al registro del servidor, no a la pantalla."""
+    logging.getLogger("core.ui").error("%s: %s", what, exc, exc_info=exc)
+    st.error(f"{what}. Pulsa **Actualizar** en la barra lateral; si sigue igual, avisa al administrador.",
+             icon=":material/error:")
+
+
+PAGE_SIZE = 20
+
+
+def paginate(rows, key: str, page_size: int = PAGE_SIZE) -> list:
+    """Las primeras filas de ``rows`` (una página más cada vez que se pide «Mostrar más»).
+
+    Streamlit vuelve a dibujar todo en cada interacción: con cientos de tarjetas con botones y formularios
+    una sola pulsación tardaba muchos segundos. Se dibuja una página y el resto se pide con ``more_button``."""
+    rows = list(rows)
+    return rows[: int(st.session_state.get(f"_more_{key}", page_size))]
+
+
+def more_button(total: int, key: str, page_size: int = PAGE_SIZE) -> None:
+    """Botón «Mostrar más» si quedan filas sin dibujar (usar con ``paginate`` y la misma ``key``)."""
+    shown = int(st.session_state.get(f"_more_{key}", page_size))
+    if total <= shown:
+        return
+
+    def grow():
+        st.session_state[f"_more_{key}"] = shown + page_size
+
+    st.button(f"Mostrar más ({total - shown} restantes)", key=f"_morebtn_{key}", on_click=grow,
+              use_container_width=True)
 
 
 def persistent_tabs(titles: list, key: str):

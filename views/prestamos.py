@@ -7,7 +7,8 @@ import streamlit as st
 
 from core import loans as loans_core, permissions
 from core.ui import (
-    card, card_header, empty_state, guard_cap, page_header, persistent_tabs, section_title, stat_cards,
+    card, card_header, empty_state, guard_cap, more_button, page_header, paginate, persistent_tabs, section_title,
+    stat_cards,
 )
 
 
@@ -73,8 +74,9 @@ def render():
         if not loans:
             empty_state("No tienes préstamos activos.", "Cuando registres una salida desde Buscar aparecerá aquí.",
                         icon=":material/inbox:")
-        for loan in loans:
+        for loan in paginate(loans, "loans_mine"):
             _loan_row(storage, loan, user, "mine")
+        more_button(len(loans), "loans_mine")
         return
 
     tab_activos, tab_historial = persistent_tabs(
@@ -90,15 +92,16 @@ def render():
         ])
         if not loans:
             empty_state("No hay préstamos activos.", "Todo el material está en el laboratorio.", icon=":material/check_circle:")
-        for loan in loans:
+        for loan in paginate(loans, "loans_active"):
             _loan_row(storage, loan, user, "active")
+        more_button(len(loans), "loans_active")
 
     with tab_historial:
         all_loans = storage.get_all_loans()
         returned = [l for l in all_loans if l.get("status") == "returned"]
         if not returned:
             empty_state("Aún no hay préstamos devueltos en el historial.", icon=":material/folder_open:")
-        for loan in returned:
+        for loan in paginate(returned, "loans_hist"):
             with card(f"loan_hist_{loan['id']}"):
                 card_header(
                     f"{loan['item_name']} ×{loan['quantity']}",
@@ -110,3 +113,4 @@ def render():
                     f"Salida: {_when(loan.get('checkout_at'))} · "
                     f"Reingreso: {_when(loan.get('return_at'))}"
                 )
+        more_button(len(returned), "loans_hist")

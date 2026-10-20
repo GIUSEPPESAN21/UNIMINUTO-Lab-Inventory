@@ -11,9 +11,10 @@ import streamlit as st
 from core import data_quality
 from core import loans as loans_core
 from core import permissions, reports
+from core.loans import BOGOTA_TZ
 from core.ui import (
     BRAND_BLUE, CHART_COLORS, badge_html, empty_state, esc, guard_cap, icon_html, material, page_header,
-    persistent_tabs, section_title, stat_cards,
+    load_error, persistent_tabs, section_title, stat_cards,
 )
 from views.correos import render_email_settings
 
@@ -51,7 +52,7 @@ def render():
         users = storage.get_all_users()
         all_loans = storage.get_all_loans()
     except Exception as e:
-        st.error(f"No se pudieron cargar los datos: {e}")
+        load_error("No se pudieron cargar los datos", e)
         items, users, all_loans = [], [], []
 
     titles = [":material/trending_up: Uso del laboratorio", ":material/monitor_heart: Salud del inventario", ":material/warning: Vencidos", ":material/download: Exportar base de datos"]
@@ -133,7 +134,7 @@ def render():
             st.download_button(
                 ":material/download: Descargar Excel",
                 data=st.session_state["export_buffer"],
-                file_name=f"Inventario_UNIMINUTO_Export_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                file_name=f"Inventario_UNIMINUTO_Export_{datetime.now(BOGOTA_TZ).strftime('%Y%m%d_%H%M')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
             )
@@ -194,7 +195,7 @@ def _render_health(storage, user: dict, items: list) -> None:
 
     st.download_button(
         ":material/download: Descargar hallazgos (CSV)", data=_findings_csv(findings),
-        file_name=f"salud_inventario_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+        file_name=f"salud_inventario_{datetime.now(BOGOTA_TZ).strftime('%Y%m%d_%H%M')}.csv",
         mime="text/csv", key="dq_download", width="stretch",
     )
 

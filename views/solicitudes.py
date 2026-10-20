@@ -15,8 +15,8 @@ from core import (
     dispatch, live_data, permissions, reservations, search, service_requests, tracker, traceability,
 )
 from core.ui import (
-    badge_html, empty_state, esc, flash, guard_cap, page_header, persistent_tabs, section_title, show_flash,
-    stepper,
+    badge_html, empty_state, esc, flash, guard_cap, more_button, page_header, paginate, persistent_tabs,
+    section_title, show_flash, stepper,
 )
 from views import reservas
 from views.location_guide import render_location_guide, render_verifiable_route
@@ -261,7 +261,7 @@ def _render_manage(storage, user: dict) -> None:
     section_title(f"Solicitudes por revisar ({len(pending)})", icon=":material/fact_check:")
     if not pending:
         st.success("No hay solicitudes pendientes.")
-    for row in pending:
+    for row in paginate(pending, "requests_pending"):
         with st.expander(
             f"{_request_title(row)} · {row.get('requester_name')} · {_local(row.get('needed_at'))}", expanded=False,
         ):
@@ -291,6 +291,7 @@ def _render_manage(storage, user: dict) -> None:
                     )
                     flash(message, "success" if ok else "error", key=_FLASH)
                     st.rerun()
+    more_button(len(pending), "requests_pending")
     st.caption("Al aprobar un producto queda autorizado para la cola de Despacho. El préstamo y el descuento de "
                "disponibilidad se crean al completar el picking.")
 

@@ -21,8 +21,8 @@ from core.labels import (
     ITEM_TYPE_BY_CHOICE, ITEM_TYPE_CHOICES, ITEM_TYPE_HELP, ITEM_TYPE_ICONS, ITEM_TYPE_LABELS, ITEM_TYPE_NAMES,
 )
 from core.ui import (
-    badge_html, centered_columns, empty_state, esc, guard_cap, icon_html, page_header, persistent_tabs, section_title,
-    stat_cards, timeline,
+    badge_html, centered_columns, empty_state, esc, guard_cap, icon_html, load_error, more_button, page_header, paginate,
+    persistent_tabs, section_title, stat_cards, timeline,
 )
 from views import label_settings, photo_panel, ubicaciones
 from views.code_input import render_code_input
@@ -387,7 +387,7 @@ def _render_generator(storage, user: dict, master: dict) -> None:
     try:
         all_items = storage.get_all_items(include_retired=True)  # tambien los dados de baja: sus codigos no se proponen
     except Exception as exc:
-        st.error(f"No se pudo leer el inventario: {exc}")
+        load_error("No se pudo leer el inventario", exc)
         return
     analysis = suggestions.suggest_products(master, all_items)
     proposals = analysis["proposals"]
@@ -499,7 +499,7 @@ def _render_catalog(storage, user: dict, spec) -> None:
         # Las ubicaciones (estanterias, pisos, mesas) tienen su propia pestaña: no son productos.
         items = [i for i in storage.get_all_items() if i.get("item_type") != "location"]
     except Exception as e:
-        st.error(f"Error al cargar el inventario: {e}")
+        load_error("No se pudo cargar el inventario", e)
         items = []
     availability = storage.get_availability_map() if items else {}
 
@@ -558,12 +558,13 @@ def _render_catalog(storage, user: dict, spec) -> None:
         st.caption(f"{len(visible)} item(s) encontrados.")
         if not visible:
             empty_state("No se encontraron items", "Prueba con otros filtros o registra uno nuevo.", icon=":material/search:")
-        for item in visible:
+        for item in paginate(visible, "inv_list", 30):
             if item.get("item_type") == "master":
                 _container_card(storage, user, item, children_by_parent.get(item["id"], []), availability, spec,
                                 suggested.get(item["id"], 0), show_children=False)
             else:
                 _item_row(item, available(item), spec)
+        more_button(len(visible), "inv_list", 30)
         return
 
     groups, found = [], 0
@@ -585,16 +586,18 @@ def _render_catalog(storage, user: dict, spec) -> None:
     if groups:
         section_title("Contenedores Principales", icon=ITEM_TYPE_ICONS["master"],
                       caption="Cada contenedor con los productos que guarda.")
-    for master, kids, _hit in groups:
+    for master, kids, _hit in paginate(groups, "inv_groups", 15):
         filtered = len(kids) != len(children_by_parent.get(master["id"], []))
         _container_card(storage, user, master, kids, availability, spec, suggested.get(master["id"], 0))
         if filtered:
             st.caption(f"Mostrando {len(kids)} de {len(children_by_parent[master['id']])} producto(s) "
                        f"de «{master.get('name')}» por los filtros.")
+    more_button(len(groups), "inv_groups", 15)
     if loose_visible:
         section_title("Ítems sin contenedor", icon=ITEM_TYPE_ICONS["standalone"],
                       caption="Ítems individuales y productos cuyo contenedor no está activo.")
-        _product_grid(loose_visible, availability, spec, show_type=True)
+        _product_grid(paginate(loose_visible, "inv_loose", 30), availability, spec, show_type=True)
+        more_button(len(loose_visible), "inv_loose", 30)
 
 
 def _render_new_item(storage, user: dict) -> None:

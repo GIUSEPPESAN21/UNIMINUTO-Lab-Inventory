@@ -320,3 +320,10 @@ def test_student_taps_never_open_a_count(storage):
     assert ok
     outcome = nfc.handle_tap(storage, student, CODE, secret="", now=NOW)
     assert outcome["target"] == nfc.TARGET_SCAN and not outcome["count_session"]
+
+
+@pytest.mark.parametrize("code", ["2-0-00-00-000", "2-1-00-00-000", "M1-E2"])
+def test_locations_can_carry_a_chip(code):
+    """Regresión: «Estantería 2» y «Piso 1» (2-0-00-00-000, 2-1-00-00-000) mostraban «no se puede generar la URL»."""
+    url = nfc.build_tag_url(code, BASE, SECRET)
+    assert url.startswith(f"{BASE}/escanear?nfc={code}") and "&s=" in url

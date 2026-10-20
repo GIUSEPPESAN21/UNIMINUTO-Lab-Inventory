@@ -15,8 +15,11 @@ import streamlit as st
 
 from core import inventory_count as counting
 from core import excel_safe, nfc, permissions, traceability
-from core.labels import ITEM_TYPE_NAMES
-from core.ui import empty_state, guard_cap, page_header, persistent_tabs, section_title, stat_cards
+from core.labels import ITEM_TYPE_ICONS, ITEM_TYPE_NAMES
+from core.ui import (
+    badge_html, card, card_header, centered_columns, empty_state, feature_cards, guard_cap, more_button,
+    page_header, paginate, persistent_tabs, section_title, stat_cards, timeline,
+)
 from views.nfc_tap import COUNT_FOCUS_KEY
 
 NOTICE_KEY = "nfc_count_notice"
@@ -31,6 +34,12 @@ _SCOPE_CHOICES = {
     "Un contenedor": counting.SCOPE_CONTAINER,
 }
 _STATUS_FILTERS = ("Todos", nfc.NO_TAG_LABEL, nfc.TAG_STATUS_LABELS[nfc.TAG_WRITTEN], nfc.TAG_STATUS_LABELS[nfc.TAG_TESTED])
+_TYPE_FILTERS = {
+    "Todo": None, "Productos": ("standalone", "child"), "Contenedores": ("master",), "Ubicaciones": ("location",),
+}
+_STATUS_TONE = {nfc.TAG_TESTED: "success", nfc.TAG_WRITTEN: "warning"}
+CARDS_PER_ROW = 2
+CARDS_PER_PAGE = 12
 
 
 def _notice(ok, message: str, key: str = NOTICE_KEY) -> None:
@@ -59,16 +68,17 @@ def _shelves(items: list) -> list:
 
 def _render_count_start(storage, user: dict) -> None:
     section_title("Inventario con el teléfono", icon=":material/fact_check:",
-                  caption="Abre un conteo y recorre el laboratorio: cada chip NFC que toques (o cada código que "
+                  caption="Recorre el laboratorio con el celular: cada chip NFC que toques (o cada código que "
                           "escribas o escanees aquí) marca ese producto como verificado.")
-    st.markdown(
-        "1. Abre el conteo y elige qué vas a contar.\n"
-        "2. Acerca el teléfono al chip NFC de cada producto: se abre la app y el producto queda **verificado** "
-        "(si te pide iniciar sesión, el toque se registra al entrar). Sin chip, escribe o escanea el código aquí.\n"
-        "3. Si quieres, anota cuántas unidades hay en el estante.\n"
-        "4. Revisa lo que falta y cierra el conteo: se guarda un resumen. Las cantidades del inventario **no "
-        "cambian** salvo que un administrador confirme los ajustes."
-    )
+    feature_cards([
+        {"icon": "▶️", "title": "1 · Abre el conteo", "text": "Elige qué vas a contar: todo, una estantería o un contenedor."},
+        {"icon": "📲", "title": "2 · Toca los chips",
+         "text": "Acerca el teléfono al chip de cada producto; sin chip, escribe o escanea el código aquí. "
+                 "Si quieres, anota cuántas unidades hay."},
+        {"icon": "🏁", "title": "3 · Revisa y cierra",
+         "text": "Mira lo que falta y cierra: se guarda un resumen. Las cantidades no cambian salvo que un "
+                 "administrador confirme los ajustes."},
+    ])
     items = storage.get_all_items()
     masters = sorted((item for item in items if item.get("item_type") == "master"),
                      key=lambda item: counting.code_order(item.get("id")))
@@ -100,29 +110,37 @@ def _render_history(storage) -> None:
     if not sessions:
         return
     section_title("Conteos anteriores", icon=":material/history:")
-    for row in sessions:
-        title = (f"{row.get('name') or 'Conteo'} · {row.get('verified', 0)}/{row.get('expected', 0)} verificados · "
-                 f"{traceability.fmt_local(row.get('closed_at'))}")
-        with st.expander(title):
-            st.caption(f"{counting.describe_scope(row.get('scope'))} · abierto por {row.get('started_by') or '—'} "
-                       f"el {traceability.fmt_local(row.get('started_at'))} · cerrado por "
-                       f"{row.get('closed_by') or '—'}")
-            if row.get("notes"):
-                st.caption(f"Notas: {row['notes']}")
-            missing = row.get("missing") or []
-            if missing:
-                st.markdown(f"**Sin verificar ({row.get('missing_total', len(missing))}):** " + ", ".join(missing))
-            if row.get("differences"):
-                st.markdown("**Diferencias encontradas**")
-                st.dataframe(pd.DataFrame([{
-                    "Código": diff.get("code"), "Producto": diff.get("name"), "Contadas": diff.get("counted"),
-                    "Disponible en el sistema": diff.get("available"), "En préstamo": diff.get("on_loan"),
-                } for diff in row["differences"]]), hide_index=True, use_container_width=True)
-            if row.get("adjusted"):
-                st.markdown("**Cantidades ajustadas**: " + ", ".join(
-                    f"{adj.get('code')} ({adj.get('from')} → {adj.get('to')})" for adj in row["adjusted"]))
-            if row.get("extra"):
-                st.caption("Verificados fuera del alcance: " + ", ".join(row["extra"]))
+    for row in paginate(sessions, "nfc_history", 6):
+        expected = int(row.get("expected", 0) or 0)
+        verified = int(row.get("verified", 0) or 0)
+        done = round(100 * verified / expected) if expected else 0
+        with card(f"nfc_hist_{row.get('id') or row.get('closed_at')}"):
+            card_header(row.get("name") or "Conteo", subtitle=f"{counting.describe_scope(row.get('scope'))} · "
+                        f"cerrado el {traceability.fmt_local(row.get('closed_at'))}", icon="🧮",
+                        badges=[{"text": f"{verified}/{expected} verificados ({done} %)",
+                                 "tone": "success" if done >= 100 else "warning"},
+                                *([{"text": f"{len(row['differences'])} diferencia(s)", "tone": "danger", "icon": "⚠️"}]
+                                  if row.get("differences") else [])])
+            with st.expander("Ver detalle"):
+                st.caption(f"Abierto por {row.get('started_by') or '—'} el "
+                           f"{traceability.fmt_local(row.get('started_at'))} · cerrado por {row.get('closed_by') or '—'}")
+                if row.get("notes"):
+                    st.caption(f"Notas: {row['notes']}")
+                missing = row.get("missing") or []
+                if missing:
+                    st.markdown(f"**Sin verificar ({row.get('missing_total', len(missing))}):** " + ", ".join(missing))
+                if row.get("differences"):
+                    st.markdown("**Diferencias encontradas**")
+                    st.dataframe(pd.DataFrame([{
+                        "Código": diff.get("code"), "Producto": diff.get("name"), "Contadas": diff.get("counted"),
+                        "Disponible en el sistema": diff.get("available"), "En préstamo": diff.get("on_loan"),
+                    } for diff in row["differences"]]), hide_index=True, use_container_width=True)
+                if row.get("adjusted"):
+                    st.markdown("**Cantidades ajustadas**: " + ", ".join(
+                        f"{adj.get('code')} ({adj.get('from')} → {adj.get('to')})" for adj in row["adjusted"]))
+                if row.get("extra"):
+                    st.caption("Verificados fuera del alcance: " + ", ".join(row["extra"]))
+    more_button(len(sessions), "nfc_history", 6)
 
 
 def _focus_mark_form(storage, user: dict, session: dict, item: dict, method: str) -> None:
@@ -362,21 +380,27 @@ sola vez.
 
 
 def _render_config_status(base: str) -> None:
-    if nfc.configured_app_url():
-        st.caption(f":material/link: Dirección de la app en los chips: {base} (APP_URL).")
-    elif base:
-        st.warning(f"Las URL usan la dirección con la que abriste la app ({base}). Configura **APP_URL** en los "
-                   "Secrets con la dirección pública definitiva para que los chips no dejen de funcionar si "
-                   "cambia.")
-    else:
-        st.error("No se pudo saber la dirección de la app: configura **APP_URL** en los Secrets.")
-    if nfc.nfc_secret():
-        st.caption(":material/verified_user: Firma activa (NFC_SECRET): cada URL lleva `&s=…` y la app rechaza "
-                   "las URL inventadas o alteradas.")
-    else:
-        st.info("Sin firma: cualquiera que conozca un código podría abrir su URL a mano. Para que un toque "
-                "pruebe de verdad que alguien estuvo frente al chip, configura **NFC_SECRET** en los Secrets "
-                "**antes** de grabar los chips.")
+    """Dos avisos de configuración, compactos: dónde abre el chip y si la URL va firmada."""
+    left, right = st.columns(2)
+    with left, st.container(border=True):
+        if nfc.configured_app_url():
+            st.markdown(f"{badge_html('Dirección fija', 'success', '✅')} **APP_URL**", unsafe_allow_html=True)
+            st.caption(f"Los chips abren {base}.")
+        elif base:
+            st.markdown(f"{badge_html('Dirección provisional', 'warning', '⚠️')} **APP_URL**", unsafe_allow_html=True)
+            st.caption(f"Las URL usan la dirección con la que abriste la app ({base}). Configura APP_URL en los Secrets "
+                       "con la dirección pública definitiva para que los chips no dejen de funcionar si cambia.")
+        else:
+            st.markdown(f"{badge_html('Falta la dirección', 'danger', '⛔')} **APP_URL**", unsafe_allow_html=True)
+            st.caption("No se pudo saber la dirección de la app: configura APP_URL en los Secrets.")
+    with right, st.container(border=True):
+        if nfc.nfc_secret():
+            st.markdown(f"{badge_html('Firma activa', 'success', '🔏')} **NFC_SECRET**", unsafe_allow_html=True)
+            st.caption("Cada URL lleva `&s=…` y la app rechaza las URL inventadas o alteradas.")
+        else:
+            st.markdown(f"{badge_html('Sin firma', 'warning', '🔓')} **NFC_SECRET**", unsafe_allow_html=True)
+            st.caption("Cualquiera que conozca un código podría abrir su URL a mano. Configura NFC_SECRET en los "
+                       "Secrets **antes** de grabar los chips.")
 
 
 def _tag_rows(items: list, registry: dict, base: str, secret: str) -> list:
@@ -396,92 +420,108 @@ def _tag_rows(items: list, registry: dict, base: str, secret: str) -> list:
     return rows
 
 
-def _render_tags(storage, user: dict) -> None:
-    _show_notice(TAG_NOTICE_KEY)
-    base = nfc.app_base_url(st.context.url)
-    secret = nfc.nfc_secret()
-    _render_config_status(base)
-    with st.expander(":material/menu_book: Cómo grabar y probar un chip NFC", expanded=False):
-        st.markdown(_GUIDE)
-
-    items = storage.get_all_items()
-    if not items:
-        empty_state("Sin productos", "Registra productos en Inventario para grabar sus chips.", icon=":material/nfc:")
-        return
-    registry = nfc.load_registry(storage)
-    rows = _tag_rows(items, registry, base, secret)
+def _overview(rows: list) -> None:
+    """Cobertura de chips: de un vistazo, cuántos están probados, grabados o faltan."""
+    tested = len([r for r in rows if r["entry"] and r["entry"]["status"] == nfc.TAG_TESTED])
+    written = len([r for r in rows if r["entry"] and r["entry"]["status"] == nfc.TAG_WRITTEN])
+    missing = len([r for r in rows if not r["entry"]])
     stat_cards([
         {"label": "Productos y ubicaciones", "value": len(rows), "icon": "📦"},
-        {"label": "Con chip probado", "value": len([r for r in rows if r["entry"] and r["entry"]["status"] == nfc.TAG_TESTED]),
-         "icon": "✅", "tone": "success"},
-        {"label": "Grabados sin probar", "value": len([r for r in rows if r["entry"] and r["entry"]["status"] == nfc.TAG_WRITTEN]),
-         "icon": "⏳"},
-        {"label": "Sin chip", "value": len([r for r in rows if not r["entry"]]), "icon": "🏷️"},
+        {"label": "Con chip probado", "value": tested, "icon": "✅", "tone": "success"},
+        {"label": "Grabados sin probar", "value": written, "icon": "⏳", "tone": "warning" if written else "neutral"},
+        {"label": "Sin chip", "value": missing, "icon": "🏷️", "tone": "neutral"},
     ])
-
-    section_title("URL de un chip", icon=":material/nfc:")
-    search_col, status_col = st.columns([2, 1])
-    search = search_col.text_input("Buscar", key="nfc_tag_search", placeholder="Código, nombre o ubicación").strip().lower()
-    status_filter = status_col.selectbox("Estado del chip", _STATUS_FILTERS, key="nfc_tag_status")
-    shown = [
-        row for row in rows
-        if (not search or search in " ".join(str(row["item"].get(k) or "") for k in ("id", "name", "location")).lower())
-        and (status_filter == "Todos" or row["status"] == status_filter)
-    ]
-    if not shown:
-        st.caption("Ningún producto coincide con la búsqueda.")
-    else:
-        options = {row["code"]: row for row in shown}
-        code = st.selectbox(
-            "Producto o ubicación", list(options), key="nfc_tag_pick",
-            format_func=lambda c: f"{c} · {options[c]['item'].get('name')} · {options[c]['status']}",
-        )
-        _render_tag_detail(storage, user, options[code])
-
-    section_title("Todos los chips", icon=":material/list_alt:")
-    table = pd.DataFrame([{
-        "Código": row["code"], "Nombre": row["item"].get("name"),
-        "Tipo": ITEM_TYPE_NAMES.get(row["item"].get("item_type"), row["item"].get("item_type")),
-        "Chip": row["status"],
-        "Último toque": traceability.fmt_local((row["entry"] or {}).get("last_tap_at")),
-        "URL": row["url"] or row["problem"],
-    } for row in rows])
-    st.dataframe(table, hide_index=True, use_container_width=True)
-    st.download_button(":material/download: Descargar las URL (CSV)", data=excel_safe.csv_safe_frame(table).to_csv(index=False).encode("utf-8-sig"),
-                       file_name="chips_nfc.csv", mime="text/csv", use_container_width=True)
+    if rows:
+        st.progress(tested / len(rows), text=f"{tested} de {len(rows)} con chip probado ({round(100 * tested / len(rows))} %)")
 
 
-def _render_tag_detail(storage, user: dict, row: dict) -> None:
+def _tag_card(storage, user: dict, row: dict) -> None:
     item, entry = row["item"], row["entry"]
-    with st.container(border=True):
-        if row["problem"]:
-            st.warning(f"No se puede generar la URL de {row['code']}: {row['problem']}")
-            return
-        st.code(row["url"], language=None, wrap_lines=True)
-        size = nfc.ndef_size(row["url"])
-        fits = nfc.chips_that_fit(row["url"])
-        st.caption(f"Ocupa {size} bytes en el chip · cabe en: {', '.join(fits) if fits else 'ningún NTAG común'}"
-                   f" · recomendado {nfc.RECOMMENDED_CHIP}.")
-        if entry:
-            detail = nfc.tag_status_label(entry)
+    kind = item.get("item_type")
+    status_key = (entry or {}).get("status")
+    badges = [{"text": row["status"], "tone": _STATUS_TONE.get(status_key, "neutral"),
+               "icon": {"tested": "✅", "written": "⏳"}.get(status_key, "🏷️")},
+              {"text": ITEM_TYPE_NAMES.get(kind, kind or ""), "tone": "info"}]
+    with card(f"nfc_tag_{row['code']}", tone=_STATUS_TONE.get(status_key)):
+        card_header(item.get("name") or row["code"], subtitle=f"{row['code']} · {item.get('location') or 'sin ubicación'}",
+                    icon=ITEM_TYPE_ICONS.get(kind, "📦"), badges=badges)
+        if entry and (entry.get("taps") or entry.get("written_at")):
+            bits = []
             if entry.get("written_at"):
-                detail += f" · grabado por {entry.get('written_by') or '—'} el {traceability.fmt_local(entry['written_at'])}"
+                bits.append(f"grabado por {entry.get('written_by') or '—'} el {traceability.fmt_local(entry['written_at'])}")
             if entry.get("last_tap_at"):
-                detail += (f" · {entry.get('taps', 0)} toque(s), el último de {entry.get('last_tap_by') or '—'} el "
-                           f"{traceability.fmt_local(entry['last_tap_at'])}")
-            st.caption(detail)
-        written_col, removed_col = st.columns(2)
-        if written_col.button(":material/nfc: Marcar chip como grabado", key=f"nfc_written_{row['code']}",
-                              use_container_width=True, disabled=bool(entry)):
+                bits.append(f"{entry.get('taps', 0)} toque(s), el último de {entry.get('last_tap_by') or '—'} "
+                            f"({traceability.fmt_local(entry['last_tap_at'])})")
+            st.caption(" · ".join(bits))
+        if row["problem"]:
+            st.warning(f"No se puede generar la URL: {row['problem']}")
+            return
+        url_col, action_col = st.columns(2)
+        with url_col.popover(":material/link: URL del chip", use_container_width=True, key=f"nfc_url_pop_{row['code']}"):
+            st.code(row["url"], language=None, wrap_lines=True)
+            fits = nfc.chips_that_fit(row["url"])
+            st.caption(f"Ocupa {nfc.ndef_size(row['url'])} bytes · cabe en: {', '.join(fits) if fits else 'ningún NTAG común'} "
+                       f"· recomendado {nfc.RECOMMENDED_CHIP}.")
+        if entry:
+            if action_col.button(":material/delete: Quitar chip", key=f"nfc_removed_{row['code']}",
+                                 use_container_width=True):
+                nfc.unregister_tag(storage, row["code"], user, "Quitado desde Chips NFC")
+                _notice(True, f"Chip de «{item.get('name')}» quitado del registro.", TAG_NOTICE_KEY)
+                st.rerun()
+        elif action_col.button(":material/nfc: Marcar grabado", key=f"nfc_written_{row['code']}", type="primary",
+                               use_container_width=True):
             nfc.register_tag(storage, row["code"], user, chip=nfc.RECOMMENDED_CHIP)
             _notice(True, f"Chip de «{item.get('name')}» registrado como grabado. Pruébalo acercando el teléfono.",
                     TAG_NOTICE_KEY)
             st.rerun()
-        if removed_col.button(":material/delete: Quitar del registro", key=f"nfc_removed_{row['code']}",
-                              use_container_width=True, disabled=not entry):
-            nfc.unregister_tag(storage, row["code"], user, "Quitado desde Chips NFC")
-            _notice(True, f"Chip de «{item.get('name')}» quitado del registro.", TAG_NOTICE_KEY)
-            st.rerun()
+
+
+def _render_tags(storage, user: dict, rows: list, base: str) -> None:
+    _show_notice(TAG_NOTICE_KEY)
+    _render_config_status(base)
+    with st.expander(":material/menu_book: Cómo grabar y probar un chip NFC", expanded=False):
+        st.markdown(_GUIDE)
+    if not rows:
+        empty_state("Sin productos", "Registra productos en Inventario para grabar sus chips.", icon=":material/nfc:")
+        return
+
+    search_col, type_col = st.columns([3, 2])
+    search = search_col.text_input(":material/search: Buscar", key="nfc_tag_search",
+                                  placeholder="Código, nombre o ubicación").strip().lower()
+    type_label = type_col.selectbox("Tipo", list(_TYPE_FILTERS), key="nfc_tag_type")
+    status_filter = st.segmented_control("Estado del chip", _STATUS_FILTERS, default="Todos", key="nfc_tag_status") or "Todos"
+    kinds = _TYPE_FILTERS[type_label]
+    shown = [
+        row for row in rows
+        if (not search or search in " ".join(str(row["item"].get(k) or "") for k in ("id", "name", "location")).lower())
+        and (status_filter == "Todos" or row["status"] == status_filter)
+        and (kinds is None or row["item"].get("item_type") in kinds)
+    ]
+    if not shown:
+        empty_state("Ningún producto coincide", "Prueba con otra búsqueda o cambia los filtros.", icon=":material/search:")
+    else:
+        st.caption(f"{len(shown)} de {len(rows)} producto(s) y ubicación(es).")
+        visible = paginate(shown, "nfc_tags", CARDS_PER_PAGE)
+        with st.container(key="lab_product_grid_nfc"):
+            for start in range(0, len(visible), CARDS_PER_ROW):
+                chunk = visible[start:start + CARDS_PER_ROW]
+                for column, row in zip(centered_columns(len(chunk), CARDS_PER_ROW), chunk):
+                    with column:
+                        _tag_card(storage, user, row)
+        more_button(len(shown), "nfc_tags", CARDS_PER_PAGE)
+
+    with st.expander(":material/download: Tabla completa y exportación"):
+        table = pd.DataFrame([{
+            "Código": row["code"], "Nombre": row["item"].get("name"),
+            "Tipo": ITEM_TYPE_NAMES.get(row["item"].get("item_type"), row["item"].get("item_type")),
+            "Chip": row["status"],
+            "Último toque": traceability.fmt_local((row["entry"] or {}).get("last_tap_at")),
+            "URL": row["url"] or row["problem"],
+        } for row in rows])
+        st.dataframe(table, hide_index=True, use_container_width=True)
+        st.download_button(":material/download: Descargar las URL (CSV)",
+                           data=excel_safe.csv_safe_frame(table).to_csv(index=False).encode("utf-8-sig"),
+                           file_name="chips_nfc.csv", mime="text/csv", use_container_width=True)
 
 
 # ---------------------------------------------------------------------------
@@ -495,12 +535,25 @@ def _render_taps(storage) -> None:
                     icon=":material/nfc:")
         return
     st.caption("Cada toque prueba que esa persona estuvo frente al chip (con la firma activa, no se puede inventar).")
-    st.dataframe(pd.DataFrame([{
-        "Hora": traceability.fmt_local(tap.get("created_at")), "Persona": tap.get("actor_name"),
-        "Código": nfc.tap_code(tap), "Producto": traceability.event_details(tap).get("item_name"),
-        "Contexto": "Conteo" if traceability.event_details(tap).get("count_session") else "—",
-        "Firmado": "Sí" if traceability.event_details(tap).get("signed") else "No",
-    } for tap in taps]), hide_index=True, use_container_width=True)
+    query = st.text_input(":material/search: Buscar por persona o producto", key="nfc_taps_search").strip().lower()
+    rows = []
+    for tap in taps:
+        details = traceability.event_details(tap)
+        who = tap.get("actor_name") or "Alguien"
+        what = details.get("item_name") or nfc.tap_code(tap)
+        if query and query not in f"{who} {what} {nfc.tap_code(tap)}".lower():
+            continue
+        context = ["Firmado" if details.get("signed") else "Sin firma"]
+        if details.get("count_session"):
+            context.append("durante un conteo")
+        rows.append({"title": f"{who} tocó «{what}»", "detail": f"{nfc.tap_code(tap)} · {', '.join(context)}",
+                     "time": traceability.fmt_local(tap.get("created_at")), "icon": "📲" if details.get("signed") else "👆",
+                     "state": "done" if details.get("signed") else "pending"})
+    if not rows:
+        empty_state("Sin resultados", "Ningún toque coincide con la búsqueda.", icon=":material/search:")
+        return
+    timeline(paginate(rows, "nfc_taps", 25))
+    more_button(len(rows), "nfc_taps", 25)
 
 
 def render():
@@ -510,13 +563,16 @@ def render():
         return
     page_header("Chips NFC", icon=":material/nfc:",
                 subtitle="Inventario con el teléfono, grabación de chips y toques registrados")
+    base = nfc.app_base_url(st.context.url)
+    rows = _tag_rows(storage.get_all_items(), nfc.load_registry(storage), base, nfc.nfc_secret())
+    _overview(rows)
     tab_count, tab_tags, tab_taps = persistent_tabs([
-        ":material/fact_check: Inventario con el teléfono", ":material/nfc: Grabar etiquetas",
+        ":material/fact_check: Inventario con el teléfono", ":material/nfc: Chips",
         ":material/history: Toques recientes",
     ], "nfc")
     with tab_count:
         _render_count(storage, user)
     with tab_tags:
-        _render_tags(storage, user)
+        _render_tags(storage, user, rows, base)
     with tab_taps:
         _render_taps(storage)
