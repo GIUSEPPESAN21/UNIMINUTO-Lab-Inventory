@@ -129,7 +129,8 @@ def test_parallel_picking_reads_from_two_tabs_never_exceed_the_quantity(lab):
     outcomes = []
     _run([lambda m=m: outcomes.append(dispatch.register_reading(storage, request_id, operator, CODE, m)[0])
           for m in ("barcode_gun", "nfc", "nfc", "manual", "barcode_gun")])
-    assert outcomes.count(True) == 2 and len(dispatch.current_readings(operator, request_id)) == 2
+    # Cinco lecturas de la misma etiqueta desde dos pestañas: todas son válidas, pero la etiqueta se guarda UNA vez.
+    assert outcomes.count(True) == 5 and len(dispatch.current_readings(operator, request_id)) == 1
 
 
 def test_list_refreshes_during_writes_never_raise(lab):

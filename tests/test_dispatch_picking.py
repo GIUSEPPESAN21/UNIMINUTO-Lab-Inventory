@@ -73,11 +73,12 @@ def test_the_recorded_method_is_the_real_one_per_reading(lab):
     assert dispatch.start_picking(storage, request_id, people["operario"])[0]
     assert dispatch.register_reading(storage, request_id, people["operario"], CODE,
                                      dispatch.typed_method(storage))[0]
-    assert dispatch.register_reading(storage, request_id, people["operario"], CODE, "nfc")[0]
+    assert dispatch.register_reading(storage, request_id, people["operario"], CODE, "nfc")[0]   # repetida: no cuenta
     assert dispatch.complete_picking(storage, request_id, people["operario"])[0]
     details = traceability.event_details(_events(storage, request_id, traceability.EVENT_ORDER_PICKED)[0])
-    assert [r["method"] for r in details["readings"]] == ["barcode_gun", "nfc"]
-    assert details["methods"] == {"barcode_gun": 1, "nfc": 1} and details["method"] == "mixed"
+    assert details["label_read"]["method"] == "barcode_gun"                    # cómo se leyó la etiqueta de la caja
+    assert [r["method"] for r in details["readings"]] == ["count", "count"]    # las unidades se cuentan, no se leen
+    assert details["methods"] == {"count": 2} and details["method"] == "count"
 
 
 def test_an_invalid_method_is_rejected_by_the_transition(lab):
@@ -196,7 +197,8 @@ def test_each_order_shows_route_and_location_and_the_picking_panel_comes_first(l
     panel_at = next(i for i, chunk in enumerate(html_chunks) if "Picking ·" in chunk)
     queue_at = next(i for i, chunk in enumerate(html_chunks) if "Mis pedidos (" in chunk or "Por tomar (" in chunk)
     assert panel_at < queue_at                                            # el panel va ANTES de las listas
-    assert [e.value for e in at.get("progress")] == [0]                   # 0 de 2 unidades leídas
+    assert "Etiqueta de la caja o del producto" in text                   # sin ruta que leer: sigue la etiqueta
+    assert any(b.label == "Confirmar unidades y completar picking" and b.disabled for b in at.button)
 
 
 def test_the_typed_input_has_no_free_method_selector(lab):
@@ -206,7 +208,7 @@ def test_the_typed_input_has_no_free_method_selector(lab):
     at = _open_despacho(people["operario"])
     assert not at.radio                                                   # el método ya no es un radio libre
     at.text_input[0].input(CODE)
-    [b for b in at.button if b.label == "Agregar lectura"][0].click()
+    [b for b in at.button if b.label == "Registrar lectura"][0].click()
     at.run()
     assert not at.exception
     readings = dispatch.current_readings(people["operario"], request_id)
@@ -245,7 +247,7 @@ def test_an_nfc_tap_in_a_new_tab_adds_the_reading_to_the_open_picking(lab):
     assert dispatch.start_picking(storage, request_id, operator)[0]
     tab_one.run()
     tab_one.text_input[0].input(CODE)
-    [b for b in tab_one.button if b.label == "Agregar lectura"][0].click()
+    [b for b in tab_one.button if b.label == "Registrar lectura"][0].click()
     tab_one.run()
     assert [r["method"] for r in dispatch.current_readings(operator, request_id)] == ["barcode_gun"]
 
@@ -258,13 +260,13 @@ def test_an_nfc_tap_in_a_new_tab_adds_the_reading_to_the_open_picking(lab):
     assert "dispatch_active_request" not in tab_two.session_state          # nada vive en la sesión
 
     readings = dispatch.current_readings(operator, request_id)
-    assert [r["method"] for r in readings] == ["barcode_gun", "nfc"]       # la lectura NFC se sumó
-    assert any("Lectura 2/2" in str(e.value) for e in tab_two.success)     # y se avisa en la pestaña nueva
+    assert [r["method"] for r in readings] == ["barcode_gun"]              # la etiqueta ya estaba leída: no se duplica
+    assert any("ya estaba leída" in str(e.value) for e in tab_two.success)  # y se avisa en la pestaña nueva
 
-    # Pestaña 1 vuelve a verse con las dos lecturas y puede completar.
+    # Pestaña 1: las unidades no llevan código; se cuentan y se confirman.
     tab_one.run()
-    assert [e.value for e in tab_one.get("progress")] == [100]            # 2 de 2 unidades
-    assert dispatch.complete_picking(storage, request_id, operator)[0]
+    assert any(b.label == "Confirmar unidades y completar picking" and not b.disabled for b in tab_one.button)
+    assert dispatch.confirm_units(storage, request_id, operator, 2)[0]
     assert storage.get_available_quantity(CODE) == 3
 
 

@@ -112,6 +112,17 @@ def add_reading(user_id, request_id, code: str, method: str, at: str, now=None) 
         return len(entry["readings"])
 
 
+def add_reading_once(user_id, request_id, code: str, method: str, at: str, now=None) -> bool:
+    """Guarda la lectura de la etiqueta de la caja o del producto SOLO si todavía no hay una (atómico entre
+    pestañas). Devuelve si se guardó."""
+    with _lock:
+        entry = _entry(user_id, request_id, now)
+        if entry["readings"]:
+            return False
+        entry["readings"].append({"code": code, "method": method, "at": at})
+        return True
+
+
 def route_steps(user_id, request_id) -> list:
     """Puntos de la ruta ya confirmados: ``[{"key", "code", "method", "at"}]`` en el orden en que se leyeron."""
     with _lock:

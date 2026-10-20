@@ -302,29 +302,41 @@ def _route_steps(route: dict) -> None:
 @st.fragment(run_every=_DISPATCH_EVERY)
 def _picking_progress(storage, user: dict, request_id: str, needed: int) -> None:
     """Avance del picking leído del almacén del proceso: se actualiza solo, así
-    una lectura NFC hecha en otra pestaña aparece aquí sin tocar nada."""
+    una lectura NFC hecha en otra pestaña aparece aquí sin tocar nada.
+
+    Orden: la ruta (estantería → piso → contenedor → caja), la etiqueta de la caja o del producto —una sola
+    vez— y, por último, el conteo de las unidades que se sacan: las unidades no llevan código de barras."""
     readings = dispatch.current_readings(user, request_id)
     route = dispatch.route_progress(storage, user, request_id)
     if route["required"]:
         _route_steps(route)
-    st.progress(min(1.0, len(readings) / needed) if needed else 0.0,
-                text=f"{len(readings)} de {needed} unidad(es) leída(s)")
-    if readings:
-        st.caption(" · ".join(
-            f"{number}. {dispatch.METHOD_LABELS.get(row.get('method'), row.get('method'))}"
-            for number, row in enumerate(readings, 1)
-        ))
-    c1, c2, c3 = st.columns(3)
-    if c1.button("Deshacer última", disabled=not readings, key=f"undo_pick_{request_id}",
+    label_read = bool(readings)
+    request = storage.get_service_request(request_id) or {}
+    if label_read:
+        st.markdown(f":green[:material/check_circle:] Etiqueta de la caja leída "
+                    f"({dispatch.METHOD_LABELS.get(readings[0].get('method'), readings[0].get('method'))})")
+    elif route["complete"]:
+        st.markdown(f":material/arrow_forward: **Etiqueta de la caja o del producto** · lee "
+                    f"`{request.get('item_id')}`")
+    else:
+        st.caption("Cuando la ruta esté completa, lee la etiqueta de la caja o del producto.")
+    with st.form(f"count_units_{request_id}", clear_on_submit=False):
+        counted = st.number_input(f"Unidades que sacaste de la caja (pedido: {needed})", min_value=0,
+                                  max_value=max(needed * 5, 1), value=needed, step=1,
+                                  disabled=not (label_read and route["complete"]),
+                                  help="Las unidades no llevan código de barras: cuéntalas y confirma.")
+        done = st.form_submit_button("Confirmar unidades y completar picking", type="primary",
+                                     disabled=not (label_read and route["complete"]), use_container_width=True)
+    if done:
+        ok, message, _ = dispatch.confirm_units(storage, request_id, user, counted)
+        _notice(ok, message)
+        st.rerun()
+    c1, c2 = st.columns(2)
+    if c1.button("Deshacer última", disabled=not (readings or route["done"]), key=f"undo_pick_{request_id}",
                  use_container_width=True):
         dispatch.undo_reading(user, request_id)
         st.rerun()
-    if c2.button("Completar picking", disabled=len(readings) != needed or not route["complete"],
-                 key=f"complete_pick_{request_id}", type="primary", use_container_width=True):
-        ok, message, _ = dispatch.complete_picking(storage, request_id, user)
-        _notice(ok, message)
-        st.rerun()
-    if c3.button("Cerrar panel", key=f"close_pick_{request_id}", use_container_width=True,
+    if c2.button("Cerrar panel", key=f"close_pick_{request_id}", use_container_width=True,
                  help="Descarta las lecturas de este panel; el pedido sigue tomado."):
         dispatch.abandon_picking(user, request_id)
         st.rerun()
@@ -345,7 +357,8 @@ def _picking_panel(storage, user: dict) -> None:
     needed = int(request.get("quantity") or 0)
     with st.container(border=True, key="dispatch_picking_panel"):
         section_title(f"Picking · {request.get('item_name')}", icon=":material/barcode_scanner:",
-                      caption=f"Lee una unidad a la vez ({needed} en total). {dispatch.scenario_label(storage)}.")
+                      caption=f"Lee la ruta y la etiqueta de la caja; las unidades no llevan código: cuéntalas ({needed} en total). "
+                          f"{dispatch.scenario_label(storage)}.")
         if str(request.get("description") or "").strip():
             st.info(f"Nota del cliente: {str(request['description']).strip()}", icon=":material/sticky_note_2:")
         _order_context(storage, request, f"pick_{request_id}")
@@ -354,7 +367,7 @@ def _picking_panel(storage, user: dict) -> None:
         st.caption(f"{scenario['help']} Las lecturas por NFC se suman solas, también desde otra pestaña.")
         with st.form(f"pick_scan_{request_id}", clear_on_submit=True):
             code = st.text_input("Código leído", placeholder=request.get("item_id"))
-            add = st.form_submit_button("Agregar lectura", type="primary", use_container_width=True)
+            add = st.form_submit_button("Registrar lectura", type="primary", use_container_width=True)
         _focus_reading_input("Código leído")
         if add:
             ok, message, _ = dispatch.register_reading(

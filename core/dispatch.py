@@ -33,10 +33,11 @@ METHOD_BARCODE_GUN = "barcode_gun"
 METHOD_CAMERA = "camera"
 METHOD_NFC = "nfc"
 METHOD_MANUAL = "manual"
-METHODS = (METHOD_BARCODE_GUN, METHOD_CAMERA, METHOD_NFC, METHOD_MANUAL)
+METHOD_COUNT = "count"        # unidades sacadas de la caja: no llevan código, el operario las cuenta y confirma
+METHODS = (METHOD_BARCODE_GUN, METHOD_CAMERA, METHOD_NFC, METHOD_MANUAL, METHOD_COUNT)
 METHOD_LABELS = {
     METHOD_BARCODE_GUN: "Pistola de barras", METHOD_CAMERA: "Cámara del teléfono",
-    METHOD_NFC: "Chip NFC", METHOD_MANUAL: "Manual",
+    METHOD_NFC: "Chip NFC", METHOD_MANUAL: "Manual", METHOD_COUNT: "Conteo de unidades",
 }
 _LEGACY_METHODS = {"barcode": METHOD_BARCODE_GUN, "teclado": METHOD_MANUAL}
 
@@ -49,7 +50,7 @@ SCENARIOS = {
     "B": {"label": "Programa + pistola de barras", "typed_method": METHOD_BARCODE_GUN,
           "help": "Las lecturas llegan de la pistola (el campo recibe el código)."},
     "C": {"label": "Programa + chip NFC", "typed_method": METHOD_MANUAL,
-          "help": "Se toca el chip de cada unidad; el teclado queda como respaldo."},
+          "help": "Se tocan los chips de estantería, piso y contenedor; el teclado queda como respaldo."},
 }
 
 
@@ -550,7 +551,7 @@ def register_reading(storage, request_id: str, actor: dict, code: str, method: s
         return False, "Este pedido ya no está en tu picking.", 0
     user_id = actor.get("id")
     needed = int(request.get("quantity") or 0)
-    current = len(picking.readings(user_id, request_id))
+    current = len(picking.readings(user_id, request_id))      # 0 o 1: la etiqueta de la caja o del producto
     code = str(code or "").strip()
     if pick_route.required(storage):
         route = pick_route.read(storage, request, picking.route_steps(user_id, request_id), code)
@@ -561,14 +562,16 @@ def register_reading(storage, request_id: str, actor: dict, code: str, method: s
             elif not ok:
                 picking.add_failed(user_id, request_id, code, message, method, _stamp(now))
             return ok, message, current
+    if method == METHOD_COUNT:
+        return False, "El conteo es solo para confirmar las unidades que se sacan de la caja.", current
     ok, message = validate_reading(request, code)
     if not ok:
         picking.add_failed(user_id, request_id, code, message, method, _stamp(now))
         return False, message, current
-    if current >= needed:
-        return False, "Ya están todas las unidades requeridas.", current
-    count = picking.add_reading(user_id, request_id, str(code).strip(), method, _stamp(now))
-    return True, f"Lectura {count}/{needed} registrada ({METHOD_LABELS[method]}).", count
+    follow = f"Ahora cuenta las {needed} unidad(es) que sacas y confírmalas."
+    if not picking.add_reading_once(user_id, request_id, code, method, _stamp(now)):
+        return True, f"La etiqueta del producto ya estaba leída. {follow}", 1
+    return True, f"Etiqueta del producto leída ({METHOD_LABELS[method]}). {follow}", 1
 
 
 def register_active_reading(storage, actor: dict, code: str, method: str, now=None,
@@ -617,10 +620,23 @@ def complete_picking(storage, request_id: str, actor: dict, readings: list = Non
     if pending_route:
         return False, pending_route, None
     from_store = readings is None
-    source = picking.readings(actor.get("id"), request_id) if from_store else readings
+    now = _stamp()
+    label_read = None
+    if from_store:
+        # Las unidades que se sacan de la caja no llevan código: se lee UNA vez la etiqueta de la caja o del
+        # producto y el operario cuenta lo que saca. Cada unidad queda registrada con el método «conteo».
+        stored = picking.readings(actor.get("id"), request_id)
+        request = storage.get_service_request(request_id)
+        if not stored:
+            return False, "Lee la etiqueta de la caja o del producto antes de confirmar las unidades.", None
+        label_read = stored[0]
+        source = [{"code": label_read["code"], "method": METHOD_COUNT, "at": now}
+                  for _ in range(int((request or {}).get("quantity") or 0))]
+        method = METHOD_COUNT
+    else:
+        source = readings
     default = normalize_method(method) or typed_method(storage)
     clean = []
-    now = _stamp()
     for value in source or []:
         if isinstance(value, dict):
             clean.append({"code": str(value.get("code") or "").strip(),
@@ -632,6 +648,8 @@ def complete_picking(storage, request_id: str, actor: dict, readings: list = Non
     steps = picking.route_steps(actor.get("id"), request_id)
     if steps:
         details["route"] = steps
+    if label_read:
+        details["label_read"] = label_read
     details.update(extra_details or {})
     failed = picking.failed(actor.get("id"), request_id) if from_store else []
     if failed:
@@ -642,6 +660,27 @@ def complete_picking(storage, request_id: str, actor: dict, readings: list = Non
         if not traceability.event_details(result[2]).get("reused_loan"):
             _notify_dispatched_loan(storage, request_id)
     return result
+
+
+def confirm_units(storage, request_id: str, actor: dict, counted, note: str = ""):
+    """El operario confirma cuántas unidades sacó de la caja (no llevan código de barras) y completa el picking.
+
+    Exige la ruta y la etiqueta de la caja o del producto ya leídas, y que la cuenta coincida con lo pedido.
+    Devuelve lo mismo que ``complete_picking``."""
+    permissions.require_cap(actor, permissions.CAP_PICK)
+    request = storage.get_service_request(request_id)
+    if not request:
+        return False, "El pedido no existe.", None
+    needed = int(request.get("quantity") or 0)
+    try:
+        counted = int(counted)
+    except (TypeError, ValueError):
+        return False, "Escribe cuántas unidades sacaste, con un número entero.", None
+    if counted != needed:
+        return False, (f"El pedido es de {needed} unidad(es) y contaste {counted}. Saca la cantidad pedida; si no "
+                       "alcanzan, libera el pedido y avisa al supervisor."), None
+    return complete_picking(storage, request_id, actor,
+                            extra_details={"counted_units": counted, "count_note": _clean(note)})
 
 
 def route_pending(storage, request_id: str, actor: dict) -> str:

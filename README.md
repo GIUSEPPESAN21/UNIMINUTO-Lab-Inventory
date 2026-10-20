@@ -295,6 +295,11 @@ rechazada y el panel dice qué leer), «Completar picking» y la confirmación m
 la ruta leída queda en la trazabilidad. Estantería y piso se exigen si están registrados en Inventario → Ubicaciones; los
 códigos libres no tienen ruta. El administrador la apaga en **Despacho → Ajustes** (`core/pick_route.py`).
 
+**Las unidades no llevan código.** Con la ruta completa, el operario lee **una vez** la etiqueta de la caja o del
+producto, saca las unidades, las **cuenta** y pulsa «Confirmar unidades y completar picking» (la cuenta debe ser la
+cantidad pedida). Cada unidad queda con el método «conteo de unidades» y el evento guarda cómo se leyó la etiqueta de la
+caja. Si no hay lector a mano, sigue la confirmación manual.
+
 **Chips NFC: llegada.** Al tocar el chip de una estantería, un piso o un contenedor la app responde «Llegaste al
 contenedor «X» · N producto(s) dentro» (y, con un picking abierto, confirma ese punto de la ruta aunque el toque abra otra
 pestaña). En **Chips NFC** la vista por omisión es «Estanterías, pisos y contenedores».
