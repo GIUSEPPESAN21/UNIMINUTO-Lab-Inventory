@@ -35,6 +35,9 @@ SHEET_COLUMNS = {
         "id", "name", "category", "description", "item_type", "parent_id",
         "unit", "quantity", "location", "min_stock_alert", "status",
         "created_by", "updated_at",
+        # "1" si del producto (Lego, bloques, kits…) se retiran piezas sin inventario por pieza
+        # (core/pieces.py). Las bases antiguas completan esta columna al cargar.
+        "loose_pieces",
     ],
     "users": [
         "id", "full_name", "student_id", "institutional_email", "password_hash", "role",
@@ -1512,6 +1515,10 @@ class LabStorage:
                 "status": data.get("status", "active"),
                 "created_by": data.get("created_by", actor_email),
                 "updated_at": _now_str(),
+                # Quien edita sin tocar la casilla (otros formularios, importaciones) no la borra.
+                "loose_pieces": ("1" if str(data["loose_pieces"]).strip().lower() in ("1", "true", "si", "sí", "x")
+                                 else "") if "loose_pieces" in data
+                else (_clean_nan(existing.to_dict()).get("loose_pieces") or "" if existing is not None else ""),
             }
 
             if idx:

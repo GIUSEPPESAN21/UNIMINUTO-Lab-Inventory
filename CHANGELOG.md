@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.19.0 — Despacho abierto, devoluciones verificadas y retiro de piezas
+
+### Despacho
+- **La nota del cliente la ve todo el personal**: en Solicitudes → Gestionar, en la cola de Despacho (tarjeta de cada
+  pedido) y en el panel de picking, para que quien prepara el pedido lea lo que pidió el estudiante.
+- **Cualquier operario o supervisor elige el pedido que despacha** (*Por tomar*): se acabó el paso de que un supervisor
+  asigne qué operarios pueden tomar cada pedido. `authorized_pickers` ya no restringe nada (se conserva en datos
+  antiguos). Reasignar/liberar sigue siendo del supervisor.
+- **Los supervisores también hacen picking** (`view_dispatch_queue`, `claim`, `pick` pasan a `encargado`, `profesor` y
+  `maestro`).
+
+### Devoluciones (nuevo)
+- El cliente pulsa **Devolver** (Préstamos o Buscar) → el **supervisor verifica** estado y cantidad recibida → un
+  **operario (o supervisor) lo guarda** y recién entonces se cierra el préstamo y sube la disponibilidad.
+- **Devolución parcial**: se cierra solo lo recibido y el préstamo queda abierto por lo que falta.
+- Nueva pestaña **Despacho → Devoluciones**, eventos `return_requested`/`return_verified`/`return_stored` en la cadena de
+  custodia y el estado/observaciones en el historial del producto. Capacidades nuevas `verify_return` y `store_return`.
+- Quien no tiene `checkin_any_loan` ya no puede reingresar directo (ni el dueño del préstamo): `loans.checkin` y
+  `LabStorage.return_loan(actor=…)` lo rechazan; el flujo usa su propia verificación.
+
+### Retiro de piezas (nuevo)
+- Productos marcados **«Se retiran por piezas»** (Lego, bloques, kits…): cada persona registra cuántas piezas se lleva
+  y cuántas devuelve, **sin inventario por pieza** y sin tocar el stock. El saldo por persona sale de la cadena de custodia
+  (`pieces_taken`/`pieces_returned`). Columna nueva `items.loose_pieces` (se completa sola en bases antiguas).
+
+### Pruebas
+- `tests/test_returns_flow.py`, `tests/test_pieces.py` y la matriz de capacidades actualizada.
+
 ## v1.18.0 — Más ágil y sin fallos latentes
 
 Medido con `scripts/bench_storage.py` (base sintética de ≈800 mil celdas: 32 000 eventos, 6 000 préstamos, 4 000 pedidos).

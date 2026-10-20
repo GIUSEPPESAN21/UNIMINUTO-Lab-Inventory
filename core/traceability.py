@@ -199,6 +199,12 @@ EVENT_RETURN_REQUESTED = "return_requested"
 EVENT_RETURN_VERIFIED = "return_verified"
 EVENT_RETURN_STORED = "return_stored"
 RETURN_EVENTS = (EVENT_RETURN_REQUESTED, EVENT_RETURN_VERIFIED, EVENT_RETURN_STORED)
+# Retiro de piezas de un producto (Lego y similares) sin inventario por pieza (core/pieces.py).
+EVENT_PIECES_TAKEN = "pieces_taken"
+EVENT_PIECES_RETURNED = "pieces_returned"
+PIECE_EVENTS = (EVENT_PIECES_TAKEN, EVENT_PIECES_RETURNED)
+EVENT_TYPES = EVENT_TYPES + PIECE_EVENTS
+EVENT_LABELS.update({EVENT_PIECES_TAKEN: "Piezas retiradas", EVENT_PIECES_RETURNED: "Piezas devueltas"})
 EVENT_TYPES = EVENT_TYPES + RETURN_EVENTS
 EVENT_LABELS.update({
     EVENT_RETURN_REQUESTED: "Devolución solicitada",
@@ -623,6 +629,11 @@ def describe_event(event: dict) -> str:
             if proof.get("note"):
                 text += f" Nota: {proof['note']}"
         return text
+    if kind == EVENT_PIECES_TAKEN:
+        return f"Retiró {int(details.get('pieces') or 0)} pieza(s){note}"
+    if kind == EVENT_PIECES_RETURNED:
+        by = f" (registrado por {details['registered_by']})" if details.get("registered_by") else ""
+        return f"Devolvió {int(details.get('pieces') or 0)} pieza(s){by}{note}"
     if kind == EVENT_RETURN_REQUESTED:
         return f"Pidió devolver el producto{note}"
     if kind == EVENT_RETURN_VERIFIED:

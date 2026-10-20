@@ -11,7 +11,7 @@ import streamlit as st
 from core import barcode, labels, loans as loans_core, notifications, permissions, returns, search, traceability
 from core.labels import ITEM_TYPE_BY_CHOICE, ITEM_TYPE_CHOICES, ITEM_TYPE_HELP, ITEM_TYPE_NAMES
 from core.ui import empty_state, esc, guard_cap, load_error, page_header, section_title, show_flash
-from views import photo_panel, solicitudes
+from views import photo_panel, piece_panel, solicitudes
 from views.code_input import render_code_input
 from views import ubicaciones
 from views.location_guide import render_location_guide
@@ -80,6 +80,8 @@ def _render_item_actions(item: dict, parent: dict = None):
 
     if item.get("description"):
         st.caption(item["description"])
+
+    piece_panel.render(storage, user, item, key_prefix=f"scan_{item['id']}")
 
     if permissions.has_cap(user, permissions.CAP_REQUEST) and _requestable(item):
         st.markdown("##### :material/send: Pedir este producto")
@@ -224,10 +226,12 @@ def _render_new_item_wizard(scanned_code: str):
                 choice = st.selectbox(ITEM_TYPE_NAMES["master"], list(options.keys()))
                 parent_id = options.get(choice, "")
 
-        quantity, min_alert = 0, 0
+        quantity, min_alert, loose_pieces = 0, 0, False
         if item_kind != ITEM_TYPE_NAMES["master"]:
             quantity = st.number_input("Cantidad inicial", min_value=0, step=1, value=1)
             min_alert = st.number_input("Umbral de alerta de disponibilidad", min_value=0, step=1, value=0)
+        loose_pieces = st.checkbox("Se retiran por piezas (Lego, bloques, kits…)", key="scan_new_pieces",
+                                   help="Las personas dicen cuántas piezas se llevan y cuántas devuelven, sin dar de alta cada pieza ni tocar el stock.")
 
         submitted = st.form_submit_button(":material/save: Registrar item", type="primary", use_container_width=True)
 
@@ -256,7 +260,7 @@ def _render_new_item_wizard(scanned_code: str):
                     "item_type": item_type, "parent_id": parent_id, "unit": "unidad",
                     "quantity": int(quantity), "location": location,
                     "min_stock_alert": int(min_alert), "status": "active",
-                    "created_by": user["institutional_email"],
+                    "created_by": user["institutional_email"], "loose_pieces": "1" if loose_pieces else "",
                 }
                 try:
                     storage.save_item(data, code_to_save, is_new=True,

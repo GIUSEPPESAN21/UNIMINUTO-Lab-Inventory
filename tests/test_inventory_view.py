@@ -66,7 +66,7 @@ def test_delete_requires_the_confirmation_checkbox(db):
 
 def test_confirmed_delete_removes_the_item_for_good_and_frees_the_code(db):
     at = _open_editor()
-    at.checkbox[0].check()
+    [box for box in at.checkbox if "eliminará" in box.label][0].check()
     _delete_button(at).click().run()
     assert not at.exception
 
@@ -88,7 +88,7 @@ def test_delete_is_refused_while_the_item_has_open_loans(db):
     at.session_state["editing_item_id"] = "LAB-001"
     at.run()
     assert any("préstamo(s) abierto(s)" in c.value for c in at.caption)
-    at.checkbox[0].check()
+    [box for box in at.checkbox if "eliminará" in box.label][0].check()
     _delete_button(at).click().run()
     assert any("prestamos abiertos" in e.value for e in at.error)
     assert db.get_item("LAB-001") is not None
