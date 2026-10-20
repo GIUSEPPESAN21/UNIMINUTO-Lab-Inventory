@@ -209,6 +209,15 @@ def validate_session(storage, session_user: dict, login_at=None, now: datetime =
     started_at = _parse_utc(login_at)
     if changed_at is not None and started_at is not None and changed_at > started_at:
         return None, PASSWORD_CHANGED_SESSION_NOTICE
+    # Revocación explícita (S4): «Cerrar todas mis sesiones», o un cambio de rol
+    # o estado hecho por el perfil maestro, incrementan `session_epoch`.
+    try:
+        current_epoch = int(float(fresh.get("session_epoch") or 0))
+        session_epoch = int(float((session_user or {}).get("session_epoch") or 0))
+    except (TypeError, ValueError):
+        current_epoch, session_epoch = 0, -1
+    if current_epoch != session_epoch:
+        return None, SESSION_REVOKED_NOTICE
     return public_user(fresh), None
 
 
@@ -401,9 +410,13 @@ def validate_profile_update(storage, user_id: str, full_name: str, email: str,
 # - Queda un evento de auditoria en `trace_events` SIN la contraseña.
 
 MIN_PASSWORD_LENGTH = 8
-RESETTABLE_ROLES = (permissions.ROLE_STUDENT, permissions.ROLE_PROFESSOR)
+RESETTABLE_ROLES = (
+    permissions.ROLE_STUDENT, permissions.ROLE_OPERATOR,
+    permissions.ROLE_ATTENDANT, permissions.ROLE_PROFESSOR,
+)
 PASSWORD_RESET_EVENT = "password_reset"
 PASSWORD_CHANGED_SESSION_NOTICE = "Tu contraseña cambió. Inicia sesión de nuevo con la contraseña nueva."
+SESSION_REVOKED_NOTICE = "Tu sesión fue revocada. Inicia sesión de nuevo."
 
 # Sin caracteres que se confunden al dictar o copiar a mano (0/O/o, 1/l/I).
 TEMP_PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
@@ -460,7 +473,7 @@ def generate_temporary_password() -> str:
 def can_reset_password(actor: dict, target: dict) -> bool:
     """Regla de la interfaz: el maestro ve la opcion solo en tarjetas ajenas de
     estudiantes y profesores (la decision final la toma admin_reset_password)."""
-    return (permissions.has_role(actor, permissions.ADMIN_ROLES) and bool(target)
+    return (permissions.has_cap(actor, permissions.CAP_MANAGE_USERS) and bool(target)
             and target.get("id") != (actor or {}).get("id")
             and target.get("role") in RESETTABLE_ROLES)
 
@@ -497,6 +510,7 @@ def _record_password_reset(storage, actor: dict, target: dict, details: dict, no
             "actor_id": actor.get("id", ""),
             "actor_name": actor.get("full_name", ""),
             "actor_email": actor.get("institutional_email", ""),
+            "actor_role": actor.get("role", ""),
             "details": json.dumps(details, ensure_ascii=False),
             "created_at": now.isoformat(),
         })
@@ -514,7 +528,7 @@ def admin_reset_password(storage, actor: dict, target_user_id: str, new_password
     actor_id = (actor or {}).get("id")
     fresh_actor = storage.get_user_by_id(actor_id) if actor_id else None
     if (not fresh_actor or fresh_actor.get("status") != "active"
-            or not permissions.has_role(fresh_actor, permissions.ADMIN_ROLES)):
+            or not permissions.has_cap(fresh_actor, permissions.CAP_MANAGE_USERS)):
         return None, "Solo el perfil maestro puede restablecer contraseñas."
     target = storage.get_user_by_id(target_user_id) if target_user_id else None
     if not target:

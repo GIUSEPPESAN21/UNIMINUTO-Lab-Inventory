@@ -59,7 +59,7 @@ def _show_flash() -> None:
 
 
 def render_email_settings(storage, user: dict) -> None:
-    if not permissions.has_role(user, permissions.ADMIN_ROLES):
+    if not permissions.has_cap(user, permissions.CAP_MANAGE_EMAIL):
         st.info("Solo el perfil maestro configura los correos automáticos.")
         return
 

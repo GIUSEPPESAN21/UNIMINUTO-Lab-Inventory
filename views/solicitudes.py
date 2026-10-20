@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 import streamlit as st
 
-from core import reservations, service_requests, traceability
+from core import dispatch, live_data, permissions, reservations, service_requests, traceability
 from core.ui import badge_html, esc, page_header, timeline
 from views.location_guide import render_location_guide, render_verifiable_route
 
@@ -83,14 +83,33 @@ def _request_card(storage, row: dict, user: dict, allow_cancel=True, events: lis
                 (st.success if ok else st.error)(message)
                 if ok:
                     st.rerun()
+        if (row.get("requester_id") == user.get("id")
+                and permissions.has_cap(user, permissions.CAP_CONFIRM_RECEIPT)
+                and traceability.request_stage_key(row, events or []) == traceability.STAGE_DELIVERED):
+            if c2.button("Recibí mi pedido", key=f"confirm_req_{row['id']}",
+                         type="primary", use_container_width=True):
+                ok, message, _ = dispatch.confirm_client_receipt(storage, row["id"], user)
+                (st.success if ok else st.error)(message)
+                if ok:
+                    st.rerun()
         if show_tracking:
             _render_tracking(storage, row, user, events or [], loan)
+
+
+@st.fragment(run_every=live_data.run_every(live_data.list_refresh_seconds()))
+def _live_status(storage, user: dict) -> None:
+    rows = storage.get_service_requests(user_id=user.get("id"))
+    events = traceability.events_by_request(storage.get_trace_events(user_id=user.get("id")))
+    if rows:
+        latest = rows[0]
+        stage = traceability.request_stage(latest, events.get(latest["id"], []))[0]
+        st.caption(f"{len(rows)} solicitud(es) · la más reciente está: {stage}")
 
 
 def render():
     storage = st.session_state.storage
     user = st.session_state.user
-    reviewer = user.get("role") in service_requests.REVIEWER_ROLES
+    reviewer = permissions.has_cap(user, permissions.CAP_APPROVE)
 
     page_header(
         "Solicitudes", icon=":material/edit_note:",
@@ -167,6 +186,7 @@ def render():
                     st.error(str(exc))
 
     with tabs[1]:
+        _live_status(storage, user)
         mine = storage.get_service_requests(user_id=user["id"])
         if not mine:
             st.info("Todavía no tienes solicitudes.")
@@ -182,6 +202,10 @@ def render():
     if reviewer:
         with tabs[2]:
             pending = storage.get_service_requests(status=service_requests.STATUS_PENDING)
+            operators = [row for row in storage.get_all_users()
+                         if row.get("status") == "active"
+                         and row.get("role") == permissions.ROLE_OPERATOR]
+            operator_names = {row["id"]: row.get("full_name") or row["id"] for row in operators}
             st.metric("Pendientes", len(pending))
             if not pending:
                 st.success("No hay solicitudes pendientes.")
@@ -192,6 +216,13 @@ def render():
                 ):
                     _request_card(storage, row, user, allow_cancel=False)
                     with st.form(f"review_request_{row['id']}"):
+                        authorized = []
+                        if row.get("request_type") == service_requests.TYPE_PRODUCT:
+                            authorized = st.multiselect(
+                                "Despachadores autorizados",
+                                list(operator_names), format_func=operator_names.get,
+                                help="Déjalo vacío para permitir a todos los operarios activos.",
+                            )
                         notes = st.text_input("Observación para el solicitante")
                         c1, c2 = st.columns(2)
                         approve = c1.form_submit_button("Aprobar", type="primary", use_container_width=True)
@@ -202,14 +233,15 @@ def render():
                                 else service_requests.STATUS_REJECTED
                             )
                             ok, message = service_requests.review_request(
-                                storage, row["id"], decision, user, notes
+                                storage, row["id"], decision, user, notes,
+                                authorized_pickers=authorized,
                             )
                             (st.success if ok else st.error)(message)
                             if ok:
                                 st.rerun()
             st.caption(
-                "Aprobar un producto no registra su salida: el retiro se confirma en Escanear para "
-                "mantener la cadena de custodia existente."
+                "Al aprobar un producto queda autorizado para la cola Despacho. El préstamo y el "
+                "descuento de disponibilidad se crean al completar el picking."
             )
             st.caption(
                 ":material/explore: En **Trazabilidad** validas el comprobante de ruta del estudiante, ves la cadena de "

@@ -34,17 +34,111 @@ EVENT_PICKED_UP = "picked_up"
 EVENT_RECEIPT_CHECKED = "receipt_checked"
 EVENT_SERVICE_STARTED = "service_started"
 EVENT_SERVICE_DELIVERED = "service_delivered"
+# Despacho: el estado operativo se deriva exclusivamente de estos eventos.
+EVENT_ORDER_REQUESTED = "order_requested"
+EVENT_ORDER_APPROVED = "order_approved"
+EVENT_ORDER_REJECTED = "order_rejected"
+EVENT_ORDER_CANCELLED = "order_cancelled"
+EVENT_ORDER_AUTHORIZED = "order_authorized"
+EVENT_ORDER_CLAIMED = "order_claimed"
+EVENT_ORDER_RELEASED = "order_released"
+EVENT_ORDER_REASSIGNED = "order_reassigned"
+EVENT_ORDER_PICKED = "order_picked"
+EVENT_ORDER_RECEIVED = "order_received"
+EVENT_ORDER_DELIVERED = "order_delivered"
+EVENT_ORDER_REWORK = "order_rework"
+EVENT_ORDER_RETURNED_TO_SHELF = "order_returned_to_shelf"
+EVENT_ORDER_CLIENT_CONFIRMED = "order_client_confirmed"
+EVENT_ORDER_ACTION_FAILED = "order_action_failed"
+EVENT_ORDER_SCAN_FAILED = "order_scan_failed"
+EVENT_ROLE_CHANGED = "role_changed"
+EVENT_SESSION_LOGIN = "session_login"
+EVENT_SESSION_LOGOUT = "session_logout"
+EVENT_SESSION_EXPIRED = "session_expired"
+
+STAGE_REQUESTED = "requested"
+STAGE_APPROVED = "approved"
+STAGE_CLAIMED = "claimed"
+STAGE_PICKED = "picked"
+STAGE_RECEIVED = "received"
+STAGE_DELIVERED = "delivered"
+STAGE_CONFIRMED = "confirmed"
+STAGE_REJECTED = "rejected"
+STAGE_CANCELLED = "cancelled"
+STAGE_RETURNED = "returned_to_shelf"
+
+STAGES = {
+    STAGE_REQUESTED: ("Solicitada", "warning"),
+    STAGE_APPROVED: ("Aprobada · por tomar", "info"),
+    STAGE_CLAIMED: ("Tomada · en picking", "info"),
+    STAGE_PICKED: ("Picking completo · por recibir", "success"),
+    STAGE_RECEIVED: ("Recibida · por entregar", "success"),
+    STAGE_DELIVERED: ("Entregada al cliente", "success"),
+    STAGE_CONFIRMED: ("Confirmada por el cliente", "success"),
+    STAGE_REJECTED: ("Rechazada", "danger"),
+    STAGE_CANCELLED: ("Cancelada", "neutral"),
+    STAGE_RETURNED: ("Devuelta al estante", "neutral"),
+}
+
+# evento -> nueva etapa. Los eventos laterales conservan la etapa.
+ALLOWED_TRANSITIONS = {
+    STAGE_REQUESTED: {
+        EVENT_ORDER_APPROVED: STAGE_APPROVED,
+        EVENT_ORDER_REJECTED: STAGE_REJECTED,
+        EVENT_ORDER_CANCELLED: STAGE_CANCELLED,
+    },
+    STAGE_APPROVED: {
+        EVENT_ORDER_AUTHORIZED: STAGE_APPROVED,
+        EVENT_ORDER_CLAIMED: STAGE_CLAIMED,
+        EVENT_ORDER_CANCELLED: STAGE_CANCELLED,
+    },
+    STAGE_CLAIMED: {
+        EVENT_ORDER_RELEASED: STAGE_APPROVED,
+        EVENT_ORDER_REASSIGNED: STAGE_CLAIMED,
+        EVENT_ORDER_PICKED: STAGE_PICKED,
+    },
+    STAGE_PICKED: {EVENT_ORDER_RECEIVED: STAGE_RECEIVED},
+    STAGE_RECEIVED: {
+        EVENT_ORDER_DELIVERED: STAGE_DELIVERED,
+        EVENT_ORDER_REWORK: STAGE_CLAIMED,
+        EVENT_ORDER_RETURNED_TO_SHELF: STAGE_RETURNED,
+    },
+    STAGE_DELIVERED: {EVENT_ORDER_CLIENT_CONFIRMED: STAGE_CONFIRMED},
+}
+
+EVENT_CAPABILITIES = {
+    EVENT_ORDER_APPROVED: permissions.CAP_APPROVE,
+    EVENT_ORDER_REJECTED: permissions.CAP_APPROVE,
+    EVENT_ORDER_AUTHORIZED: permissions.CAP_AUTHORIZE_DISPATCH,
+    EVENT_ORDER_CLAIMED: permissions.CAP_CLAIM,
+    EVENT_ORDER_RELEASED: permissions.CAP_RELEASE,
+    EVENT_ORDER_REASSIGNED: permissions.CAP_REASSIGN,
+    EVENT_ORDER_PICKED: permissions.CAP_PICK,
+    EVENT_ORDER_RECEIVED: permissions.CAP_RECEIVE_AND_DELIVER,
+    EVENT_ORDER_DELIVERED: permissions.CAP_RECEIVE_AND_DELIVER,
+    EVENT_ORDER_REWORK: permissions.CAP_RECEIVE_AND_DELIVER,
+    EVENT_ORDER_RETURNED_TO_SHELF: permissions.CAP_RECEIVE_AND_DELIVER,
+    EVENT_ORDER_CLIENT_CONFIRMED: permissions.CAP_CONFIRM_RECEIPT,
+}
+
 # Chips NFC (core/nfc.py) y conteo de inventario con el telefono
 # (core/inventory_count.py). Viven en la misma hoja `trace_events`.
-EVENT_NFC_TAP = "nfc_tap"                   # alguien toco el chip de un producto/ubicacion
-EVENT_NFC_TAG_WRITTEN = "nfc_tag_written"   # se grabo el chip de un codigo
-EVENT_NFC_TAG_REMOVED = "nfc_tag_removed"   # el chip se quito o se perdio
-EVENT_COUNT_STARTED = "count_started"       # se abrio un conteo de inventario
-EVENT_COUNT_MARK = "count_mark"             # producto verificado (codigo escrito y/o cantidad contada)
-EVENT_COUNT_CLOSED = "count_closed"         # resumen del conteo al cerrarlo
+EVENT_NFC_TAP = "nfc_tap"
+EVENT_NFC_TAG_WRITTEN = "nfc_tag_written"
+EVENT_NFC_TAG_REMOVED = "nfc_tag_removed"
+EVENT_COUNT_STARTED = "count_started"
+EVENT_COUNT_MARK = "count_mark"
+EVENT_COUNT_CLOSED = "count_closed"
 EVENT_TYPES = (
     EVENT_ROUTE_VERIFIED, EVENT_PICKED_UP, EVENT_RECEIPT_CHECKED,
     EVENT_SERVICE_STARTED, EVENT_SERVICE_DELIVERED,
+    EVENT_ORDER_REQUESTED, EVENT_ORDER_APPROVED, EVENT_ORDER_REJECTED,
+    EVENT_ORDER_CANCELLED, EVENT_ORDER_AUTHORIZED, EVENT_ORDER_CLAIMED,
+    EVENT_ORDER_RELEASED, EVENT_ORDER_REASSIGNED, EVENT_ORDER_PICKED,
+    EVENT_ORDER_RECEIVED, EVENT_ORDER_DELIVERED, EVENT_ORDER_REWORK,
+    EVENT_ORDER_RETURNED_TO_SHELF, EVENT_ORDER_CLIENT_CONFIRMED,
+    EVENT_ORDER_ACTION_FAILED, EVENT_ORDER_SCAN_FAILED, EVENT_ROLE_CHANGED,
+    EVENT_SESSION_LOGIN, EVENT_SESSION_LOGOUT, EVENT_SESSION_EXPIRED,
     EVENT_NFC_TAP, EVENT_NFC_TAG_WRITTEN, EVENT_NFC_TAG_REMOVED,
     EVENT_COUNT_STARTED, EVENT_COUNT_MARK, EVENT_COUNT_CLOSED,
 )
@@ -54,6 +148,26 @@ EVENT_LABELS = {
     EVENT_RECEIPT_CHECKED: "Comprobante validado",
     EVENT_SERVICE_STARTED: "Servicio en curso",
     EVENT_SERVICE_DELIVERED: "Servicio entregado",
+    EVENT_ORDER_REQUESTED: "Solicitud creada",
+    EVENT_ORDER_APPROVED: "Solicitud aprobada",
+    EVENT_ORDER_REJECTED: "Solicitud rechazada",
+    EVENT_ORDER_CANCELLED: "Solicitud cancelada",
+    EVENT_ORDER_AUTHORIZED: "Despacho autorizado",
+    EVENT_ORDER_CLAIMED: "Pedido tomado",
+    EVENT_ORDER_RELEASED: "Pedido liberado",
+    EVENT_ORDER_REASSIGNED: "Pedido reasignado",
+    EVENT_ORDER_PICKED: "Picking completo",
+    EVENT_ORDER_RECEIVED: "Recibido por el encargado",
+    EVENT_ORDER_DELIVERED: "Entregado al cliente",
+    EVENT_ORDER_REWORK: "Devuelto al picking",
+    EVENT_ORDER_RETURNED_TO_SHELF: "Devuelto al estante",
+    EVENT_ORDER_CLIENT_CONFIRMED: "Recepción confirmada",
+    EVENT_ORDER_ACTION_FAILED: "Intento de transición rechazado",
+    EVENT_ORDER_SCAN_FAILED: "Lectura de picking rechazada",
+    EVENT_ROLE_CHANGED: "Rol cambiado",
+    EVENT_SESSION_LOGIN: "Inicio de sesión",
+    EVENT_SESSION_LOGOUT: "Cierre de sesión",
+    EVENT_SESSION_EXPIRED: "Sesión vencida",
     EVENT_NFC_TAP: "Toque de chip NFC",
     EVENT_NFC_TAG_WRITTEN: "Chip NFC grabado",
     EVENT_NFC_TAG_REMOVED: "Chip NFC retirado",
@@ -406,28 +520,33 @@ def is_receipt_like(text) -> bool:
 # ---------------------------------------------------------------------------
 
 def is_manager(user: dict) -> bool:
-    return permissions.has_role(user, permissions.MANAGER_ROLES)
+    """Compatibilidad: quien puede ver todas las trazas actúa como gestor."""
+    return permissions.has_cap(user, permissions.CAP_VIEW_ALL_TRACES)
 
 
 def can_view_request(user: dict, request: dict) -> bool:
-    return bool(user and request) and (is_manager(user) or request.get("requester_id") == user.get("id"))
+    return bool(user and request) and (
+        permissions.has_cap(user, permissions.CAP_VIEW_ALL_TRACES)
+        or request.get("requester_id") == user.get("id")
+    )
 
 
 def visible_requests(storage, user: dict, status: str = None) -> list:
-    """Solicitudes que `user` puede ver: todas para profesor/maestro, las propias
-    para cualquier otro rol."""
     if not user:
         return []
-    if is_manager(user):
+    if permissions.has_cap(user, permissions.CAP_VIEW_ALL_TRACES):
         return storage.get_service_requests(status=status)
-    return storage.get_service_requests(status=status, user_id=user.get("id"))
+    if permissions.has_cap(user, permissions.CAP_VIEW_OWN_REQUESTS):
+        return storage.get_service_requests(status=status, user_id=user.get("id"))
+    return []
 
 
 def visible_events(storage, user: dict, **filters) -> list:
-    """Eventos de trazabilidad que `user` puede ver (mismo criterio)."""
     if not user:
         return []
-    if not is_manager(user):
+    if not permissions.has_cap(user, permissions.CAP_VIEW_ALL_TRACES):
+        if not permissions.has_cap(user, permissions.CAP_VIEW_OWN_REQUESTS):
+            return []
         filters["user_id"] = user.get("id")
     return storage.get_trace_events(**filters)
 
@@ -448,7 +567,10 @@ def events_by_request(events: list) -> dict:
     for event in events or []:
         index.setdefault(event.get("request_id") or "", []).append(event)
     for rows in index.values():
-        rows.sort(key=lambda e: to_datetime(e.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc))
+        rows.sort(key=lambda e: (
+            int(e.get("seq") or 0),
+            to_datetime(e.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc),
+        ))
     return index
 
 
@@ -468,7 +590,74 @@ def _actor_fields(actor: dict) -> dict:
     return {
         "actor_id": actor.get("id", ""), "actor_name": actor.get("full_name", ""),
         "actor_email": actor.get("institutional_email", ""),
+        "actor_role": actor.get("role", ""),
     }
+
+
+def transition_target(stage: str, event_type: str):
+    """Nueva etapa o None cuando la transición no es válida."""
+    return ALLOWED_TRANSITIONS.get(stage, {}).get(event_type)
+
+
+# Eventos del ciclo de vida de un pedido (los fallidos van aparte: auditoría).
+DISPATCH_LIFECYCLE_EVENTS = frozenset({
+    EVENT_ORDER_REQUESTED, EVENT_ORDER_APPROVED, EVENT_ORDER_REJECTED,
+    EVENT_ORDER_CANCELLED, EVENT_ORDER_AUTHORIZED, EVENT_ORDER_CLAIMED,
+    EVENT_ORDER_RELEASED, EVENT_ORDER_REASSIGNED, EVENT_ORDER_PICKED,
+    EVENT_ORDER_RECEIVED, EVENT_ORDER_DELIVERED, EVENT_ORDER_REWORK,
+    EVENT_ORDER_RETURNED_TO_SHELF, EVENT_ORDER_CLIENT_CONFIRMED,
+})
+DISPATCH_FAILURE_EVENTS = frozenset({EVENT_ORDER_ACTION_FAILED, EVENT_ORDER_SCAN_FAILED})
+_DISPATCH_WORK_EVENTS = DISPATCH_LIFECYCLE_EVENTS - {
+    EVENT_ORDER_REQUESTED, EVENT_ORDER_APPROVED, EVENT_ORDER_REJECTED,
+    EVENT_ORDER_CANCELLED, EVENT_ORDER_AUTHORIZED,
+}
+
+
+def dispatch_started(events: list) -> bool:
+    """True cuando un despachador ya intervino (tomado o una etapa posterior)."""
+    return any(event.get("event_type") in _DISPATCH_WORK_EVENTS for event in events or [])
+
+
+def request_stage_key(request: dict, events: list = None) -> str:
+    """Etapa operativa derivada de eventos; admite solicitudes legadas."""
+    status = (request or {}).get("status")
+    stage = {
+        STATUS_PENDING: STAGE_REQUESTED,
+        STATUS_REJECTED: STAGE_REJECTED,
+        STATUS_CANCELLED: STAGE_CANCELLED,
+        STATUS_APPROVED: STAGE_APPROVED,
+    }.get(status, STAGE_REQUESTED)
+    ordered = sorted(events or [], key=lambda row: (
+        int(row.get("seq") or 0),
+        to_datetime(row.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc),
+    ))
+    for event in ordered:
+        kind = event.get("event_type")
+        if kind == EVENT_ORDER_REQUESTED:
+            stage = STAGE_REQUESTED
+            continue
+        target = transition_target(stage, kind)
+        if target:
+            stage = target
+    return stage
+
+
+def stage_changed_at(request: dict, events: list = None):
+    """Hora del último evento que cambió (o confirmó) la etapa del pedido."""
+    lifecycle = [event for event in events or [] if event.get("event_type") in EVENT_LABELS
+                 and event.get("event_type") not in DISPATCH_FAILURE_EVENTS | {
+                     EVENT_NFC_TAP, EVENT_COUNT_MARK,
+                 }]
+    return to_datetime((lifecycle[-1] if lifecycle else request or {}).get("created_at"))
+
+
+def is_stuck(request: dict, events: list = None, minutes: int = 30, now=None) -> bool:
+    stage = request_stage_key(request, events)
+    if stage in {STAGE_CONFIRMED, STAGE_REJECTED, STAGE_CANCELLED, STAGE_RETURNED}:
+        return False
+    changed = stage_changed_at(request, events)
+    return bool(changed and (_now(now) - changed).total_seconds() >= max(1, int(minutes)) * 60)
 
 
 # ---------------------------------------------------------------------------
@@ -532,7 +721,10 @@ def pending_pickups(storage, user: dict, item_id: str) -> list:
         return []
     picked = {e.get("request_id") for e in storage.get_trace_events(user_id=user.get("id"), event_type=EVENT_PICKED_UP)}
     aware_min = datetime.min.replace(tzinfo=timezone.utc)
-    rows = [r for r in rows if r["id"] not in picked]
+    # Un pedido que ya tomó un despachador no se retira por autoservicio: evita
+    # dos salidas (y dos descuentos) para la misma solicitud.
+    rows = [r for r in rows if r["id"] not in picked
+            and not dispatch_started(storage.get_trace_events(request_id=r["id"]))]
     return sorted(rows, key=lambda r: to_datetime(r.get("created_at")) or aware_min)
 
 
@@ -547,8 +739,11 @@ def record_pickup(storage, request: dict, loan: dict, actor: dict, now=None):
         return False, "El préstamo es de otro producto.", None
     if loan.get("user_id") != request.get("requester_id"):
         return False, "El préstamo no es de quien hizo la solicitud.", None
-    if first_event(storage.get_trace_events(request_id=request["id"], event_type=EVENT_PICKED_UP), EVENT_PICKED_UP):
+    request_events = storage.get_trace_events(request_id=request["id"])
+    if first_event(request_events, EVENT_PICKED_UP):
         return False, "Esta solicitud ya tiene un retiro registrado.", None
+    if dispatch_started(request_events):
+        return False, "Este pedido lo está despachando el laboratorio.", None
     route = route_event_for(storage, request["id"])
     details = {
         "quantity": loan.get("quantity", 0), "requested_quantity": request.get("quantity", 0),
@@ -679,19 +874,33 @@ def request_title(request: dict) -> str:
 
 
 def request_stage(request: dict, events: list = None, loan: dict = None) -> tuple:
-    """(texto, tono) del punto en que va una solicitud, para una pastilla."""
-    status = (request or {}).get("status")
+    """(texto, tono) de la etapa, derivada de eventos de despacho."""
+    request, events = request or {}, events or []
+    if request.get("request_type") == TYPE_SERVICE:
+        status = request.get("status")
+        if status == STATUS_PENDING:
+            return "En revisión", "warning"
+        if status == STATUS_REJECTED:
+            return "Rechazada", "danger"
+        if status == STATUS_CANCELLED:
+            return "Cancelada", "neutral"
+        stage = service_stage(events)
+        return {"delivered": ("Entregado", "success"), "started": ("En curso", "info")}.get(
+            stage, ("Aprobada", "info"))
+
+    if dispatch_started(events):
+        return STAGES[request_stage_key(request, events)]
+
+    # Flujo de autoservicio (ruta verificable + salida en Escanear), anterior a
+    # v1.15 y vigente mientras ningún despachador haya tomado el pedido.
+    status = request.get("status")
     if status == STATUS_PENDING:
         return "En revisión", "warning"
     if status == STATUS_REJECTED:
         return "Rechazada", "danger"
     if status == STATUS_CANCELLED:
         return "Cancelada", "neutral"
-    types = {e.get("event_type") for e in events or []}
-    if request.get("request_type") == TYPE_SERVICE:
-        stage = service_stage(events)
-        return {"delivered": ("Entregado", "success"), "started": ("En curso", "info")}.get(
-            stage, ("Aprobada", "info"))
+    types = {event.get("event_type") for event in events}
     if loan and loan.get("status") == "returned":
         return "Devuelta", "success"
     if EVENT_PICKED_UP in types:
@@ -707,6 +916,43 @@ def _who(email: str, names: dict = None) -> str:
     return (names or {}).get(email) or email
 
 
+def _dispatch_timeline(request: dict, events: list, now=None) -> list:
+    """Etapas de T1 con quién y cuándo, más «cuánto lleva» en la actual."""
+    lifecycle = [event for event in events if event.get("event_type") in DISPATCH_LIFECYCLE_EVENTS]
+    if not dispatch_started(events):
+        return []
+    steps = [{
+        "title": "Solicitud creada", "state": "done",
+        "time": fmt_local(request.get("created_at")),
+        "detail": request.get("requester_name") or permissions.role_label(permissions.ROLE_STUDENT),
+    }]
+    for event in lifecycle:
+        if event.get("event_type") == EVENT_ORDER_REQUESTED:
+            continue
+        details = event_details(event)
+        actor = event.get("actor_name") or permissions.role_label(event.get("actor_role"))
+        detail = actor
+        if event.get("event_type") == EVENT_ORDER_AUTHORIZED:
+            allowed = details.get("authorized_pickers") or []
+            detail = f"{actor} · " + (f"{len(allowed)} despachador(es) autorizado(s)"
+                                      if allowed else "abierto a todos los despachadores")
+        elif event.get("event_type") == EVENT_ORDER_PICKED:
+            detail = f"{actor} · {len(details.get('readings') or [])} unidad(es) leída(s)"
+        elif details.get("reason"):
+            detail = f"{actor} · {details['reason']}"
+        steps.append({
+            "title": EVENT_LABELS.get(event.get("event_type"), event.get("event_type")),
+            "state": "done", "time": fmt_local(event.get("created_at")), "detail": detail,
+        })
+    stage = request_stage_key(request, events)
+    if stage not in {STAGE_CONFIRMED, STAGE_REJECTED, STAGE_CANCELLED, STAGE_RETURNED}:
+        changed = stage_changed_at(request, events)
+        elapsed = fmt_duration((_now(now) - changed).total_seconds()) if changed else ""
+        steps.append({"title": STAGES[stage][0], "state": "current",
+                      "detail": f"En esta etapa hace {elapsed}" if elapsed else "Etapa actual"})
+    return steps
+
+
 def request_timeline(request: dict, events: list = None, loan: dict = None, names: dict = None,
                      now=None) -> list:
     """Línea de tiempo de una solicitud para `core.ui.timeline`.
@@ -714,6 +960,9 @@ def request_timeline(request: dict, events: list = None, loan: dict = None, name
     Producto: creada → revisada → ruta verificada → retirada → devuelta.
     Servicio: creada → revisada → en curso → entregado."""
     request, events = request or {}, events or []
+    dispatch_steps = _dispatch_timeline(request, events, now)
+    if request.get("request_type") == TYPE_PRODUCT and dispatch_steps:
+        return dispatch_steps
     status = request.get("status")
     closed = status in (STATUS_REJECTED, STATUS_CANCELLED)
     steps = [{
@@ -830,13 +1079,21 @@ def search_requests(requests: list, query: str, events: list = None) -> list:
     if is_receipt_like(query):
         code = normalize_receipt(query)
         receipt_ids = {e.get("request_id") for e in events or [] if e.get("receipt") == code}
+    event_ids = {
+        event.get("request_id") for event in events or []
+        if needle in " ".join((
+            str(event.get("actor_name") or ""), str(event.get("actor_email") or ""),
+            str(event.get("actor_role") or ""), str(event.get("details") or ""),
+        )).casefold()
+    }
     results = []
     for row in requests or []:
         fields = (row.get("item_id"), row.get("item_name"), row.get("service_name"),
                   row.get("requester_name"), row.get("requester_email"))
         if (str(row.get("id") or "").casefold().startswith(needle)
                 or any(needle in str(value or "").casefold() for value in fields)
-                or row.get("id") in receipt_ids):
+                or row.get("id") in receipt_ids
+                or row.get("id") in event_ids):
             results.append(row)
     return results
 
@@ -961,3 +1218,104 @@ def custody_timeline(history: list, requests: list, events: list, names: dict = 
         step.update(state="done", time=fmt_local(when))
         steps.append(step)
     return steps
+
+
+# ---------------------------------------------------------------------------
+# Integridad del flujo de solicitudes
+# ---------------------------------------------------------------------------
+
+def verify_request_chain(storage, request_id: str) -> dict:
+    """Comprueba secuencia, tiempo, capacidades y consistencia solicitud/picking/préstamo."""
+    request = storage.get_service_request(request_id)
+    if not request:
+        return {"ok": False, "request_id": request_id, "problems": ["La solicitud no existe."]}
+    events = sorted(storage.get_trace_events(request_id=request_id),
+                    key=lambda event: int(float(event.get("seq") or 0)))
+    problems = []
+    seqs = [int(float(event.get("seq") or 0)) for event in events]
+    if seqs and seqs != list(range(1, len(seqs) + 1)):
+        problems.append("La secuencia de eventos tiene huecos o duplicados.")
+    times = [to_datetime(event.get("created_at")) for event in events]
+    valid_times = [value for value in times if value is not None]
+    if any(later < earlier for earlier, later in zip(valid_times, valid_times[1:])):
+        problems.append("Las horas de los eventos no son crecientes según la secuencia.")
+    for event in events:
+        capability = EVENT_CAPABILITIES.get(event.get("event_type"))
+        role = event.get("actor_role")
+        if capability and not role:
+            problems.append(f"{event.get('event_type')} no registra el rol del actor (legado).")
+        elif capability and not permissions.has_cap({"role": role}, capability):
+            problems.append(
+                f"{event.get('event_type')} fue realizado por un rol sin {capability}."
+            )
+    picks = [event for event in events if event.get("event_type") == EVENT_ORDER_PICKED]
+    picked = picks[-1] if picks else None
+    loan = None
+    if picked and picked.get("loan_id"):
+        loan = next((row for row in storage.get_all_loans() if row.get("id") == picked.get("loan_id")), None)
+    if picked:
+        details = event_details(picked)
+        readings = details.get("readings") or []
+        if len(readings) != int(request.get("quantity") or 0):
+            problems.append("La cantidad de lecturas no coincide con la solicitud.")
+        if any(row.get("code") != request.get("item_id") for row in readings):
+            problems.append("El picking contiene códigos de otro producto.")
+        if not loan:
+            problems.append("El picking no tiene un préstamo enlazado.")
+    if loan:
+        if loan.get("request_id") != request_id:
+            problems.append("El préstamo apunta a otra solicitud.")
+        if loan.get("item_id") != request.get("item_id"):
+            problems.append("El producto del préstamo no coincide.")
+        if int(loan.get("quantity") or 0) != int(request.get("quantity") or 0):
+            problems.append("La cantidad del préstamo no coincide.")
+    return {"ok": not problems, "request_id": request_id, "stage": request_stage_key(request, events),
+            "events": len(events), "problems": problems}
+
+
+def reconcile(storage) -> list:
+    """Lista inconsistencias globales sin modificar la base."""
+    issues = []
+    requests = {row["id"]: row for row in storage.get_service_requests()}
+    loans = storage.get_all_loans()
+    for request_id, request in requests.items():
+        events = storage.get_trace_events(request_id=request_id)
+        stage = request_stage_key(request, events)
+        types = {event.get("event_type") for event in events}
+        if (request.get("status") == STATUS_APPROVED and request.get("request_type") == TYPE_PRODUCT
+                and EVENT_ORDER_APPROVED in types and EVENT_ORDER_AUTHORIZED not in types):
+            issues.append({"request_id": request_id, "kind": "approved_without_authorization"})
+        if stage in {STAGE_DELIVERED, STAGE_CONFIRMED}:
+            picks = [event for event in events if event.get("event_type") == EVENT_ORDER_PICKED]
+            if not picks or not picks[-1].get("loan_id"):
+                issues.append({"request_id": request_id, "kind": "delivered_without_loan"})
+    for loan in loans:
+        request_id = loan.get("request_id")
+        if not request_id:
+            continue
+        request = requests.get(request_id)
+        events = storage.get_trace_events(request_id=request_id) if request else []
+        if not request:
+            issues.append({"request_id": request_id, "loan_id": loan.get("id"), "kind": "orphan_loan"})
+        elif not first_event(events, EVENT_ORDER_PICKED):
+            issues.append({"request_id": request_id, "loan_id": loan.get("id"), "kind": "loan_without_picking"})
+    return issues
+
+
+def export_trace_csv(events: list, salt: str) -> bytes:
+    """CSV mínimo sin PII; los identificadores quedan seudonimizados."""
+    import csv
+    import io
+
+    output = io.StringIO(newline="")
+    fields = ["request_id", "seq", "actor_role", "event_type", "created_at"]
+    writer = csv.DictWriter(output, fieldnames=fields)
+    writer.writeheader()
+    for event in events or []:
+        request_id = str(event.get("request_id") or "")
+        pseudo = hashlib.sha256(f"{salt}:{request_id}".encode()).hexdigest()[:12] if request_id else ""
+        writer.writerow({"request_id": pseudo, "seq": event.get("seq", ""),
+                         "actor_role": event.get("actor_role", ""),
+                         "event_type": event.get("event_type", ""),
+                         "created_at": event.get("created_at", "")})
+    return output.getvalue().encode("utf-8-sig")

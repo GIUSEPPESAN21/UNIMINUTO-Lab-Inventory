@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 import streamlit as st
 
-from core import reservations
+from core import permissions, reservations
 from core.ui import card, card_header, empty_state, page_header, section_title, stat_cards
 
 _SCOPE_LABELS = {
@@ -57,7 +57,7 @@ def _reservation_card(storage, row: dict, user: dict, allow_cancel=True, key_pre
 def render():
     storage = st.session_state.storage
     user = st.session_state.user
-    reviewer = user.get("role") in reservations.REVIEWER_ROLES
+    reviewer = permissions.has_cap(user, permissions.CAP_MANAGE_RESERVATIONS)
 
     page_header(
         "Reservas", icon=":material/calendar_month:",

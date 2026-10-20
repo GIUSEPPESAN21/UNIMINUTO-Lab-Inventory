@@ -52,6 +52,7 @@ def _actor_fields(actor: dict) -> dict:
     return {
         "actor_id": actor.get("id", ""), "actor_name": actor.get("full_name", ""),
         "actor_email": actor.get("institutional_email", ""),
+        "actor_role": actor.get("role", ""),
     }
 
 
@@ -333,7 +334,7 @@ def progress(session: dict, items: list, marks: list, availability: dict) -> dic
 # ---------------------------------------------------------------------------
 
 def can_adjust(actor: dict) -> bool:
-    return permissions.has_role(actor, permissions.ADMIN_ROLES)
+    return permissions.has_cap(actor, permissions.CAP_ADJUST_COUNTS)
 
 
 def apply_adjustments(storage, session: dict, actor: dict, rows: list):

@@ -5,6 +5,7 @@ rapidos y panel de alertas."""
 import streamlit as st
 
 from core import loans as loans_core
+from core import permissions
 from core.labels import ITEM_TYPE_NAMES
 from core.ui import (
     ROLE_LABELS, alert_list, empty_state, greeting, hero, long_date_es, quick_actions,
@@ -12,16 +13,19 @@ from core.ui import (
 )
 
 _ROLE_PITCH = {
-    "estudiante": "Escanea, solicita y devuelve materiales del laboratorio desde un solo lugar.",
+    "estudiante": "Solicita y recibe materiales del laboratorio desde un solo lugar.",
+    "operario": "Toma pedidos autorizados y registra cada unidad durante el picking.",
+    "encargado": "Aprueba, autoriza, recibe y entrega solicitudes del laboratorio.",
     "profesor": "Gestiona el inventario, los préstamos y las reservas de tus cursos.",
     "maestro": "Visión completa del laboratorio: inventario, usuarios, préstamos y alertas.",
 }
-_ROLE_ICON = {"estudiante": "🎓", "profesor": "👨‍🏫", "maestro": "🛡️"}
+_ROLE_ICON = {"estudiante": "🎓", "operario": "📦", "encargado": "🧑‍🔬", "profesor": "👨‍🏫", "maestro": "🛡️"}
 
 # (clave en st.session_state["pages"], etiqueta, icono, descripcion)
 _ACTIONS = [
     ("escanear", "Escanear código", "🛰️", "Lee un código y registra una salida o un reingreso."),
     ("solicitudes", "Crear solicitud", "📝", "Pide un producto o un servicio al laboratorio."),
+    ("despacho", "Despacho", "📦", "Toma pedidos, registra picking y confirma entregas."),
     ("trazabilidad", "Trazabilidad", "🧭", "Sigue la ruta de un producto y tus solicitudes."),
     ("reservas", "Reservar laboratorio", "🗓️", "Agenda una actividad o el laboratorio completo."),
     ("prestamos", "Ver préstamos", "📋", "Consulta qué está prestado y qué falta devolver."),
@@ -104,7 +108,7 @@ def render():
         st.error(f"No se pudieron cargar las estadisticas: {e}")
         items, my_open_loans, overdue = [], [], []
 
-    if role == "estudiante":
+    if not permissions.has_cap(user, permissions.CAP_VIEW_ALL_TRACES):
         my_overdue = len([l for l in my_open_loans if loans_core.is_overdue(l)])
         stat_cards([
             {"label": "Items en catálogo", "value": len(items), "icon": "📦", "tone": "info"},
@@ -129,7 +133,7 @@ def render():
             + (
                 " Ve a **:material/inventory_2: Inventario → Nuevo item** (o **Importar CSV masivo**) "
                 "para registrar los primeros productos del laboratorio."
-                if role in ("profesor", "maestro")
+                if permissions.has_cap(user, permissions.CAP_EDIT_INVENTORY)
                 else " Pídele a un profesor o al administrador del laboratorio que registre los primeros productos."
             )
         )

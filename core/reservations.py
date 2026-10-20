@@ -4,7 +4,7 @@
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from core import email_events
+from core import email_events, permissions
 
 BOGOTA_TZ = ZoneInfo("America/Bogota")
 SCOPE_ACTIVITY = "activity"
@@ -15,7 +15,10 @@ STATUS_APPROVED = "approved"
 STATUS_REJECTED = "rejected"
 STATUS_CANCELLED = "cancelled"
 FINAL_STATUSES = (STATUS_REJECTED, STATUS_CANCELLED)
-REVIEWER_ROLES = ("profesor", "maestro")
+REVIEWER_ROLES = tuple(
+    role for role, caps in permissions.ROLE_CAPS.items()
+    if permissions.CAP_MANAGE_RESERVATIONS in caps
+)
 
 
 def as_utc(value, field: str = "Fecha") -> datetime:
@@ -123,7 +126,7 @@ def submit_reservation(storage, user: dict, scope_type: str, activity: str,
 
 def review_reservation(storage, reservation_id: str, decision: str,
                        reviewer: dict, notes: str = ""):
-    if reviewer.get("role") not in REVIEWER_ROLES:
+    if not permissions.has_cap(reviewer, permissions.CAP_MANAGE_RESERVATIONS):
         return False, "Solo profesor o maestro pueden revisar reservas."
     if decision not in (STATUS_APPROVED, STATUS_REJECTED):
         return False, "La decisión debe ser approved o rejected."
@@ -155,7 +158,7 @@ def cancel_reservation(storage, reservation_id: str, actor: dict):
     if not reservation:
         return False, "La reserva no existe."
     owner = reservation.get("requester_id") == actor.get("id")
-    privileged = actor.get("role") in REVIEWER_ROLES
+    privileged = permissions.has_cap(actor, permissions.CAP_MANAGE_RESERVATIONS)
     if not (owner or privileged):
         return False, "No tienes permiso para cancelar esta reserva."
     if reservation.get("status") in FINAL_STATUSES:

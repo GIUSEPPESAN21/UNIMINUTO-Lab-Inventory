@@ -16,7 +16,7 @@ import streamlit as st
 
 from core import barcode, labels, permissions, places
 from core.ui import (
-    badge_html, empty_state, esc, guard_role, icon_html, page_header, section_title, stat_cards,
+    badge_html, empty_state, esc, guard_cap, icon_html, page_header, section_title, stat_cards,
 )
 from views.location_guide import render_location_guide
 
@@ -260,7 +260,7 @@ def render_page() -> None:
     Inventario, a un clic para profesor y maestro."""
     storage = st.session_state.storage
     user = st.session_state.user
-    if not guard_role(user, permissions.MANAGER_ROLES, "las Ubicaciones"):
+    if not guard_cap(user, permissions.CAP_MANAGE_LOCATIONS, "las Ubicaciones"):
         return
     page_header(
         "Ubicaciones", icon=":material/map:",

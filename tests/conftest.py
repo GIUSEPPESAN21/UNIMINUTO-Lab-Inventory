@@ -4,6 +4,7 @@
 para poder probar la logica de negocio de core/*.py de forma aislada y rapida.
 """
 
+import json
 import uuid
 from datetime import datetime, timezone
 
@@ -106,9 +107,14 @@ class FakeStorage:
             program_or_department=program, student_id=student_id, status=status,
         )
 
-    def update_user(self, user_id, changes):
+    def update_user(self, user_id, changes, actor=None):
         self.users[user_id].update(changes)
         return dict(self.users[user_id])
+
+    def revoke_user_sessions(self, user_id, actor):
+        user = self.users[user_id]
+        user["session_epoch"] = int(user.get("session_epoch") or 0) + 1
+        return dict(user)
 
     def get_all_users(self):
         return [dict(user) for user in self.users.values()]
@@ -127,7 +133,7 @@ class FakeStorage:
         return {item_id: self.get_available_quantity(item_id) for item_id in self.items}
 
     # --- loans ---
-    def create_loan(self, item, quantity, user, expected_return_at=None, notes=""):
+    def create_loan(self, item, quantity, user, expected_return_at=None, notes="", request_id=""):
         available = self.get_available_quantity(item["id"]) if item["id"] in self.items else None
         if available is not None and quantity > available:
             raise ValueError(f"Stock insuficiente. Disponible: {available}.")
@@ -138,7 +144,7 @@ class FakeStorage:
             "user_id": user["id"], "user_name": user.get("full_name", ""),
             "user_role": user.get("role", ""), "checkout_at": datetime.now(timezone.utc),
             "expected_return_at": expected_return_at, "return_at": None,
-            "status": "out", "notes": notes,
+            "status": "out", "notes": notes, "request_id": request_id,
         }
         self.loans[loan_id] = loan
         return loan
@@ -252,25 +258,82 @@ class FakeStorage:
     # --- trazabilidad ---
     def add_trace_event(self, event):
         columns = (
-            "event_type", "request_id", "item_id", "loan_id", "user_id", "actor_id",
-            "actor_name", "actor_email", "receipt", "details", "created_at",
+            "event_type", "request_id", "seq", "item_id", "loan_id", "user_id", "owner_id",
+            "actor_id", "actor_name", "actor_email", "actor_role", "receipt", "details",
+            "created_at",
         )
         row = {column: "" for column in columns}
         row.update({key: value for key, value in event.items() if key in columns})
+        row["owner_id"] = row["owner_id"] or row["user_id"]
+        if row["request_id"] and not row["seq"]:
+            row["seq"] = 1 + max((int(e.get("seq") or 0) for e in self.trace_events
+                                  if e.get("request_id") == row["request_id"]), default=0)
         row["id"] = uuid.uuid4().hex[:10]
         row["created_at"] = row["created_at"] or datetime.now(timezone.utc).isoformat()
         self.trace_events.append(row)
         return dict(row)
 
     def get_trace_events(self, request_id=None, item_id=None, user_id=None, event_type=None,
-                         loan_id=None, receipt=None):
+                         loan_id=None, receipt=None, owner_id=None):
         filters = {"request_id": request_id, "item_id": item_id, "user_id": user_id,
-                   "event_type": event_type, "loan_id": loan_id, "receipt": receipt}
+                   "event_type": event_type, "loan_id": loan_id, "receipt": receipt,
+                   "owner_id": owner_id}
         rows = [
             dict(row) for row in self.trace_events
             if all(value is None or row.get(key) == value for key, value in filters.items())
         ]
-        return sorted(rows, key=lambda row: row.get("created_at") or "")
+        return sorted(rows, key=lambda row: (row.get("created_at") or "", int(row.get("seq") or 0)))
+
+    def transition_request(self, request_id, event_type, actor, details=None):
+        """Mismas reglas que LabStorage: `core.dispatch.plan_transition`."""
+        from core import dispatch
+
+        actor = dict(actor or {})
+        request = self.get_service_request(request_id)
+        if not request:
+            return False, "La solicitud no existe.", None
+        item_id = request.get("item_id") or ""
+        open_loan = next((dict(loan) for loan in self.loans.values()
+                          if loan.get("request_id") == request_id and loan["status"] == "out"), None)
+        available = self.get_available_quantity(item_id) if item_id in self.items else None
+        plan = dispatch.plan_transition(
+            request, self.get_trace_events(request_id=request_id), actor, event_type, details,
+            available=available, open_loan=open_loan,
+        )
+
+        def add(kind, payload, loan_id=""):
+            return self.add_trace_event({
+                "event_type": kind, "request_id": request_id, "item_id": item_id,
+                "loan_id": loan_id, "user_id": request.get("requester_id", ""),
+                "actor_id": actor.get("id", ""), "actor_name": actor.get("full_name", ""),
+                "actor_email": actor.get("institutional_email", ""),
+                "actor_role": actor.get("role", ""),
+                "details": json.dumps(payload, ensure_ascii=False, default=str),
+            })
+
+        if not plan["ok"]:
+            return False, plan["message"], add(plan["failure_kind"], plan["failure_details"])
+        loan_id = plan.get("loan_id", "")
+        if plan["loan_action"] == "create":
+            requester = self.users.get(request.get("requester_id"), {})
+            loan = self.create_loan(
+                self.items[item_id], int(request.get("quantity") or 0),
+                {"id": request.get("requester_id"), "full_name": request.get("requester_name", ""),
+                 "role": requester.get("role", "")},
+                notes=f"Picking de la solicitud {request_id}", request_id=request_id,
+            )
+            loan_id = loan["id"]
+        elif plan["loan_action"] == "close":
+            self.return_loan(loan_id)
+        if plan["status"]:
+            self.service_requests[request_id].update(
+                status=plan["status"], reviewed_by=actor.get("institutional_email", ""),
+                review_notes=plan["details"].get("notes", "") or plan["details"].get("reason", ""),
+            )
+        row = add(event_type, plan["details"], loan_id)
+        for kind, payload in plan["extra_events"]:
+            add(kind, payload, loan_id)
+        return True, plan["message"], row
 
     def get_item_history(self, item_id):
         return [dict(row) for row in self.history if row.get("item_id") == item_id]

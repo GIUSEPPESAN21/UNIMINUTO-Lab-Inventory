@@ -16,7 +16,7 @@ import streamlit as st
 from core import inventory_count as counting
 from core import nfc, permissions, traceability
 from core.labels import ITEM_TYPE_NAMES
-from core.ui import empty_state, guard_role, page_header, section_title, stat_cards
+from core.ui import empty_state, guard_cap, page_header, section_title, stat_cards
 from views.nfc_tap import COUNT_FOCUS_KEY
 
 NOTICE_KEY = "nfc_count_notice"
@@ -506,7 +506,7 @@ def _render_taps(storage) -> None:
 def render():
     storage = st.session_state.storage
     user = st.session_state.user
-    if not guard_role(user, permissions.MANAGER_ROLES, "Chips NFC"):
+    if not guard_cap(user, permissions.CAP_MANAGE_NFC, "Chips NFC"):
         return
     page_header("Chips NFC", icon=":material/nfc:",
                 subtitle="Inventario con el teléfono, grabación de chips y toques registrados")

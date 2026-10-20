@@ -6,6 +6,7 @@ Cache en memoria RAM, escritura atomica y publicacion sincrona y serializada en 
 
 import base64
 import io
+import json
 import logging
 import os
 import time
@@ -38,8 +39,8 @@ SHEET_COLUMNS = {
         "program_or_department", "status", "created_at",
         # Restablecimiento de clave por el perfil maestro (core/auth.py):
         # `must_change_password` ("1" o vacio) y `password_changed_at` (ISO).
-        # Las bases antiguas sin estas columnas se completan con "" al cargar.
-        "must_change_password", "password_changed_at",
+        # Las bases antiguas completan estas columnas automáticamente al cargar.
+        "must_change_password", "password_changed_at", "session_epoch",
     ],
     "professors_whitelist": [
         "institutional_email",
@@ -47,7 +48,7 @@ SHEET_COLUMNS = {
     "loans": [
         "id", "item_id", "item_name", "parent_id", "quantity", "user_id",
         "user_name", "user_role", "checkout_at", "expected_return_at",
-        "return_at", "status", "notes",
+        "return_at", "status", "notes", "request_id",
     ],
     "reservations": [
         "id", "scope_type", "activity", "purpose", "attendees", "start_at", "end_at",
@@ -72,8 +73,9 @@ SHEET_COLUMNS = {
     # de comprobante y avance de servicios. `user_id` es el dueño de la
     # solicitud; `actor_*`, quien registro el evento; `details`, JSON.
     "trace_events": [
-        "id", "event_type", "request_id", "item_id", "loan_id", "user_id",
-        "actor_id", "actor_name", "actor_email", "receipt", "details", "created_at",
+        "id", "event_type", "request_id", "seq", "item_id", "loan_id",
+        "user_id", "owner_id", "actor_id", "actor_name", "actor_email",
+        "actor_role", "receipt", "details", "created_at",
     ],
     # Registro de correos automaticos (core/email_events.py): que se envio, a
     # quien y si el servidor lo acepto. Se conservan los ultimos
@@ -93,7 +95,77 @@ SHEET_COLUMNS = {
 NOTIFICATION_LOG_LIMIT = 500
 
 _cached_dfs = None
+_trace_request_index = {}
 _excel_lock = Lock()
+_data_state_lock = Lock()
+_data_state = {"version": 0, "last_read_at": None, "last_poll_at": 0.0}
+
+
+def _bump_data_version(read: bool = False) -> int:
+    with _data_state_lock:
+        _data_state["version"] += 1
+        if read:
+            _data_state["last_read_at"] = datetime.now(timezone.utc)
+        return _data_state["version"]
+
+
+def data_state() -> dict:
+    with _data_state_lock:
+        return dict(_data_state)
+
+
+def _rebuild_trace_index(df: pd.DataFrame) -> dict:
+    """Índice lógico request_id -> filas de `trace_events` (T2).
+
+    Se asocia a la identidad y tamaño del DataFrame en caché; si la caché se
+    reemplaza por otra vía, el índice se reconstruye solo en la siguiente consulta.
+    """
+    global _trace_request_index
+    index = {}
+    if "request_id" in df.columns:
+        for position, request_id in zip(df.index, df["request_id"]):
+            key = str(request_id or "")
+            if key:
+                index.setdefault(key, []).append(position)
+    _trace_request_index = {"owner": id(df), "size": len(df), "rows": index}
+    return index
+
+
+def _trace_positions(df: pd.DataFrame, request_id: str) -> list:
+    current = _trace_request_index
+    if current.get("owner") != id(df) or current.get("size") != len(df):
+        return _rebuild_trace_index(df).get(str(request_id), [])
+    return current["rows"].get(str(request_id), [])
+
+
+def _normalize_legacy_columns(dfs: dict) -> None:
+    users = dfs.get("users")
+    if users is not None and "session_epoch" in users:
+        users["session_epoch"] = users["session_epoch"].apply(
+            lambda value: 0 if str(value or "").strip() in {"", "nan", "None"} else value
+        )
+    events = dfs.get("trace_events")
+    if events is None or events.empty:
+        return
+    missing_owner = events["owner_id"].astype(str).str.strip() == ""
+    events.loc[missing_owner, "owner_id"] = events.loc[missing_owner, "user_id"]
+    for request_id, positions in events.groupby("request_id", sort=False).groups.items():
+        if not str(request_id or "").strip():
+            continue
+        used = set()
+        for position in positions:
+            try:
+                value = int(float(events.at[position, "seq"] or 0))
+            except (TypeError, ValueError):
+                value = 0
+            if value > 0 and value not in used:
+                used.add(value)
+            else:
+                value = 1
+                while value in used:
+                    value += 1
+                events.at[position, "seq"] = value
+                used.add(value)
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +335,35 @@ def _atomic_write_bytes(path: str, data: bytes) -> None:
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp_path, path)
+
+
+_MIN_REMOTE_CHECK_SECONDS = 10
+
+
+def _github_remote_fingerprint():
+    """SHA remoto del Excel sin descargarlo: lista el directorio que lo contiene.
+
+    Devuelve None si no se pudo consultar (la app sigue con su copia local).
+    """
+    if not _is_github_configured():
+        return None
+    repo = safe_secret("GITHUB_REPO", "")
+    db_path = str(safe_secret("GITHUB_DB_PATH", EXCEL_PATH) or EXCEL_PATH).strip("/")
+    folder, _, name = db_path.rpartition("/")
+    url = f"https://api.github.com/repos/{repo}/contents/{folder}" if folder else \
+        f"https://api.github.com/repos/{repo}/contents"
+    try:
+        resp = _github_request("GET", url, attempts=1, timeout=15)
+        if resp.status_code != 200:
+            return None
+        entries = resp.json()
+        if not isinstance(entries, list):
+            return None
+        match = next((entry for entry in entries if entry.get("name") == name), None)
+        return (match or {}).get("sha") or None
+    except Exception as exc:  # red caída: no es un error del usuario
+        logger.info(f"GitHub fingerprint no disponible: {exc}")
+        return None
 
 
 def _github_pull() -> bool:
@@ -488,7 +589,10 @@ def _load_cache() -> dict:
                     dfs[sheet] = pd.DataFrame(columns=cols)
         except FileNotFoundError:
             dfs = {sheet: pd.DataFrame(columns=cols) for sheet, cols in SHEET_COLUMNS.items()}
+        _normalize_legacy_columns(dfs)
         _cached_dfs = dfs
+        _rebuild_trace_index(dfs["trace_events"])
+        _bump_data_version(read=True)
     return _cached_dfs
 
 
@@ -517,6 +621,7 @@ def _write_excel(dfs: dict) -> None:
             pass
         raise
     _cached_dfs = {k: v.copy() for k, v in dfs.items()}
+    _rebuild_trace_index(_cached_dfs["trace_events"])
 
 
 def _write_and_sync(dfs: dict) -> None:
@@ -524,6 +629,15 @@ def _write_and_sync(dfs: dict) -> None:
     publicacion en GitHub ocurre al cerrar la seccion `_db_write`."""
     _write_excel(dfs)
     _mark_dirty()
+    _bump_data_version(read=True)
+
+
+def _int(value, default: int = 0) -> int:
+    """Entero tolerante a celdas vacías o con texto ("2", "2.0", "")."""
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
 
 
 def _new_id() -> str:
@@ -553,7 +667,12 @@ def _row_to_item(row: pd.Series) -> dict:
 
 
 def _row_to_user(row: pd.Series) -> dict:
-    return _clean_nan(row.to_dict())
+    record = _clean_nan(row.to_dict())
+    try:
+        record["session_epoch"] = int(float(record.get("session_epoch") or 0))
+    except (TypeError, ValueError):
+        record["session_epoch"] = 0
+    return record
 
 
 def _row_to_loan(row: pd.Series) -> dict:
@@ -800,8 +919,16 @@ class LabStorage:
                 _write_and_sync(dfs)
         else:
             try:
-                existing_sheets = pd.ExcelFile(EXCEL_PATH, engine="openpyxl").sheet_names
-                if set(SHEET_COLUMNS.keys()) - set(existing_sheets):
+                workbook = pd.ExcelFile(EXCEL_PATH, engine="openpyxl")
+                existing_sheets = workbook.sheet_names
+                needs_migration = bool(set(SHEET_COLUMNS) - set(existing_sheets))
+                if not needs_migration:
+                    for sheet, columns in SHEET_COLUMNS.items():
+                        actual = set(workbook.parse(sheet, nrows=0).columns)
+                        if set(columns) - actual:
+                            needs_migration = True
+                            break
+                if needs_migration:
                     with _excel_lock:
                         _write_excel(_read_excel())
             except Exception:
@@ -811,10 +938,58 @@ class LabStorage:
         return _is_github_configured()
 
     def get_sync_status(self) -> dict:
-        """Estado de la ultima sincronizacion con GitHub (ver core.storage.get_sync_status).
-        Usado por la UI para avisar de forma visible si los datos NO se estan
-        guardando de forma permanente."""
+        """Estado de la última sincronización con GitHub."""
         return get_sync_status()
+
+    def get_data_state(self) -> dict:
+        return data_state()
+
+    def refresh_data(self, force_remote: bool = False) -> dict:
+        """Botón «Actualizar» (A1): no toca ``st.session_state``.
+
+        En un solo proceso la caché en memoria ya refleja todas las escrituras
+        de todas las sesiones, así que solo se marca la lectura como reciente.
+        Con ``force_remote`` se compara además la huella remota (limitada a una
+        consulta cada ``_MIN_REMOTE_CHECK_SECONDS`` para todas las sesiones).
+        """
+        if force_remote:
+            self.poll_remote(_MIN_REMOTE_CHECK_SECONDS)
+        _load_cache()
+        with _data_state_lock:
+            _data_state["last_read_at"] = datetime.now(timezone.utc)
+        return data_state()
+
+    def poll_remote(self, interval_seconds: int = 60) -> bool:
+        """Recarga solo si la base cambió fuera de este proceso (A1).
+
+        Una consulta barata por intervalo para TODAS las sesiones: se pide el
+        listado del directorio (sin contenido) y se compara el SHA del archivo.
+        Nunca descarga encima de cambios locales aún sin publicar.
+        """
+        if not _is_github_configured():
+            return False
+        interval = max(1, int(interval_seconds or 60))
+        moment = time.monotonic()
+        with _data_state_lock:
+            last = float(_data_state["last_poll_at"] or 0)
+            if last and moment - last < interval:
+                return False
+            _data_state["last_poll_at"] = moment
+        with _sync_state_lock:
+            dirty = _sync_state["dirty"]
+        if dirty:
+            return False
+        remote = _github_remote_fingerprint()
+        if not remote or remote == _get_remote_sha():
+            return False
+        with _excel_lock:
+            with _sync_state_lock:
+                if _sync_state["dirty"]:
+                    return False
+            if not _github_pull():          # invalida la caché al reemplazar el archivo
+                return False
+            _load_cache()
+        return True
 
     def retry_sync(self) -> bool:
         """Reintenta publicar ahora la version local (sin forzar). Devuelve si
@@ -1188,12 +1363,13 @@ class LabStorage:
                 "program_or_department": program,
                 "status": status,
                 "created_at": _now_str(),
+                "session_epoch": 0,
             }
             dfs["users"] = pd.concat([dfs["users"], pd.DataFrame([row])], ignore_index=True)
             _write_and_sync(dfs)
             return row
 
-    def update_user(self, user_id: str, changes: dict):
+    def update_user(self, user_id: str, changes: dict, actor: dict = None):
         """Actualiza solo campos de usuario conocidos y devuelve el registro.
 
         La vista valida semántica (nombre, correo, programa); esta capa evita
@@ -1202,7 +1378,7 @@ class LabStorage:
         allowed = {
             "full_name", "student_id", "institutional_email", "password_hash",
             "role", "program_or_department", "status",
-            "must_change_password", "password_changed_at",
+            "must_change_password", "password_changed_at", "session_epoch",
         }
         unknown = set(changes) - allowed
         if unknown:
@@ -1214,19 +1390,54 @@ class LabStorage:
             if not idx:
                 return None
             changes = dict(changes)
+            old_role = str(df.at[idx[0], "role"] or "")
+            if actor is not None and {"role", "status"} & set(changes):
+                from core import permissions
+                permissions.require_cap(
+                    actor, permissions.CAP_MANAGE_USERS,
+                    "Solo el perfil maestro puede cambiar roles o estados.",
+                )
+                if actor.get("id") == user_id:
+                    raise PermissionError("No puedes cambiar tu propio rol ni deshabilitarte.")
             if "institutional_email" in changes:
                 email = str(changes["institutional_email"] or "").lower().strip()
                 duplicate = df[(df["institutional_email"].str.lower().str.strip() == email) & (df["id"] != user_id)]
                 if not duplicate.empty:
                     raise ValueError("Ya existe otra cuenta con ese correo institucional.")
                 changes["institutional_email"] = email
-            if "role" in changes and changes["role"] not in ("estudiante", "profesor", "maestro"):
-                raise ValueError("Rol de usuario inválido.")
+            if "role" in changes:
+                from core import permissions
+                if changes["role"] not in permissions.ROLES:
+                    raise ValueError("Rol de usuario inválido.")
             if "status" in changes and changes["status"] not in ("active", "disabled"):
                 raise ValueError("Estado de usuario inválido.")
+            # Revocación (S4): una clave nueva, o un cambio de rol/estado hecho por
+            # el perfil maestro desde «Usuarios» (con `actor`), invalida los tokens
+            # abiertos. Sin `actor` se conserva el contrato previo: la sesión ya
+            # abierta adopta el rol nuevo en su siguiente recarga.
+            revoking = "password_hash" in changes or (
+                actor is not None and (
+                    ("role" in changes and str(changes["role"]) != old_role)
+                    or ("status" in changes and str(changes["status"]) != str(df.at[idx[0], "status"]))
+                )
+            )
+            if revoking and "session_epoch" not in changes:
+                changes["session_epoch"] = _int(df.at[idx[0], "session_epoch"]) + 1
             for key, value in changes.items():
                 df.at[idx[0], key] = value
             dfs["users"] = df
+            if actor is not None and "role" in changes and str(changes["role"]) != old_role:
+                audit = _trace_event_row({
+                    "event_type": "role_changed", "user_id": user_id, "owner_id": user_id,
+                    "actor_id": actor.get("id", ""), "actor_name": actor.get("full_name", ""),
+                    "actor_email": actor.get("institutional_email", ""),
+                    "actor_role": actor.get("role", ""),
+                    "details": json.dumps({"from_role": old_role, "to_role": changes["role"]},
+                                          ensure_ascii=False),
+                })
+                dfs["trace_events"] = pd.concat(
+                    [dfs["trace_events"], pd.DataFrame([audit])], ignore_index=True
+                )
             _write_and_sync(dfs)
             return _row_to_user(df.loc[idx[0]])
 
@@ -1284,7 +1495,8 @@ class LabStorage:
     # PRESTAMOS (loans)
     # ------------------------------------------------------------------
 
-    def create_loan(self, item: dict, quantity: int, user: dict, expected_return_at=None, notes: str = "") -> dict:
+    def create_loan(self, item: dict, quantity: int, user: dict, expected_return_at=None,
+                    notes: str = "", request_id: str = "") -> dict:
         with _db_write():
             dfs = _read_excel()
             # La disponibilidad se re-verifica DENTRO del lock: la comprobacion previa
@@ -1307,6 +1519,7 @@ class LabStorage:
                 "return_at": "",
                 "status": "out",
                 "notes": notes,
+                "request_id": request_id,
             }
             dfs["loans"] = pd.concat([dfs["loans"], pd.DataFrame([row])], ignore_index=True)
 
@@ -1542,6 +1755,144 @@ class LabStorage:
             _write_and_sync(dfs)
             return True
 
+    def transition_request(self, request_id: str, event_type: str, actor: dict,
+                           details: dict = None):
+        """Valida y aplica una transición de solicitud en UNA escritura.
+
+        Devuelve ``(ok, mensaje, evento)``. La validación (permisos, etapa,
+        autorización, lecturas y stock) ocurre dentro del bloqueo con datos
+        frescos (`core.dispatch.plan_transition`). Un intento rechazado solo
+        agrega un evento de auditoría: nunca cambia etapa, solicitud, préstamo
+        ni inventario.
+        """
+        from core import dispatch
+
+        actor = dict(actor or {})
+        now = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+        with _db_write():
+            dfs = _read_excel()
+            requests = dfs["service_requests"]
+            indexes = requests.index[requests["id"] == request_id].tolist()
+            if not indexes:
+                return False, "La solicitud no existe.", None
+            i = indexes[0]
+            request = _row_to_service_request(requests.loc[i])
+            event_df = dfs["trace_events"]
+            mask = event_df["request_id"] == request_id
+            request_events = sorted(
+                (_clean_nan(row.to_dict()) for _, row in event_df[mask].iterrows()),
+                key=lambda row: (str(row.get("created_at") or ""), _int(row.get("seq"))),
+            )
+            seq_values = pd.to_numeric(event_df.loc[mask, "seq"], errors="coerce").dropna()
+            next_seq = int(seq_values.max()) + 1 if not seq_values.empty else 1
+
+            item_id = request.get("item_id", "") or ""
+            loans = dfs["loans"]
+            open_rows = loans[(loans["request_id"] == request_id) & (loans["status"] == "out")]
+            open_loan = _row_to_loan(open_rows.iloc[0]) if not open_rows.empty else None
+            available = _available_from(dfs, item_id) if item_id else None
+            plan = dispatch.plan_transition(
+                request, request_events, actor, event_type, details,
+                available=available, open_loan=open_loan,
+            )
+
+            def event_row(kind, payload, loan_id=""):
+                nonlocal next_seq
+                row = _trace_event_row({
+                    "event_type": kind, "request_id": request_id, "seq": next_seq,
+                    "item_id": item_id, "loan_id": loan_id,
+                    "user_id": request.get("requester_id", ""),
+                    "owner_id": request.get("requester_id", ""),
+                    "actor_id": actor.get("id", ""), "actor_name": actor.get("full_name", ""),
+                    "actor_email": actor.get("institutional_email", ""),
+                    "actor_role": actor.get("role", ""), "receipt": "",
+                    "details": json.dumps(payload, ensure_ascii=False, default=str),
+                    "created_at": now,
+                })
+                next_seq += 1
+                return row
+
+            if not plan["ok"]:
+                row = event_row(plan["failure_kind"], plan["failure_details"])
+                dfs["trace_events"] = pd.concat(
+                    [dfs["trace_events"], pd.DataFrame([row])], ignore_index=True
+                )
+                _write_and_sync(dfs)
+                return False, plan["message"], dict(row)
+
+            quantity = _int(request.get("quantity"))
+            loan_id = plan.get("loan_id", "")
+            if plan["loan_action"] == "create":
+                loan_id = _new_id()
+                users = dfs["users"]
+                requester = users[users["id"] == request.get("requester_id", "")]
+                item_rows = dfs["items"][dfs["items"]["id"] == item_id]
+                loan = {
+                    "id": loan_id, "item_id": item_id, "item_name": request.get("item_name", ""),
+                    "parent_id": (item_rows.iloc[0].get("parent_id", "") or "") if not item_rows.empty else "",
+                    "quantity": quantity, "user_id": request.get("requester_id", ""),
+                    "user_name": request.get("requester_name", ""),
+                    "user_role": (requester.iloc[0].get("role", "") or "") if not requester.empty else "",
+                    "checkout_at": now, "expected_return_at": "", "return_at": "",
+                    "status": "out", "notes": f"Picking de la solicitud {request_id}",
+                    "request_id": request_id,
+                }
+                dfs["loans"] = pd.concat([dfs["loans"], pd.DataFrame([loan])], ignore_index=True)
+                history = {
+                    "id": _new_id(), "item_id": item_id, "timestamp": now,
+                    "type": "Salida", "quantity_change": -quantity,
+                    "actor_user_id": actor.get("institutional_email", ""),
+                    "details": f"Picking de la solicitud {request_id} a nombre de "
+                               f"{request.get('requester_name', '')} ({loan_id})",
+                }
+                dfs["item_history"] = pd.concat(
+                    [dfs["item_history"], pd.DataFrame([history])], ignore_index=True
+                )
+            elif plan["loan_action"] == "close":
+                loan_index = dfs["loans"].index[dfs["loans"]["id"] == loan_id].tolist()[0]
+                returned = _int(dfs["loans"].at[loan_index, "quantity"])
+                dfs["loans"].at[loan_index, "return_at"] = now
+                dfs["loans"].at[loan_index, "status"] = "returned"
+                history = {
+                    "id": _new_id(), "item_id": item_id, "timestamp": now,
+                    "type": "Reingreso", "quantity_change": returned,
+                    "actor_user_id": actor.get("institutional_email", ""),
+                    "details": f"Devuelto al estante desde la solicitud {request_id} ({loan_id})",
+                }
+                dfs["item_history"] = pd.concat(
+                    [dfs["item_history"], pd.DataFrame([history])], ignore_index=True
+                )
+
+            if plan["status"]:
+                requests.at[i, "status"] = plan["status"]
+                requests.at[i, "reviewed_by"] = actor.get("institutional_email", "")
+                requests.at[i, "reviewed_at"] = now
+                requests.at[i, "review_notes"] = plan["details"].get("notes", "") or plan["details"].get("reason", "")
+                requests.at[i, "updated_at"] = now
+                dfs["service_requests"] = requests
+
+            row = event_row(event_type, plan["details"], loan_id)
+            rows = [row] + [event_row(kind, payload, loan_id) for kind, payload in plan["extra_events"]]
+            dfs["trace_events"] = pd.concat(
+                [dfs["trace_events"], pd.DataFrame(rows)], ignore_index=True
+            )
+            _write_and_sync(dfs)
+            return True, plan["message"], dict(row)
+
+    def revoke_user_sessions(self, user_id: str, actor: dict) -> dict:
+        """Incrementa el epoch propio o de otro usuario si el actor administra usuarios."""
+        from core import permissions
+        target = self.get_user_by_id(user_id)
+        if not target:
+            raise ValueError("La cuenta no existe.")
+        if actor.get("id") != user_id:
+            permissions.require_cap(actor, permissions.CAP_MANAGE_USERS)
+        try:
+            epoch = int(float(target.get("session_epoch") or 0)) + 1
+        except (TypeError, ValueError):
+            epoch = 1
+        return self.update_user(user_id, {"session_epoch": epoch})
+
     # ------------------------------------------------------------------
     # CONFIGURACION DEL LABORATORIO (clave / valor)
     # ------------------------------------------------------------------
@@ -1575,31 +1926,45 @@ class LabStorage:
     # ------------------------------------------------------------------
 
     def add_trace_event(self, event: dict) -> dict:
-        """Agrega UN evento de trazabilidad (una escritura = un commit). Solo se
-        guardan las columnas conocidas; `details` debe venir ya como texto JSON."""
-        columns = SHEET_COLUMNS["trace_events"]
-        row = {column: "" for column in columns}
-        row.update({key: "" if value is None else str(value) for key, value in event.items() if key in columns})
-        row["id"] = _new_id()
-        row["created_at"] = row["created_at"] or _now_str()
+        """Append-only. Asigna ``seq`` por solicitud dentro del bloqueo."""
         with _db_write():
             dfs = _read_excel()
-            dfs["trace_events"] = pd.concat([dfs["trace_events"], pd.DataFrame([row])], ignore_index=True)
+            payload = dict(event or {})
+            payload.setdefault("owner_id", payload.get("user_id", ""))
+            payload.setdefault("user_id", payload.get("owner_id", ""))
+            request_id = str(payload.get("request_id") or "")
+            if request_id and not str(payload.get("seq") or "").strip():
+                current = dfs["trace_events"]
+                values = pd.to_numeric(
+                    current.loc[current["request_id"] == request_id, "seq"], errors="coerce"
+                ).dropna()
+                payload["seq"] = int(values.max()) + 1 if not values.empty else 1
+            row = _trace_event_row(payload)
+            dfs["trace_events"] = pd.concat(
+                [dfs["trace_events"], pd.DataFrame([row])], ignore_index=True
+            )
             _write_and_sync(dfs)
         return dict(row)
 
     @firestore_retry
     def get_trace_events(self, request_id: str = None, item_id: str = None, user_id: str = None,
-                         event_type: str = None, loan_id: str = None, receipt: str = None) -> list:
+                         event_type: str = None, loan_id: str = None, receipt: str = None,
+                         owner_id: str = None) -> list:
         """Eventos que cumplen TODOS los filtros dados, del más antiguo al más reciente."""
-        df = _read_excel("trace_events")["trace_events"]
+        source = _load_cache()["trace_events"]
+        if request_id is not None:
+            positions = _trace_positions(source, request_id)
+            df = source.loc[positions] if positions else source.iloc[0:0]
+        else:
+            df = source
         filters = {"request_id": request_id, "item_id": item_id, "user_id": user_id,
-                   "event_type": event_type, "loan_id": loan_id, "receipt": receipt}
+                   "owner_id": owner_id, "event_type": event_type,
+                   "loan_id": loan_id, "receipt": receipt}
         for column, value in filters.items():
             if value is not None:
                 df = df[df[column] == value]
         rows = [_clean_nan(row.to_dict()) for _, row in df.iterrows()]
-        return sorted(rows, key=lambda row: row.get("created_at") or "")
+        return sorted(rows, key=lambda row: (str(row.get("created_at") or ""), _int(row.get("seq"))))
 
     # ------------------------------------------------------------------
     # REGISTRO DE CORREOS AUTOMATICOS (ver core/email_events.py)
@@ -1810,6 +2175,8 @@ def _trace_event_row(event: dict) -> dict:
     columns = SHEET_COLUMNS["trace_events"]
     row = {column: "" for column in columns}
     row.update({key: "" if value is None else str(value) for key, value in event.items() if key in columns})
+    row["owner_id"] = row["owner_id"] or row["user_id"]
+    row["user_id"] = row["user_id"] or row["owner_id"]
     row["id"] = _new_id()
     row["created_at"] = row["created_at"] or _now_str()
     return row
