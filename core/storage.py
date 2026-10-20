@@ -49,6 +49,8 @@ SHEET_COLUMNS = {
         "id", "item_id", "item_name", "parent_id", "quantity", "user_id",
         "user_name", "user_role", "checkout_at", "expected_return_at",
         "return_at", "status", "notes", "request_id",
+        # Quién hizo el picking (despacho); vacío en salidas directas por Escanear.
+        "operator_id", "operator_name",
     ],
     "reservations": [
         "id", "scope_type", "activity", "purpose", "attendees", "start_at", "end_at",
@@ -1528,7 +1530,7 @@ class LabStorage:
     # ------------------------------------------------------------------
 
     def create_loan(self, item: dict, quantity: int, user: dict, expected_return_at=None,
-                    notes: str = "", request_id: str = "") -> dict:
+                    notes: str = "", request_id: str = "", operator: dict = None) -> dict:
         with _db_write():
             dfs = _read_excel()
             # La disponibilidad se re-verifica DENTRO del lock: la comprobacion previa
@@ -1552,14 +1554,17 @@ class LabStorage:
                 "status": "out",
                 "notes": notes,
                 "request_id": request_id,
+                "operator_id": (operator or {}).get("id", ""),
+                "operator_name": (operator or {}).get("full_name", ""),
             }
             dfs["loans"] = pd.concat([dfs["loans"], pd.DataFrame([row])], ignore_index=True)
 
+            dispatched = f" · despachado por {operator.get('full_name')}" if operator and operator.get("full_name") else ""
             hist_row = {
                 "id": _new_id(), "item_id": item["id"], "timestamp": _now_str(),
                 "type": "Salida", "quantity_change": -quantity,
                 "actor_user_id": user.get("institutional_email", ""),
-                "details": f"Prestado a {user.get('full_name', '')} ({row['id']})",
+                "details": f"Prestado a {user.get('full_name', '')} ({row['id']}){dispatched}",
             }
             dfs["item_history"] = pd.concat([dfs["item_history"], pd.DataFrame([hist_row])], ignore_index=True)
             _write_and_sync(dfs)
@@ -1876,6 +1881,7 @@ class LabStorage:
                     "checkout_at": now, "expected_return_at": "", "return_at": "",
                     "status": "out", "notes": f"Picking de la solicitud {request_id}",
                     "request_id": request_id,
+                    "operator_id": actor.get("id", ""), "operator_name": actor.get("full_name", ""),
                 }
                 dfs["loans"] = pd.concat([dfs["loans"], pd.DataFrame([loan])], ignore_index=True)
                 history = {
@@ -1883,11 +1889,18 @@ class LabStorage:
                     "type": "Salida", "quantity_change": -quantity,
                     "actor_user_id": actor.get("institutional_email", ""),
                     "details": f"Picking de la solicitud {request_id} a nombre de "
-                               f"{request.get('requester_name', '')} ({loan_id})",
+                               f"{request.get('requester_name', '')} ({loan_id}) · "
+                               f"despachado por {actor.get('full_name', '') or 'un operario'}",
                 }
                 dfs["item_history"] = pd.concat(
                     [dfs["item_history"], pd.DataFrame([history])], ignore_index=True
                 )
+            elif plan["loan_action"] == "reuse":
+                # Re-picking tras «volver al picking»: las unidades ya salieron; el
+                # préstamo conserva su salida y pasa a nombre del operario que lo rehízo.
+                loan_index = dfs["loans"].index[dfs["loans"]["id"] == loan_id].tolist()[0]
+                dfs["loans"].at[loan_index, "operator_id"] = actor.get("id", "")
+                dfs["loans"].at[loan_index, "operator_name"] = actor.get("full_name", "")
             elif plan["loan_action"] == "close":
                 loan_index = dfs["loans"].index[dfs["loans"]["id"] == loan_id].tolist()[0]
                 returned = _int(dfs["loans"].at[loan_index, "quantity"])

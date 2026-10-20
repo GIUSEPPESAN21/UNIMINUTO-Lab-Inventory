@@ -34,6 +34,8 @@ def _loan_row(storage, loan: dict, user: dict, key_prefix: str):
         c1.caption(" · ".join(details))
         if loan.get("notes"):
             c1.caption(f"Notas: {loan['notes']}")
+        if loan.get("operator_name"):
+            c1.caption(f"Despachado por: {loan['operator_name']}")
         if loans_core.can_checkin_loan(user, loan) and c3.button(
             "↩️ Reingresar", key=f"{key_prefix}_{loan['id']}", use_container_width=True,
             type="primary" if overdue else "secondary",

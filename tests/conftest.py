@@ -22,7 +22,7 @@ def _isolated_environment(tmp_path, monkeypatch):
       activa la sincronización con GitHub ni el envío de correos.
     - Se reinician la caché en memoria y el estado de sincronización/sesión.
     """
-    from core import auth, notifications
+    from core import auth, notifications, picking
     from core import storage as storage_module
 
     monkeypatch.setattr(storage_module, "EXCEL_PATH", str(tmp_path / "isolated_db.xlsx"))
@@ -35,8 +35,10 @@ def _isolated_environment(tmp_path, monkeypatch):
         monkeypatch.setattr(module, "safe_secret", no_secret)
     storage_module._reset_sync_state()
     auth.reset_login_throttle()
+    picking.reset()
     yield
     storage_module._cached_dfs = None
+    picking.reset()
 
 
 class FakeStorage:
@@ -133,7 +135,8 @@ class FakeStorage:
         return {item_id: self.get_available_quantity(item_id) for item_id in self.items}
 
     # --- loans ---
-    def create_loan(self, item, quantity, user, expected_return_at=None, notes="", request_id=""):
+    def create_loan(self, item, quantity, user, expected_return_at=None, notes="", request_id="",
+                    operator=None):
         available = self.get_available_quantity(item["id"]) if item["id"] in self.items else None
         if available is not None and quantity > available:
             raise ValueError(f"Stock insuficiente. Disponible: {available}.")
@@ -145,6 +148,8 @@ class FakeStorage:
             "user_role": user.get("role", ""), "checkout_at": datetime.now(timezone.utc),
             "expected_return_at": expected_return_at, "return_at": None,
             "status": "out", "notes": notes, "request_id": request_id,
+            "operator_id": (operator or {}).get("id", ""),
+            "operator_name": (operator or {}).get("full_name", ""),
         }
         self.loans[loan_id] = loan
         return loan
@@ -327,8 +332,12 @@ class FakeStorage:
                 {"id": request.get("requester_id"), "full_name": request.get("requester_name", ""),
                  "role": requester.get("role", "")},
                 notes=f"Picking de la solicitud {request_id}", request_id=request_id,
+                operator=actor,
             )
             loan_id = loan["id"]
+        elif plan["loan_action"] == "reuse":
+            self.loans[loan_id].update(operator_id=actor.get("id", ""),
+                                       operator_name=actor.get("full_name", ""))
         elif plan["loan_action"] == "close":
             self.return_loan(loan_id)
         if plan["status"]:

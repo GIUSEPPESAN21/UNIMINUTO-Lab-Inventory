@@ -8,10 +8,75 @@ validarse atómicamente en :meth:`LabStorage.transition_request`.
 import csv
 import hashlib
 import io
-import json
+import logging
 from datetime import datetime, timezone
 
-from core import permissions, traceability
+from core import permissions, picking, traceability
+
+logger = logging.getLogger(__name__)
+
+
+# Cómo llegó de verdad cada lectura del picking. NFC lo fija el propio flujo del
+# toque (core/nfc + views/nfc_tap); lo escrito en el formulario lo fija el
+# escenario elegido en Ajustes, no un selector libre de quien hace el picking.
+METHOD_BARCODE_GUN = "barcode_gun"
+METHOD_CAMERA = "camera"
+METHOD_NFC = "nfc"
+METHOD_MANUAL = "manual"
+METHODS = (METHOD_BARCODE_GUN, METHOD_CAMERA, METHOD_NFC, METHOD_MANUAL)
+METHOD_LABELS = {
+    METHOD_BARCODE_GUN: "Pistola de barras", METHOD_CAMERA: "Cámara del teléfono",
+    METHOD_NFC: "Chip NFC", METHOD_MANUAL: "Teclado",
+}
+_LEGACY_METHODS = {"barcode": METHOD_BARCODE_GUN, "teclado": METHOD_MANUAL}
+
+# Escenarios de la lúdica (A/B/C); se fijan en Ajustes (hoja `settings`).
+SETTING_SCENARIO = "dispatch_scenario"
+DEFAULT_SCENARIO = "B"
+SCENARIOS = {
+    "A": {"label": "Manual", "typed_method": METHOD_MANUAL,
+          "help": "Las lecturas se escriben con el teclado."},
+    "B": {"label": "Programa + pistola de barras", "typed_method": METHOD_BARCODE_GUN,
+          "help": "Las lecturas llegan de la pistola (el campo recibe el código)."},
+    "C": {"label": "Programa + chip NFC", "typed_method": METHOD_MANUAL,
+          "help": "Se toca el chip de cada unidad; el teclado queda como respaldo."},
+}
+
+
+def normalize_method(value) -> str:
+    """Método válido (los nombres antiguos se convierten; lo desconocido es ``""``)."""
+    text = str(value or "").strip().lower()
+    text = _LEGACY_METHODS.get(text, text)
+    return text if text in METHODS else ""
+
+
+def scenario_key(storage) -> str:
+    try:
+        value = str(storage.get_setting(SETTING_SCENARIO, DEFAULT_SCENARIO) or "").strip().upper()
+    except Exception:  # un ajuste ilegible nunca debe frenar el picking
+        value = ""
+    return value if value in SCENARIOS else DEFAULT_SCENARIO
+
+
+def scenario_label(storage) -> str:
+    key = scenario_key(storage)
+    return f"Escenario {key} · {SCENARIOS[key]['label']}"
+
+
+def typed_method(storage) -> str:
+    """Método que se registra para lo escrito/leído en el formulario de picking."""
+    return SCENARIOS[scenario_key(storage)]["typed_method"]
+
+
+def set_scenario(storage, actor: dict, key: str):
+    """Fija el escenario (solo administrador). Devuelve (ok, mensaje)."""
+    permissions.require_cap(actor, permissions.CAP_DISPATCH_SETTINGS,
+                            "Solo un administrador cambia el escenario de despacho.")
+    key = str(key or "").strip().upper()
+    if key not in SCENARIOS:
+        return False, "Elige el escenario A, B o C."
+    storage.set_setting(SETTING_SCENARIO, key, (actor or {}).get("institutional_email", ""))
+    return True, f"Escenario fijado: {key} · {SCENARIOS[key]['label']}."
 
 
 def _details(event: dict) -> dict:
@@ -161,6 +226,8 @@ def plan_transition(request: dict, events: list, actor: dict, event_type: str,
         readings = details.get("readings") or []
         if len(readings) != quantity:
             return fail(f"Faltan lecturas: se requieren {quantity} y hay {len(readings)}.")
+        if any(not normalize_method(row.get("method")) for row in readings):
+            return fail("Una lectura trae un método no válido.")
         wrong = next((row for row in readings if row.get("code") != request.get("item_id")), None)
         if wrong:
             return fail("Una lectura no corresponde al producto solicitado.",
@@ -176,6 +243,17 @@ def plan_transition(request: dict, events: list, actor: dict, event_type: str,
                 return fail(f"Stock insuficiente. Disponible: {available or 0}.")
             plan["loan_action"] = "create"
         details["quantity"] = quantity
+        counts = {}
+        for row in readings:
+            counts[normalize_method(row["method"])] = counts.get(normalize_method(row["method"]), 0) + 1
+        details["methods"] = counts
+        details["method"] = next(iter(counts)) if len(counts) == 1 else "mixed"
+        failed_scans = list(details.pop("failed_scans", None) or [])
+        if failed_scans:
+            # Todas las lecturas rechazadas del picking, en UN solo evento y en la
+            # misma escritura que el «picking completo».
+            plan["extra_events"].append((traceability.EVENT_ORDER_SCAN_FAILED,
+                                         {"scans": failed_scans, "count": len(failed_scans)}))
     elif event_type == traceability.EVENT_ORDER_DELIVERED:
         if not open_loan:
             return fail("No hay un préstamo abierto de este picking para entregar.")
@@ -303,21 +381,29 @@ def claim_request(storage, request_id: str, actor: dict):
 
 def release_request(storage, request_id: str, actor: dict, reason: str = ""):
     permissions.require_cap(actor, permissions.CAP_RELEASE)
-    return storage.transition_request(
+    previous = assigned_picker(storage.get_trace_events(request_id=request_id))
+    result = storage.transition_request(
         request_id, traceability.EVENT_ORDER_RELEASED, actor,
         {"picker_id": actor.get("id", ""), "reason": " ".join((reason or "").split())},
     )
+    if result[0] and previous:
+        picking.clear(previous, request_id)  # sus lecturas pendientes ya no valen
+    return result
 
 
 def reassign_request(storage, request_id: str, actor: dict, picker: dict, reason: str = ""):
     permissions.require_cap(actor, permissions.CAP_REASSIGN)
     if not picker or picker.get("status") != "active" or picker.get("role") != permissions.ROLE_OPERATOR:
         return False, "Selecciona un operario activo.", None
-    return storage.transition_request(
+    previous = assigned_picker(storage.get_trace_events(request_id=request_id))
+    result = storage.transition_request(
         request_id, traceability.EVENT_ORDER_REASSIGNED, actor,
         {"picker_id": picker["id"], "picker_name": picker.get("full_name", ""),
          "reason": " ".join((reason or "").split())},
     )
+    if result[0] and previous:
+        picking.clear(previous, request_id)
+    return result
 
 
 def validate_reading(request: dict, code: str) -> tuple:
@@ -329,36 +415,131 @@ def validate_reading(request: dict, code: str) -> tuple:
     return True, "Lectura correcta."
 
 
-def record_failed_scan(storage, request_id: str, actor: dict, code: str, reason: str):
+def _stamp(now=None) -> str:
+    return (now or datetime.now(timezone.utc)).isoformat(timespec="milliseconds")
+
+
+def start_picking(storage, request_id: str, actor: dict):
+    """Abre el picking de un pedido que ``actor`` tomó. Devuelve (ok, mensaje)."""
     permissions.require_cap(actor, permissions.CAP_PICK)
     request = storage.get_service_request(request_id)
-    if not request:
-        return None
-    return storage.add_trace_event({
-        "event_type": traceability.EVENT_ORDER_SCAN_FAILED,
-        "request_id": request_id, "item_id": request.get("item_id", ""),
-        "user_id": request.get("requester_id", ""), "owner_id": request.get("requester_id", ""),
-        "actor_id": actor.get("id", ""), "actor_name": actor.get("full_name", ""),
-        "actor_email": actor.get("institutional_email", ""), "actor_role": actor.get("role", ""),
-        "details": json.dumps({"scanned_code": code, "reason": reason}, ensure_ascii=False),
-    })
+    events = storage.get_trace_events(request_id=request_id) if request else []
+    if not request or traceability.request_stage_key(request, events) != traceability.STAGE_CLAIMED:
+        return False, "El pedido ya no está en picking."
+    if assigned_picker(events) != actor.get("id"):
+        return False, "El pedido está asignado a otro operario."
+    picking.begin(actor.get("id"), request_id)
+    return True, "Picking abierto."
 
 
-def complete_picking(storage, request_id: str, actor: dict, readings: list, method: str = "barcode"):
+def register_reading(storage, request_id: str, actor: dict, code: str, method: str, now=None):
+    """Suma una lectura al picking abierto de ``actor`` (sin escribir en la base).
+
+    Devuelve ``(ok, mensaje, cuántas)``. Una lectura que no corresponde al
+    producto se acumula como fallida y se guarda con el picking completo."""
     permissions.require_cap(actor, permissions.CAP_PICK)
+    method = normalize_method(method)
+    if not method:
+        return False, "Método de lectura no válido.", len(picking.readings(actor.get("id"), request_id))
+    request = storage.get_service_request(request_id)
+    events = storage.get_trace_events(request_id=request_id) if request else []
+    if (not request or traceability.request_stage_key(request, events) != traceability.STAGE_CLAIMED
+            or assigned_picker(events) != actor.get("id")):
+        return False, "Este pedido ya no está en tu picking.", 0
+    user_id = actor.get("id")
+    needed = int(request.get("quantity") or 0)
+    current = len(picking.readings(user_id, request_id))
+    ok, message = validate_reading(request, code)
+    if not ok:
+        picking.add_failed(user_id, request_id, str(code or "").strip(), message, method, _stamp(now))
+        return False, message, current
+    if current >= needed:
+        return False, "Ya están todas las unidades requeridas.", current
+    count = picking.add_reading(user_id, request_id, str(code).strip(), method, _stamp(now))
+    return True, f"Lectura {count}/{needed} registrada ({METHOD_LABELS[method]}).", count
+
+
+def register_active_reading(storage, actor: dict, code: str, method: str, now=None,
+                            accepted: bool = True, reason: str = ""):
+    """`register_reading` para el picking que ``actor`` tiene abierto en cualquier
+    pestaña (lo usa el toque NFC, que llega en una sesión nueva).
+
+    ``accepted=False`` es un toque que el flujo NFC ya rechazó (firma inválida,
+    chip no registrado…): nunca suma, solo queda como lectura fallida con su
+    ``reason``. Devuelve ``(ok, mensaje)`` o ``None`` si no hay picking abierto."""
+    permissions.require_cap(actor, permissions.CAP_PICK)
+    request_id = picking.active_request(actor.get("id"))
+    if not request_id:
+        return None
+    if not accepted:
+        text = reason or "El toque no fue aceptado."
+        picking.add_failed(actor.get("id"), request_id, str(code or "").strip(), text,
+                           normalize_method(method) or METHOD_NFC, _stamp(now))
+        return False, text
+    ok, message, _ = register_reading(storage, request_id, actor, code, method, now)
+    return ok, message
+
+
+def undo_reading(actor: dict, request_id: str) -> int:
+    permissions.require_cap(actor, permissions.CAP_PICK)
+    return picking.undo_last(actor.get("id"), request_id)
+
+
+def current_readings(actor: dict, request_id: str) -> list:
+    return picking.readings(actor.get("id"), request_id)
+
+
+def abandon_picking(actor: dict, request_id: str) -> None:
+    """Cierra el panel de picking y descarta lecturas y fallos pendientes."""
+    picking.clear(actor.get("id"), request_id)
+
+
+def complete_picking(storage, request_id: str, actor: dict, readings: list = None, method: str = None):
+    """Completa el picking con una sola escritura.
+
+    Sin ``readings`` usa las acumuladas en :mod:`core.picking`; las lecturas
+    fallidas viajan en la misma escritura (un único evento de rechazos)."""
+    permissions.require_cap(actor, permissions.CAP_PICK)
+    from_store = readings is None
+    source = picking.readings(actor.get("id"), request_id) if from_store else readings
+    default = normalize_method(method) or typed_method(storage)
     clean = []
-    now = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
-    for value in readings or []:
+    now = _stamp()
+    for value in source or []:
         if isinstance(value, dict):
             clean.append({"code": str(value.get("code") or "").strip(),
-                          "method": str(value.get("method") or method),
+                          "method": normalize_method(value.get("method") or default) or "",
                           "at": str(value.get("at") or now)})
         else:
-            clean.append({"code": str(value or "").strip(), "method": method, "at": now})
-    return storage.transition_request(
-        request_id, traceability.EVENT_ORDER_PICKED, actor,
-        {"picker_id": actor.get("id", ""), "readings": clean, "method": method},
-    )
+            clean.append({"code": str(value or "").strip(), "method": default, "at": now})
+    details = {"picker_id": actor.get("id", ""), "readings": clean}
+    failed = picking.failed(actor.get("id"), request_id) if from_store else []
+    if failed:
+        details["failed_scans"] = failed
+    result = storage.transition_request(request_id, traceability.EVENT_ORDER_PICKED, actor, details)
+    if result[0]:
+        picking.clear(actor.get("id"), request_id)
+        if not traceability.event_details(result[2]).get("reused_loan"):
+            _notify_dispatched_loan(storage, request_id)
+    return result
+
+
+def _notify_dispatched_loan(storage, request_id: str) -> None:
+    """La salida del picking avisa a los responsables igual que una salida directa,
+    con «Despachado por». Es un aviso: si falla, el picking ya quedó guardado."""
+    try:
+        from core import email_events
+
+        loan = next((row for row in storage.get_all_loans(status="out")
+                     if row.get("request_id") == request_id), None)
+        if not loan:
+            return
+        borrower = storage.get_user_by_id(loan.get("user_id") or "") or {
+            "full_name": loan.get("user_name"), "role": loan.get("user_role"),
+        }
+        email_events.notify_loan_checkout(storage, loan, storage.get_item(loan.get("item_id") or ""), borrower)
+    except Exception as exc:  # noqa: BLE001 - un correo nunca deshace un picking
+        logger.warning(f"No se pudo avisar la salida del picking {request_id}: {exc}")
 
 
 def receive_request(storage, request_id: str, actor: dict, notes: str = ""):
