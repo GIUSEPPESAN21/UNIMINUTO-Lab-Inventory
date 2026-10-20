@@ -222,7 +222,11 @@ def test_service_can_be_delivered_directly(lab):
 def test_product_timeline_walks_from_created_to_returned(lab):
     request = _request(lab, reviewed_by="prof@uniminuto.edu.co", reviewed_at=T0.isoformat(), review_notes="OK")
     names = {"prof@uniminuto.edu.co": "Profe Gómez"}
-    states = lambda events, loan=None: [s["state"] for s in traceability.request_timeline(request, events, loan, names)]  # noqa: E731
+    # Reloj fijo: «vencido» depende de la hora actual y T0 queda atrás con el tiempo.
+    clock = T0 + timedelta(days=1)
+    states = lambda events, loan=None: [  # noqa: E731
+        s["state"] for s in traceability.request_timeline(request, events, loan, names, now=clock)
+    ]
     assert states([]) == ["done", "done", "current", "pending", "pending"]
     assert "Por Profe Gómez · OK" in traceability.request_timeline(request, [], None, names)[1]["detail"]
 
