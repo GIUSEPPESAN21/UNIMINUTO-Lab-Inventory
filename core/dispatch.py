@@ -694,8 +694,9 @@ def confirm_client_receipt(storage, request_id: str, actor: dict):
 def dispatch_metrics(storage, actor: dict) -> list:
     permissions.require_cap(actor, permissions.CAP_DISPATCH_REPORTS)
     rows = []
+    index = storage.get_events_index()          # una sola lectura de eventos, no una por pedido
     for request in storage.get_service_requests():
-        events = storage.get_trace_events(request_id=request["id"])
+        events = index.get(request["id"], [])
         if request.get("request_type") != "product" or not events:
             continue
         by_type = {event.get("event_type"): event for event in events}

@@ -1356,8 +1356,9 @@ def reconcile(storage) -> list:
     issues = []
     requests = {row["id"]: row for row in storage.get_service_requests()}
     loans = storage.get_all_loans()
+    index = storage.get_events_index()
     for request_id, request in requests.items():
-        events = storage.get_trace_events(request_id=request_id)
+        events = index.get(request_id, [])
         stage = request_stage_key(request, events)
         types = {event.get("event_type") for event in events}
         if (request.get("status") == STATUS_APPROVED and request.get("request_type") == TYPE_PRODUCT
@@ -1372,7 +1373,7 @@ def reconcile(storage) -> list:
         if not request_id:
             continue
         request = requests.get(request_id)
-        events = storage.get_trace_events(request_id=request_id) if request else []
+        events = index.get(request_id, []) if request else []
         if not request:
             issues.append({"request_id": request_id, "loan_id": loan.get("id"), "kind": "orphan_loan"})
         elif not first_event(events, EVENT_ORDER_PICKED):

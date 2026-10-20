@@ -293,11 +293,14 @@ def _reports(storage, user: dict) -> None:
     if not permissions.has_cap(user, permissions.CAP_DISPATCH_REPORTS):
         return
     rows = dispatch.dispatch_metrics(storage, user)
-    st.dataframe(rows, use_container_width=True, hide_index=True)
-    st.download_button("Descargar tiempos CSV", dispatch.dispatch_csv(storage, user),
+    if len(rows) > 200:
+        st.caption(f"Se muestran los 200 pedidos más recientes de {len(rows)}; el CSV trae todos.")
+    st.dataframe(rows[:200], use_container_width=True, hide_index=True)
+    # Los CSV se generan al pulsar el botón (con miles de eventos tardaban segundos en cada recarga).
+    st.download_button("Descargar tiempos CSV", lambda: dispatch.dispatch_csv(storage, user),
                        "tiempos-despacho.csv", "text/csv", use_container_width=True)
     st.download_button(
-        "Descargar eventos de la lúdica (CSV sin datos personales)", ludica.events_csv(storage, user),
+        "Descargar eventos de la lúdica (CSV sin datos personales)", lambda: ludica.events_csv(storage, user),
         f"eventos-{ludica.session_id(storage)}.csv", "text/csv", use_container_width=True,
         help="Columnas: sesion_id, timestamp, estacion, tipo_evento, item_codigo, transaccion_id, "
              "usuario_sim, resultado_sistema. Los identificadores van seudonimizados.",

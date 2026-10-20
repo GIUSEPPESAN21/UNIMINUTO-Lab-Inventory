@@ -21,7 +21,7 @@ import pandas as pd
 import requests
 import streamlit as st
 
-from core import barcode, excel_safe
+from core import barcode, excel_safe, fastxlsx
 from core import reservations as reservation_rules
 from core.config import safe_secret
 
@@ -101,6 +101,8 @@ NOTIFICATION_LOG_LIMIT = 500
 _cached_dfs = None
 _trace_request_index = {}
 _excel_lock = Lock()
+_events_index_lock = Lock()
+_events_index = {"version": None, "index": {}}   # ver LabStorage.get_events_index
 _data_state_lock = Lock()
 # `generation` sube solo cuando la base se (re)carga desde el archivo (inicio o descarga de
 # GitHub); `version` sube además con cada escritura. Las cachés derivadas (core.dispatch)
@@ -866,10 +868,76 @@ def _read_excel(*sheets: str) -> dict:
     return {name: cache[name].copy() for name in names}
 
 
+def _workbook_headers(path: str) -> dict:
+    """``{hoja: [columnas]}`` leyendo solo la primera fila de cada hoja.
+
+    Revisar el esquema al arrancar no debe leer todo el libro (con una base grande eran 2.5–5 s). Para los
+    libros que escribe la app se lee solo el principio del XML de cada hoja; si el libro fue guardado por
+    Excel (textos compartidos) se usa la lectura de openpyxl."""
+    try:
+        return _fast_headers(path)
+    except Exception:
+        import openpyxl
+
+        book = openpyxl.load_workbook(path, read_only=True)
+        try:
+            return {sheet.title: [str(value) for value in next(sheet.iter_rows(max_row=1, values_only=True), ())
+                                  if value is not None] for sheet in book.worksheets}
+        finally:
+            book.close()
+
+
+def _fast_headers(path: str) -> dict:
+    import re
+    import zipfile
+    from xml.sax.saxutils import unescape
+
+    with zipfile.ZipFile(path) as archive:
+        workbook = archive.read("xl/workbook.xml").decode("utf-8")
+        rels = archive.read("xl/_rels/workbook.xml.rels").decode("utf-8")
+        targets = {m.group(1): m.group(2) for m in re.finditer(r'<Relationship\b[^>]*?Id="([^"]+)"[^>]*?Target="([^"]+)"', rels)}
+        targets.update({m.group(2): m.group(1) for m in re.finditer(r'<Relationship\b[^>]*?Target="([^"]+)"[^>]*?Id="([^"]+)"', rels)})
+        headers = {}
+        for sheet in re.finditer(r"<sheet\b[^>]*>", workbook):
+            tag = sheet.group(0)
+            name = re.search(r'\bname="([^"]*)"', tag).group(1)
+            rid = re.search(r'\br:id="([^"]+)"', tag).group(1)
+            target = targets[rid].lstrip("/")
+            member = target if target.startswith("xl/") else f"xl/{target}"
+            with archive.open(member) as handle:
+                head = handle.read(65536).decode("utf-8", "ignore")
+            row = re.search(r"<row\b[^>]*>(.*?)</row>", head, re.S)
+            if row is None:
+                headers[unescape(name, {"&quot;": '"'})] = []
+                continue
+            cells = re.findall(r"<c\b([^>]*)>(.*?)</c>", row.group(1), re.S)
+            if any('t="s"' in attrs for attrs, _ in cells):
+                raise ValueError("textos compartidos: lectura completa")
+            headers[unescape(name, {"&quot;": '"'})] = [
+                unescape("".join(re.findall(r"<t\b[^>]*>(.*?)</t>", body, re.S))) for _, body in cells]
+        return headers
+
+
+def _peek(*sheets: str) -> dict:
+    """Las hojas pedidas **sin copiarlas**, solo para leer.
+
+    ``_read_excel`` copia cada hoja (necesario para quien la va a modificar); con miles de filas, una
+    simple búsqueda por código copiaba todo el inventario. Quien use ``_peek`` no puede modificar el
+    resultado: los escritores reemplazan las hojas de la caché, nunca las mutan, así que una lectura en
+    curso siempre ve una versión coherente."""
+    cache = _load_cache()
+    return {name: cache[name] for name in (sheets or tuple(cache))}
+
+
 def _serialize_to_disk(dfs: dict) -> None:
     """Serializa las hojas y reemplaza el archivo de forma atomica."""
     buffer = io.BytesIO()
-    excel_safe.write_frames(buffer, dfs)   # sin fórmulas accidentales ni caracteres de control
+    try:
+        fastxlsx.write_workbook(buffer, dfs)         # ~15 veces más rápido que pandas con una base grande
+    except Exception:
+        logger.exception("El escritor rápido falló; se usa pandas para guardar el libro.")
+        buffer = io.BytesIO()
+        excel_safe.write_frames(buffer, dfs)         # sin fórmulas accidentales ni caracteres de control
     try:
         _atomic_write_bytes(EXCEL_PATH, buffer.getvalue())
     except Exception:
@@ -923,15 +991,18 @@ def _now_str() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+_NAN_TEXT = frozenset(("nan", "None", "NaT"))
+
+
 def _clean_nan(d: dict) -> dict:
     for k, v in d.items():
-        if str(v) in ("nan", "None", "NaT"):
+        if v is None or (v in _NAN_TEXT if v.__class__ is str else str(v) in _NAN_TEXT):
             d[k] = None
     return d
 
 
-def _row_to_item(row: pd.Series) -> dict:
-    item = row.to_dict()
+def _item_from_dict(data: dict) -> dict:
+    item = dict(data)
     for num_col in ("quantity", "min_stock_alert"):
         try:
             v = item.get(num_col)
@@ -941,8 +1012,12 @@ def _row_to_item(row: pd.Series) -> dict:
     return _clean_nan(item)
 
 
-def _row_to_user(row: pd.Series) -> dict:
-    record = _clean_nan(row.to_dict())
+def _row_to_item(row: pd.Series) -> dict:
+    return _item_from_dict(row.to_dict())
+
+
+def _user_from_dict(data: dict) -> dict:
+    record = _clean_nan(dict(data))
     try:
         record["session_epoch"] = int(float(record.get("session_epoch") or 0))
     except (TypeError, ValueError):
@@ -950,8 +1025,12 @@ def _row_to_user(row: pd.Series) -> dict:
     return record
 
 
-def _row_to_loan(row: pd.Series) -> dict:
-    loan = row.to_dict()
+def _row_to_user(row: pd.Series) -> dict:
+    return _user_from_dict(row.to_dict())
+
+
+def _loan_from_dict(data: dict) -> dict:
+    loan = dict(data)
     try:
         loan["quantity"] = int(float(loan.get("quantity") or 0))
     except Exception:
@@ -972,6 +1051,10 @@ def _row_to_loan(row: pd.Series) -> dict:
     return _clean_nan(loan)
 
 
+def _row_to_loan(row: pd.Series) -> dict:
+    return _loan_from_dict(row.to_dict())
+
+
 def _parse_record_dates(record: dict, fields: tuple) -> dict:
     for field in fields:
         raw = record.get(field)
@@ -986,8 +1069,8 @@ def _parse_record_dates(record: dict, fields: tuple) -> dict:
     return record
 
 
-def _row_to_reservation(row: pd.Series) -> dict:
-    record = _clean_nan(row.to_dict())
+def _reservation_from_dict(data: dict) -> dict:
+    record = _clean_nan(dict(data))
     try:
         record["attendees"] = int(float(record.get("attendees") or 0))
     except (TypeError, ValueError):
@@ -998,8 +1081,12 @@ def _row_to_reservation(row: pd.Series) -> dict:
     )
 
 
-def _row_to_service_request(row: pd.Series) -> dict:
-    record = _clean_nan(row.to_dict())
+def _row_to_reservation(row: pd.Series) -> dict:
+    return _reservation_from_dict(row.to_dict())
+
+
+def _service_request_from_dict(data: dict) -> dict:
+    record = _clean_nan(dict(data))
     try:
         record["quantity"] = int(float(record.get("quantity") or 0))
     except (TypeError, ValueError):
@@ -1008,6 +1095,10 @@ def _row_to_service_request(row: pd.Series) -> dict:
     return _parse_record_dates(
         record, ("needed_at", "reviewed_at", "created_at", "updated_at")
     )
+
+
+def _row_to_service_request(row: pd.Series) -> dict:
+    return _service_request_from_dict(row.to_dict())
 
 
 VALID_ITEM_TYPES = ("master", "child", "standalone", "location")
@@ -1176,16 +1267,23 @@ def _purge_item_records(dfs: dict, ids: list, actor_email: str = "") -> dict:
     return counts
 
 
+def _quantity(value) -> int:
+    try:
+        return int(float(value)) if value not in (None, "", "nan", "None") else 0
+    except (TypeError, ValueError):
+        return 0
+
+
 def _available_from(dfs: dict, item_id: str):
     """Disponibilidad calculada sobre `dfs` (items + loans). None si el item no existe."""
-    rows = dfs["items"][dfs["items"]["id"] == item_id]
+    items = dfs["items"]
+    rows = items[items["id"] == item_id]
     if rows.empty:
         return None
-    total = _row_to_item(rows.iloc[0]).get("quantity", 0)
+    total = _quantity(rows["quantity"].iloc[0])
     loans = dfs["loans"]
-    open_loans = loans[(loans["item_id"] == item_id) & (loans["status"] == "out")]
-    borrowed = sum(_row_to_loan(row).get("quantity", 0) for _, row in open_loans.iterrows())
-    return max(total - borrowed, 0)
+    open_loans = loans.loc[(loans["item_id"] == item_id) & (loans["status"] == "out"), "quantity"]
+    return max(total - sum(_quantity(value) for value in open_loans), 0)
 
 
 # ---------------------------------------------------------------------------
@@ -1215,15 +1313,9 @@ class LabStorage:
                 _write_and_sync(dfs)
         else:
             try:
-                workbook = pd.ExcelFile(EXCEL_PATH, engine="openpyxl")
-                existing_sheets = workbook.sheet_names
-                needs_migration = bool(set(SHEET_COLUMNS) - set(existing_sheets))
-                if not needs_migration:
-                    for sheet, columns in SHEET_COLUMNS.items():
-                        actual = set(workbook.parse(sheet, nrows=0).columns)
-                        if set(columns) - actual:
-                            needs_migration = True
-                            break
+                headers = _workbook_headers(EXCEL_PATH)        # solo la primera fila de cada hoja
+                needs_migration = bool(set(SHEET_COLUMNS) - set(headers)) or any(
+                    set(columns) - set(headers.get(sheet, ())) for sheet, columns in SHEET_COLUMNS.items())
                 if needs_migration:
                     with _excel_lock:
                         _write_excel(_read_excel())
@@ -1569,7 +1661,7 @@ class LabStorage:
     @firestore_retry
     def get_delete_impact(self, item_id: str) -> dict:
         """Resumen de lo que borraria `delete_item` (para pedir confirmacion)."""
-        dfs = _read_excel("items", "loans", "service_requests")
+        dfs = _peek("items", "loans", "service_requests")
         df_items, df_loans, df_req = dfs["items"], dfs["loans"], dfs["service_requests"]
         if df_items[df_items["id"] == item_id].empty:
             return {"exists": False, "contained_items": 0, "open_loans": 0,
@@ -1598,7 +1690,7 @@ class LabStorage:
 
     @firestore_retry
     def get_item(self, item_id: str):
-        dfs = _read_excel("items")
+        dfs = _peek("items")
         rows = dfs["items"][dfs["items"]["id"] == item_id]
         if rows.empty:
             return None
@@ -1606,49 +1698,47 @@ class LabStorage:
 
     @firestore_retry
     def get_all_items(self, include_retired: bool = False) -> list:
-        dfs = _read_excel("items")
+        dfs = _peek("items")
         df = dfs["items"]
-        items = [_row_to_item(row) for _, row in df.iterrows()]
+        items = [_item_from_dict(record) for record in df.to_dict("records")]
         if not include_retired:
             items = [i for i in items if i.get("status") != "retired"]
         return sorted(items, key=lambda x: (x.get("name") or "").lower())
 
     @firestore_retry
     def get_children(self, parent_id: str) -> list:
-        dfs = _read_excel("items")
+        dfs = _peek("items")
         df = dfs["items"]
         rows = df[(df["parent_id"] == parent_id) & (df["status"] != "retired")]
-        items = [_row_to_item(row) for _, row in rows.iterrows()]
+        items = [_item_from_dict(record) for record in rows.to_dict("records")]
         return sorted(items, key=lambda x: (x.get("name") or "").lower())
 
     @firestore_retry
     def get_all_masters(self) -> list:
-        dfs = _read_excel("items")
+        dfs = _peek("items")
         df = dfs["items"]
         rows = df[(df["item_type"] == "master") & (df["status"] != "retired")]
-        items = [_row_to_item(row) for _, row in rows.iterrows()]
+        items = [_item_from_dict(record) for record in rows.to_dict("records")]
         return sorted(items, key=lambda x: (x.get("name") or "").lower())
 
     @firestore_retry
     def get_available_quantity(self, item_id: str) -> int:
-        available = _available_from(_read_excel("items", "loans"), item_id)
+        available = _available_from(_peek("items", "loans"), item_id)
         return 0 if available is None else available
 
     @firestore_retry
     def get_availability_map(self) -> dict:
         """Disponibilidad de TODOS los items en una sola pasada: {id: disponible}.
         Evita una lectura de la base por cada item al listar el catalogo."""
-        dfs = _read_excel("items", "loans")
+        dfs = _peek("items", "loans")
         loans = dfs["loans"]
         borrowed = {}
-        for _, row in loans[loans["status"] == "out"].iterrows():
-            loan = _row_to_loan(row)
-            borrowed[loan["item_id"]] = borrowed.get(loan["item_id"], 0) + loan.get("quantity", 0)
-        availability = {}
-        for _, row in dfs["items"].iterrows():
-            item = _row_to_item(row)
-            availability[item["id"]] = max(item.get("quantity", 0) - borrowed.get(item["id"], 0), 0)
-        return availability
+        open_loans = loans.loc[loans["status"] == "out", ["item_id", "quantity"]]
+        for item_id, quantity in zip(open_loans["item_id"], open_loans["quantity"]):
+            borrowed[item_id] = borrowed.get(item_id, 0) + _quantity(quantity)
+        items = dfs["items"]
+        return {item_id: max(_quantity(total) - borrowed.get(item_id, 0), 0)
+                for item_id, total in zip(items["id"], items["quantity"])}
 
     # ------------------------------------------------------------------
     # USUARIOS
@@ -1656,7 +1746,7 @@ class LabStorage:
 
     @firestore_retry
     def get_user_by_email(self, email: str):
-        dfs = _read_excel("users")
+        dfs = _peek("users")
         df = dfs["users"]
         rows = df[df["institutional_email"] == email.lower().strip()]
         if rows.empty:
@@ -1665,7 +1755,7 @@ class LabStorage:
 
     @firestore_retry
     def get_user_by_id(self, user_id: str):
-        dfs = _read_excel("users")
+        dfs = _peek("users")
         df = dfs["users"]
         rows = df[df["id"] == user_id]
         if rows.empty:
@@ -1776,17 +1866,17 @@ class LabStorage:
 
     @firestore_retry
     def get_all_users(self) -> list:
-        dfs = _read_excel("users")
+        dfs = _peek("users")
         df = dfs["users"]
-        users = [_row_to_user(row) for _, row in df.iterrows()]
+        users = [_user_from_dict(record) for record in df.to_dict("records")]
         return sorted(users, key=lambda x: (x.get("full_name") or "").lower())
 
     def count_users(self) -> int:
-        dfs = _read_excel("users")
+        dfs = _peek("users")
         return len(dfs["users"])
 
     def count_masters(self) -> int:
-        dfs = _read_excel("users")
+        dfs = _peek("users")
         df = dfs["users"]
         return len(df[df["role"] == "maestro"])
 
@@ -1796,13 +1886,13 @@ class LabStorage:
 
     @firestore_retry
     def is_email_whitelisted_professor(self, email: str) -> bool:
-        dfs = _read_excel("professors_whitelist")
+        dfs = _peek("professors_whitelist")
         df = dfs["professors_whitelist"]
         return email.lower().strip() in set(df["institutional_email"].str.lower().str.strip())
 
     @firestore_retry
     def get_whitelist(self) -> list:
-        dfs = _read_excel("professors_whitelist")
+        dfs = _peek("professors_whitelist")
         df = dfs["professors_whitelist"]
         return sorted(df["institutional_email"].tolist())
 
@@ -1917,36 +2007,36 @@ class LabStorage:
 
     @firestore_retry
     def get_open_loans_for_item(self, item_id: str) -> list:
-        dfs = _read_excel("loans")
+        dfs = _peek("loans")
         df = dfs["loans"]
         rows = df[(df["item_id"] == item_id) & (df["status"] == "out")]
-        return [_row_to_loan(row) for _, row in rows.iterrows()]
+        return [_loan_from_dict(record) for record in rows.to_dict("records")]
 
     @firestore_retry
     def get_open_loans_for_user(self, user_id: str) -> list:
-        dfs = _read_excel("loans")
+        dfs = _peek("loans")
         df = dfs["loans"]
         rows = df[(df["user_id"] == user_id) & (df["status"] == "out")]
-        loans = [_row_to_loan(row) for _, row in rows.iterrows()]
+        loans = [_loan_from_dict(record) for record in rows.to_dict("records")]
         return sorted(loans, key=lambda x: x.get("checkout_at") or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
 
     @firestore_retry
     def get_all_loans(self, status: str = None) -> list:
-        dfs = _read_excel("loans")
+        dfs = _peek("loans")
         df = dfs["loans"]
         if df.empty:
             return []
         if status:
             df = df[df["status"] == status]
-        loans = [_row_to_loan(row) for _, row in df.iterrows()]
+        loans = [_loan_from_dict(record) for record in df.to_dict("records")]
         return sorted(loans, key=lambda x: x.get("checkout_at") or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
 
     @firestore_retry
     def get_item_history(self, item_id: str) -> list:
-        dfs = _read_excel("item_history")
+        dfs = _peek("item_history")
         df = dfs["item_history"]
         rows = df[df["item_id"] == item_id]
-        history = [_clean_nan(row.to_dict()) for _, row in rows.iterrows()]
+        history = [_clean_nan(record) for record in rows.to_dict("records")]
         return sorted(history, key=lambda x: x.get("timestamp") or "", reverse=True)
     # ------------------------------------------------------------------
     # RESERVAS DE LABORATORIO
@@ -1955,7 +2045,7 @@ class LabStorage:
     @staticmethod
     def _approved_reservations(dfs: dict) -> list:
         df = dfs["reservations"]
-        return [_row_to_reservation(row) for _, row in df[df["status"] == "approved"].iterrows()]
+        return [_reservation_from_dict(record) for record in df[df["status"] == "approved"].to_dict("records")]
 
     def create_reservation(self, data: dict, user: dict) -> dict:
         with _db_write():
@@ -1984,18 +2074,18 @@ class LabStorage:
 
     @firestore_retry
     def get_reservation(self, reservation_id: str):
-        dfs = _read_excel("reservations")
+        dfs = _peek("reservations")
         rows = dfs["reservations"][dfs["reservations"]["id"] == reservation_id]
         return None if rows.empty else _row_to_reservation(rows.iloc[0])
 
     @firestore_retry
     def get_reservations(self, status: str = None, user_id: str = None) -> list:
-        df = _read_excel("reservations")["reservations"]
+        df = _peek("reservations")["reservations"]
         if status:
             df = df[df["status"] == status]
         if user_id:
             df = df[df["requester_id"] == user_id]
-        rows = [_row_to_reservation(row) for _, row in df.iterrows()]
+        rows = [_reservation_from_dict(record) for record in df.to_dict("records")]
         aware_min = datetime.min.replace(tzinfo=timezone.utc)
         return sorted(rows, key=lambda row: row.get("start_at") or aware_min)
 
@@ -2064,20 +2154,20 @@ class LabStorage:
 
     @firestore_retry
     def get_service_request(self, request_id: str):
-        dfs = _read_excel("service_requests")
+        dfs = _peek("service_requests")
         rows = dfs["service_requests"][dfs["service_requests"]["id"] == request_id]
         return None if rows.empty else _row_to_service_request(rows.iloc[0])
 
     @firestore_retry
     def get_service_requests(self, status: str = None, user_id: str = None, exclude_ids=None) -> list:
-        df = _read_excel("service_requests")["service_requests"]
+        df = _peek("service_requests")["service_requests"]
         if status:
             df = df[df["status"] == status]
         if user_id:
             df = df[df["requester_id"] == user_id]
         if exclude_ids:
             df = df[~df["id"].isin(set(exclude_ids))]   # vectorizado: no se arman dicts de lo descartado
-        rows = [_row_to_service_request(row) for _, row in df.iterrows()]
+        rows = [_service_request_from_dict(record) for record in df.to_dict("records")]
         aware_min = datetime.min.replace(tzinfo=timezone.utc)
         return sorted(rows, key=lambda row: row.get("created_at") or aware_min, reverse=True)
 
@@ -2253,7 +2343,7 @@ class LabStorage:
 
     def operational_data_counts(self) -> dict:
         """Cuántas filas hay de cada tipo de dato operativo (vista previa del borrado)."""
-        dfs = _read_excel("service_requests", "reservations", "notification_log", "trace_events", "loans")
+        dfs = _peek("service_requests", "reservations", "notification_log", "trace_events", "loans")
         events = dfs["trace_events"]
         loans = dfs["loans"]
         return {
@@ -2397,7 +2487,7 @@ class LabStorage:
 
     @firestore_retry
     def get_setting(self, key: str, default=None):
-        df = _read_excel("settings")["settings"]
+        df = _peek("settings")["settings"]
         rows = df[df["key"] == key]
         if rows.empty:
             return default
@@ -2455,14 +2545,31 @@ class LabStorage:
             df = source.loc[positions] if positions else source.iloc[0:0]
         else:
             df = source
-        filters = {"request_id": request_id, "item_id": item_id, "user_id": user_id,
+        filters = {"item_id": item_id, "user_id": user_id,      # request_id ya se resolvió con el índice
                    "owner_id": owner_id, "event_type": event_type,
                    "loan_id": loan_id, "receipt": receipt}
         for column, value in filters.items():
             if value is not None:
                 df = df[df[column] == value]
-        rows = [_clean_nan(row.to_dict()) for _, row in df.iterrows()]
+        rows = [_clean_nan(record) for record in df.to_dict("records")]
         return sorted(rows, key=lambda row: (str(row.get("created_at") or ""), _int(row.get("seq"))))
+
+    def get_events_index(self) -> dict:
+        """``{request_id: [eventos]}`` (del más antiguo al más reciente) de TODAS las solicitudes.
+
+        Los listados que recorren muchos pedidos (tiempos de despacho, atascados, conciliación) pedían
+        los eventos de cada uno por separado: con miles de pedidos tardaban segundos. Aquí se arma una
+        sola vez por versión de los datos. **Solo lectura**: las listas se comparten entre sesiones."""
+        version = data_state()["version"]
+        with _events_index_lock:
+            if _events_index["version"] == version:
+                return _events_index["index"]
+        index = {}
+        for event in self.get_trace_events():
+            index.setdefault(event.get("request_id") or "", []).append(event)
+        with _events_index_lock:
+            _events_index.update(version=version, index=index)
+        return index
 
     # ------------------------------------------------------------------
     # REGISTRO DE CORREOS AUTOMATICOS (ver core/email_events.py)
@@ -2488,8 +2595,8 @@ class LabStorage:
     @firestore_retry
     def get_notification_log(self, limit: int = 50) -> list:
         """Registros de correo del mas reciente al mas antiguo (todos si limit=0)."""
-        df = _read_excel("notification_log")["notification_log"]
-        rows = [_clean_nan(row.to_dict()) for _, row in df.iterrows()]
+        df = _peek("notification_log")["notification_log"]
+        rows = [_clean_nan(record) for record in df.to_dict("records")]
         rows.sort(key=lambda row: row.get("created_at") or "", reverse=True)
         return rows[:limit] if limit else rows
 
@@ -2639,13 +2746,13 @@ class LabStorage:
     @firestore_retry
     def get_item_photos(self, item_id: str) -> list:
         """Fotos de un item, la mas reciente primero."""
-        df = _read_excel("item_photos")["item_photos"]
-        rows = [_clean_nan(row.to_dict()) for _, row in df[df["item_id"] == item_id].iterrows()]
+        df = _peek("item_photos")["item_photos"]
+        rows = [_clean_nan(record) for record in df[df["item_id"] == item_id].to_dict("records")]
         return sorted(rows, key=lambda row: row.get("taken_at") or "", reverse=True)
 
     @firestore_retry
     def get_item_photo(self, photo_id: str):
-        df = _read_excel("item_photos")["item_photos"]
+        df = _peek("item_photos")["item_photos"]
         rows = df[df["id"] == photo_id]
         return None if rows.empty else _clean_nan(rows.iloc[0].to_dict())
 

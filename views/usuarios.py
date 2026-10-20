@@ -6,7 +6,7 @@ import streamlit as st
 from core import auth, permissions
 from core.ui import (
     ROLE_LABELS, badge_html, card, card_header_html, empty_state, guard_cap, initials, page_header,
-    flash, persistent_tabs, section_title, show_flash, stat_cards,
+    flash, more_button, paginate, persistent_tabs, section_title, show_flash, stat_cards,
 )
 
 ROLES = list(permissions.ROLES)
@@ -240,8 +240,9 @@ def render():
                 or value in (user.get("student_id") or "").lower()
             ]
         section_title(f"{len(users)} usuario(s)", icon=":material/contacts:")
-        for user in users:
+        for user in paginate(users, "users_list", 30):
             _user_card(storage, user, current_user)
+        more_button(len(users), "users_list", 30)
 
     with tab_whitelist:
         st.caption(

@@ -251,6 +251,31 @@ def show_flash(key: str = "page") -> None:
     {"success": st.success, "warning": st.warning, "info": st.info}.get(kind, st.error)(message)
 
 
+PAGE_SIZE = 20
+
+
+def paginate(rows, key: str, page_size: int = PAGE_SIZE) -> list:
+    """Las primeras filas de ``rows`` (una página más cada vez que se pide «Mostrar más»).
+
+    Streamlit vuelve a dibujar todo en cada interacción: con cientos de tarjetas con botones y formularios
+    una sola pulsación tardaba muchos segundos. Se dibuja una página y el resto se pide con ``more_button``."""
+    rows = list(rows)
+    return rows[: int(st.session_state.get(f"_more_{key}", page_size))]
+
+
+def more_button(total: int, key: str, page_size: int = PAGE_SIZE) -> None:
+    """Botón «Mostrar más» si quedan filas sin dibujar (usar con ``paginate`` y la misma ``key``)."""
+    shown = int(st.session_state.get(f"_more_{key}", page_size))
+    if total <= shown:
+        return
+
+    def grow():
+        st.session_state[f"_more_{key}"] = shown + page_size
+
+    st.button(f"Mostrar más ({total - shown} restantes)", key=f"_morebtn_{key}", on_click=grow,
+              use_container_width=True)
+
+
 def persistent_tabs(titles: list, key: str):
     """Pestañas que **recuerdan cuál está abierta** aunque la página se vuelva a ejecutar.
 
