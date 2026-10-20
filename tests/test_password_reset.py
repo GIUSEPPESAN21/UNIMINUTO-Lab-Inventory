@@ -98,7 +98,7 @@ def test_must_change_password_is_false_for_old_accounts_without_the_column():
 def test_only_a_master_can_reset(storage, lab, actor_key):
     before = _hash(storage, lab["student"])
     result, error = auth.admin_reset_password(storage, lab[actor_key], lab["student"]["id"])
-    assert result is None and "maestro" in error.lower()
+    assert result is None and "administrador" in error.lower()
     assert _hash(storage, lab["student"]) == before
     assert storage.trace_events == []
 
@@ -116,7 +116,7 @@ def test_the_role_is_rechecked_against_the_database(storage, lab):
     stale_session = auth.public_user(lab["master"])
     storage.update_user(lab["master"]["id"], {"role": "profesor"})
     result, error = auth.admin_reset_password(storage, stale_session, lab["student"]["id"])
-    assert result is None and "maestro" in error.lower()
+    assert result is None and "administrador" in error.lower()
 
 
 def test_unknown_target_is_rejected(storage, lab):
@@ -132,7 +132,7 @@ def test_master_cannot_reset_own_password_here(storage, lab):
 def test_master_cannot_reset_another_master(storage, lab):
     before = _hash(storage, lab["other_master"])
     result, error = auth.admin_reset_password(storage, lab["master"], lab["other_master"]["id"])
-    assert result is None and "otro perfil maestro" in error.lower()
+    assert result is None and "otro administrador" in error.lower()
     assert _hash(storage, lab["other_master"]) == before
 
 

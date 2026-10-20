@@ -107,7 +107,8 @@ def _edit_item_form(storage, item: dict, user: dict):
                     "location": location, "quantity": int(quantity), "min_stock_alert": int(min_alert),
                 }
                 try:
-                    storage.save_item(data, item["id"], is_new=False, actor_email=user["institutional_email"])
+                    storage.save_item(data, item["id"], is_new=False, actor_email=user["institutional_email"],
+                                      actor=user)
                     st.success("Item actualizado.")
                     st.session_state.editing_item_id = None
                     st.rerun()
@@ -118,7 +119,7 @@ def _edit_item_form(storage, item: dict, user: dict):
             if not confirm_delete:
                 st.warning("Marca la casilla de confirmación para eliminar el item de forma permanente.")
             else:
-                ok, msg = storage.delete_item(item["id"], actor_email=user["institutional_email"])
+                ok, msg = storage.delete_item(item["id"], actor_email=user["institutional_email"], actor=user)
                 if ok:
                     st.toast(msg, icon=":material/delete:")
                     st.session_state.editing_item_id = None
@@ -472,7 +473,7 @@ def _render_generator(storage, user: dict, master: dict) -> None:
         try:
             with st.spinner("Creando productos..."):
                 created = storage.save_items_bulk(
-                    payloads, actor_email=user["institutional_email"],
+                    payloads, actor_email=user["institutional_email"], actor=user,
                     details=suggestions.HISTORY_DETAILS.format(parent_id=master["id"]),
                 )
         except ValueError as exc:
@@ -664,7 +665,8 @@ def _render_new_item(storage, user: dict) -> None:
                     "created_by": user["institutional_email"],
                 }
                 try:
-                    storage.save_item(data, new_id, is_new=True, actor_email=user["institutional_email"])
+                    storage.save_item(data, new_id, is_new=True, actor_email=user["institutional_email"],
+                                      actor=user)
                     st.success(f"'{name}' registrado correctamente con el código {new_id}.")
                     st.rerun()
                 except ValueError as e:
@@ -707,7 +709,7 @@ def _render_import(storage, user: dict) -> None:
             if st.button(":material/upload: Procesar importacion", type="primary", use_container_width=True):
                 rows = df_upload.to_dict(orient="records")
                 with st.spinner("Importando items..."):
-                    result = storage.bulk_upsert_items(rows, actor_email=user["institutional_email"])
+                    result = storage.bulk_upsert_items(rows, actor_email=user["institutional_email"], actor=user)
                 st.success(
                     f"Importacion completada: {len(result['created'])} creados, "
                     f"{len(result['updated'])} actualizados."

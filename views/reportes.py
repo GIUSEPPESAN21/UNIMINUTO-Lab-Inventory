@@ -269,7 +269,7 @@ def _apply_fixes(storage, user: dict, fixes: dict):
     for item_id, fix in fixes.items():
         try:
             data = data_quality.apply_fix(storage.get_item(item_id), fix)
-            storage.save_item(data, item_id, is_new=False, actor_email=actor,
+            storage.save_item(data, item_id, is_new=False, actor_email=actor, actor=user,
                               details=f"Corrección de calidad de datos: {fix['label']}.")
             applied.append(item_id)
         except ValueError as exc:  # incluye StaleFixError y validaciones de storage

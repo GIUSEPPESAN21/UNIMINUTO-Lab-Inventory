@@ -4,7 +4,7 @@
 import streamlit as st
 
 from core.labels import ITEM_TYPE_NAMES
-from core.ui import feature_cards, hero, section_title
+from core.ui import ROLE_LABELS, feature_cards, hero, section_title
 
 
 def render():
@@ -36,16 +36,20 @@ def render():
 
     section_title("Roles institucionales", icon=":material/group:")
     feature_cards([
-        {"icon": "🎓", "title": "Estudiante",
-         "text": "Escanea, solicita salida y reingresa lo que él mismo tomó prestado."},
-        {"icon": "👨‍🏫", "title": "Profesor",
-         "text": "Administra el inventario, registra préstamos de cualquiera y ve reportes."},
-        {"icon": "🔐", "title": "Perfil maestro",
-         "text": "Gestiona usuarios, roles y tiene visibilidad total del laboratorio."},
+        {"icon": "🎓", "title": ROLE_LABELS["estudiante"],
+         "text": "Solicita productos y servicios, reserva el laboratorio, ve lo suyo y confirma que recibió su pedido."},
+        {"icon": "📦", "title": ROLE_LABELS["operario"],
+         "text": "Toma los pedidos autorizados, recorre el laboratorio, hace el picking unidad por unidad "
+                 "y lo entrega al supervisor. No aprueba ni ve inventario ni reportes."},
+        {"icon": "🧑‍🏫", "title": ROLE_LABELS["profesor"],
+         "text": "Aprueba solicitudes, autoriza operarios, recibe el picking, lo revisa y lo entrega al cliente. "
+                 "Si tiene permiso de inventario (profesor), también administra productos, ubicaciones y reportes."},
+        {"icon": "🔐", "title": ROLE_LABELS["maestro"],
+         "text": "Gestiona usuarios, roles y contraseñas, configura los correos y tiene visibilidad total del laboratorio."},
     ])
 
     st.info(
         "Para dudas sobre el uso del sistema o solicitudes de soporte, contacta al "
-        "administrador del laboratorio (perfil maestro) desde tu programa académico.",
+        "administrador del laboratorio desde tu programa académico.",
         icon=":material/chat:",
     )

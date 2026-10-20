@@ -119,6 +119,7 @@ def _create(storage, user: dict, plan: dict, summary: str) -> None:
         with st.spinner("Creando ubicaciones..."):
             created = storage.save_items_bulk(
                 plan["payloads"], actor_email=user["institutional_email"], details=places.HISTORY_DETAILS,
+                actor=user,
             )
     except ValueError as exc:
         st.error(str(exc))
@@ -286,7 +287,7 @@ def _register_form(storage, user: dict, code: str, place: dict) -> None:
                 return
             try:
                 storage.save_items_bulk(plan["payloads"], actor_email=user["institutional_email"],
-                                        details=places.HISTORY_DETAILS)
+                                        details=places.HISTORY_DETAILS, actor=user)
             except ValueError as exc:
                 st.error(str(exc))
                 return
@@ -313,8 +314,8 @@ def render_scan_result(storage, user: dict, result: dict, spec, render_label=Non
         render_label(item)
     if item:
         render_location_guide(item, key_prefix=f"scan_place_guide_{code}")
-    elif user.get("role") == "estudiante":
-        st.info("Pide a un profesor o al administrador del laboratorio que registre esta ubicación.")
+    elif not permissions.has_cap(user, permissions.CAP_MANAGE_LOCATIONS):
+        st.info("Pide a un supervisor o al administrador del laboratorio que registre esta ubicación.")
     else:
         _register_form(storage, user, code, place)
     section_title("Qué guarda", icon=":material/inventory_2:")

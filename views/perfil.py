@@ -94,7 +94,7 @@ def render_forced_password_change():
 
     page_header(
         "Elige una contraseña nueva", icon=":material/lock_reset:",
-        subtitle=f"{user.get('full_name') or 'Hola'}, el perfil maestro restableció tu contraseña",
+        subtitle=f"{user.get('full_name') or 'Hola'}, un administrador restableció tu contraseña",
     )
     (column,) = centered_columns(1, 2)
     with column:

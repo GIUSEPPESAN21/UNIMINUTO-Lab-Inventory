@@ -41,7 +41,7 @@ def _render_tracking(storage, row: dict, user: dict, events: list, loan: dict) -
         if actionable:
             st.markdown("**Ruta verificable hasta el producto**")
             st.caption("Escanea (o escribe) el código de cada etiqueta en el camino; al llegar obtienes "
-                       "un comprobante que el profesor puede validar.")
+                       "un comprobante que el supervisor puede validar.")
             render_verifiable_route(storage, row, user, key_prefix="req_route")
 
 
@@ -219,7 +219,7 @@ def render():
                         authorized = []
                         if row.get("request_type") == service_requests.TYPE_PRODUCT:
                             authorized = st.multiselect(
-                                "Despachadores autorizados",
+                                "Operarios autorizados",
                                 list(operator_names), format_func=operator_names.get,
                                 help="Déjalo vacío para permitir a todos los operarios activos.",
                             )

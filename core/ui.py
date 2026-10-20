@@ -437,7 +437,7 @@ def footer(text: str = "© 2026 UNIMINUTO · Laboratorio de Ingeniería") -> Non
 def _render_conflict_controls(storage, user: dict) -> None:
     """Acciones para resolver un conflicto de sincronizacion (solo maestro)."""
     if user.get("role") != permissions.ROLE_MASTER:
-        st.info("Pide al perfil maestro que resuelva el conflicto desde cualquier pagina de la app.")
+        st.info("Pide a un administrador que resuelva el conflicto desde cualquier pagina de la app.")
         return
     keep_remote, keep_local = st.columns(2)
     if keep_remote.button(

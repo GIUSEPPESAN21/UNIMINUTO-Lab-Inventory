@@ -157,7 +157,7 @@ EVENT_LABELS = {
     EVENT_ORDER_RELEASED: "Pedido liberado",
     EVENT_ORDER_REASSIGNED: "Pedido reasignado",
     EVENT_ORDER_PICKED: "Picking completo",
-    EVENT_ORDER_RECEIVED: "Recibido por el encargado",
+    EVENT_ORDER_RECEIVED: "Recibido por el supervisor",
     EVENT_ORDER_DELIVERED: "Entregado al cliente",
     EVENT_ORDER_REWORK: "Devuelto al picking",
     EVENT_ORDER_RETURNED_TO_SHELF: "Devuelto al estante",
@@ -615,7 +615,7 @@ _DISPATCH_WORK_EVENTS = DISPATCH_LIFECYCLE_EVENTS - {
 
 
 def dispatch_started(events: list) -> bool:
-    """True cuando un despachador ya intervino (tomado o una etapa posterior)."""
+    """True cuando un operario ya intervino (tomado o una etapa posterior)."""
     return any(event.get("event_type") in _DISPATCH_WORK_EVENTS for event in events or [])
 
 
@@ -770,7 +770,7 @@ def service_stage(events: list) -> str:
 def mark_service_stage(storage, request_id: str, stage: str, actor: dict, notes: str = "", now=None):
     """Registra "en curso" o "entregado" para un servicio aprobado."""
     if not is_manager(actor):
-        return False, "Solo profesor o maestro registran el avance de un servicio.", None
+        return False, "Solo un supervisor autorizado o un administrador registran el avance de un servicio.", None
     if stage not in SERVICE_STAGES:
         return False, "Etapa de servicio no válida.", None
     request = storage.get_service_request(request_id)
@@ -825,7 +825,7 @@ def verify_receipt(storage, code) -> dict:
         warnings.append(f"La solicitud está {STATUS_TEXT.get(request.get('status'), request.get('status'))}.")
     if pickup:
         warnings.append(f"El producto ya se retiró el {fmt_local(pickup.get('created_at'))}")
-    who = (request or {}).get("requester_name") or event.get("actor_name") or "El estudiante"
+    who = (request or {}).get("requester_name") or event.get("actor_name") or "El cliente"
     item_name = details.get("item_name") or (request or {}).get("item_name") or event.get("item_id")
     return {
         "valid": True, "tone": "warning" if warnings else "success", "receipt": normalized,
@@ -839,7 +839,7 @@ def verify_receipt(storage, code) -> dict:
 def record_receipt_check(storage, verification: dict, actor: dict, now=None):
     """Deja constancia de que un profesor/maestro validó el comprobante."""
     if not is_manager(actor):
-        return False, "Solo profesor o maestro validan comprobantes.", None
+        return False, "Solo un supervisor autorizado o un administrador validan comprobantes.", None
     if not verification or not verification.get("valid"):
         return False, "Primero valida un comprobante correcto.", None
     event = verification["event"]
@@ -934,8 +934,8 @@ def _dispatch_timeline(request: dict, events: list, now=None) -> list:
         detail = actor
         if event.get("event_type") == EVENT_ORDER_AUTHORIZED:
             allowed = details.get("authorized_pickers") or []
-            detail = f"{actor} · " + (f"{len(allowed)} despachador(es) autorizado(s)"
-                                      if allowed else "abierto a todos los despachadores")
+            detail = f"{actor} · " + (f"{len(allowed)} operario(s) autorizado(s)"
+                                      if allowed else "abierto a todos los operarios")
         elif event.get("event_type") == EVENT_ORDER_PICKED:
             detail = f"{actor} · {len(details.get('readings') or [])} unidad(es) leída(s)"
         elif details.get("reason"):
@@ -974,7 +974,7 @@ def request_timeline(request: dict, events: list = None, loan: dict = None, name
     notes = request.get("review_notes") or ""
     if status == STATUS_PENDING:
         steps.append({"title": "En revisión", "state": "current",
-                      "detail": "Un profesor o el maestro la aprobará o rechazará."})
+                      "detail": "Un supervisor la aprobará o rechazará."})
     elif status == STATUS_APPROVED:
         detail = f"Por {reviewer}" if reviewer else "Aprobada"
         steps.append({"title": "Aprobada", "state": "done", "time": fmt_local(request.get("reviewed_at")),
@@ -1192,7 +1192,7 @@ def custody_timeline(history: list, requests: list, events: list, names: dict = 
         info = event_details(event)
         detail = event.get("actor_name") or ""
         if kind == EVENT_ROUTE_VERIFIED:
-            detail = (f"{event.get('actor_name') or 'Estudiante'} · {info.get('scanned', 0)}/{info.get('labels', 0)} "
+            detail = (f"{event.get('actor_name') or 'Cliente'} · {info.get('scanned', 0)}/{info.get('labels', 0)} "
                       f"etiquetas · {fmt_duration(info.get('duration_s'))} · comprobante "
                       f"{format_receipt(event.get('receipt'))}")
         elif kind == EVENT_PICKED_UP:

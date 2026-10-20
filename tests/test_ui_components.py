@@ -66,7 +66,7 @@ def test_user_chip_escapes_name_and_role():
 
 def test_user_chip_uses_role_label_and_class():
     html = ui.user_chip_html({"full_name": "Ana", "role": "maestro"})
-    assert "role-maestro" in html and "Perfil maestro" in html
+    assert "role-maestro" in html and "Administrador" in html
 
 
 def test_initials_handles_empty_names():

@@ -72,7 +72,7 @@ def _mine_fragment(storage, user: dict) -> None:
                     _notice(ok, message)
                     st.rerun()
             elif stage == traceability.STAGE_PICKED:
-                st.success("Picking completo. Esperando recepción del encargado.")
+                st.success("Picking completo. Esperando recepción del supervisor.")
 
 
 @st.fragment(run_every=_DISPATCH_EVERY)
@@ -195,7 +195,7 @@ def _oversight(storage, user: dict) -> None:
                                   format_func=lambda value: f"{choices[value].get('item_name')} · {traceability.short_id(value)}")
         operators = [row for row in storage.get_all_users()
                      if row.get("status") == "active" and row.get("role") == permissions.ROLE_OPERATOR]
-        selected = st.selectbox("Nuevo despachador", operators,
+        selected = st.selectbox("Nuevo operario", operators,
                                 format_func=lambda row: row.get("full_name"), index=None,
                                 placeholder="Selecciona un operario")
         reason = st.text_input("Motivo de reasignación")

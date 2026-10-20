@@ -139,7 +139,7 @@ def _render_student(storage, user: dict) -> None:
             row = options[choice]
             section_title(f"Ruta hacia {traceability.request_title(row)}", icon=":material/explore:",
                           caption="Escanea (o escribe) el código de cada etiqueta en el camino. Al llegar "
-                                  "obtienes un comprobante que el profesor puede validar.")
+                                  "obtienes un comprobante que el supervisor puede validar.")
             render_verifiable_route(storage, row, user, key_prefix="trace_route")
 
     with tab_list:
@@ -158,7 +158,7 @@ def _render_student(storage, user: dict) -> None:
 def _render_search(requests: list, events: list, index: dict, loans: dict, names: dict) -> None:
     query = st.text_input(
         "Buscar", key="trace_query",
-        placeholder="Solicitud (#a1b2c3), código o nombre del producto, estudiante o comprobante",
+        placeholder="Solicitud (#a1b2c3), código o nombre del producto, cliente o comprobante",
     )
     status_col, type_col, stage_col = st.columns(3)
     status = _STATUS_FILTERS[status_col.selectbox("Estado", list(_STATUS_FILTERS), key="trace_status")]
@@ -185,7 +185,7 @@ def _render_search(requests: list, events: list, index: dict, loans: dict, names
     results = [row for row in traceability.search_requests(requests, query, events) if included(row)]
     if not results:
         empty_state("Sin resultados",
-                    "Prueba con el código del producto, el nombre del estudiante o el número de la solicitud.",
+                    "Prueba con el código del producto, el nombre del cliente o el número de la solicitud.",
                     icon=":material/search:")
         return
     shown = results[:MAX_RESULTS]
@@ -196,7 +196,7 @@ def _render_search(requests: list, events: list, index: dict, loans: dict, names
 
 
 def _render_receipt_check(storage, user: dict, names: dict, loans: dict) -> None:
-    st.caption("El estudiante muestra el comprobante de 6 caracteres que obtuvo al terminar la ruta. "
+    st.caption("El cliente muestra el comprobante de 6 caracteres que obtuvo al terminar la ruta. "
                "Valídalo aquí antes de entregar el producto.")
     with st.form("trace_receipt_form"):
         code = st.text_input("Comprobante", placeholder="Ej: K7Q-2MX", max_chars=12)
@@ -221,7 +221,7 @@ def _render_receipt_check(storage, user: dict, names: dict, loans: dict) -> None
     checks = verification.get("checks") or []
     if checks:
         st.caption("Validado por: " + ", ".join(
-            f"{check.get('actor_name') or 'Profesor'} ({traceability.fmt_local(check.get('created_at'))})"
+            f"{check.get('actor_name') or 'Supervisor'} ({traceability.fmt_local(check.get('created_at'))})"
             for check in checks
         ))
     if not any(check.get("actor_id") == user.get("id") for check in checks):
@@ -307,7 +307,7 @@ def _render_services(storage, user: dict, requests: list, index: dict, names: di
             if row.get("description"):
                 st.caption(row["description"])
             with st.form(f"trace_service_{row['id']}"):
-                notes = st.text_input("Nota para el estudiante (opcional)", key=f"trace_service_notes_{row['id']}")
+                notes = st.text_input("Nota para el cliente (opcional)", key=f"trace_service_notes_{row['id']}")
                 cols = st.columns(2 if stage == "approved" else 1)
                 start = cols[0].form_submit_button(
                     "▶️ Marcar en curso", use_container_width=True) if stage == "approved" else False

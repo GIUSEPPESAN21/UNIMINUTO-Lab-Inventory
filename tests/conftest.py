@@ -149,10 +149,16 @@ class FakeStorage:
         self.loans[loan_id] = loan
         return loan
 
-    def return_loan(self, loan_id, actor_email=""):
+    def return_loan(self, loan_id, actor_email="", actor=None):
         loan = self.loans.get(loan_id)
         if not loan:
             return False, "El prestamo no existe."
+        if actor is not None:
+            from core import permissions
+            owner = bool(actor.get("id")) and loan["user_id"] == actor.get("id")
+            if not (permissions.has_cap(actor, permissions.CAP_CHECKIN_ANY)
+                    or (owner and permissions.has_cap(actor, permissions.CAP_CHECKOUT))):
+                raise PermissionError("No puedes reingresar un préstamo de otra persona.")
         if loan["status"] == "returned":
             return False, "Este prestamo ya fue devuelto."
         loan["status"] = "returned"

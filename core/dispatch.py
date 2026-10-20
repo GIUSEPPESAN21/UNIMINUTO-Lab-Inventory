@@ -94,7 +94,7 @@ def plan_transition(request: dict, events: list, actor: dict, event_type: str,
     target = traceability.transition_target(stage, event_type)
     if target is None:
         if event_type == traceability.EVENT_ORDER_CLAIMED and stage == traceability.STAGE_CLAIMED:
-            who = assigned_picker_name(events) or "otro despachador"
+            who = assigned_picker_name(events) or "otro operario"
             return fail(f"Este pedido ya lo tomó {who}.")
         label = traceability.EVENT_LABELS.get(event_type, event_type)
         return fail(f"«{label}» no es válido cuando la solicitud está en «{traceability.STAGES[stage][0]}».")
@@ -144,20 +144,20 @@ def plan_transition(request: dict, events: list, actor: dict, event_type: str,
         details["picker_name"] = actor.get("full_name", "")
     elif event_type == traceability.EVENT_ORDER_RELEASED:
         if assigned != actor.get("id") and not permissions.has_cap(actor, permissions.CAP_REASSIGN):
-            return fail("Solo quien tomó el pedido o un encargado puede liberarlo.")
+            return fail("Solo quien tomó el pedido o un supervisor puede liberarlo.")
         details["picker_id"] = assigned
         details["reason"] = _clean(details.get("reason"))
     elif event_type == traceability.EVENT_ORDER_REASSIGNED:
         picker_id = str(details.get("picker_id") or "")
         if not picker_id:
-            return fail("Selecciona un encargado de despacho activo.")
+            return fail("Selecciona un operario activo.")
         if picker_id == assigned:
             return fail("El pedido ya está asignado a esa persona.")
         details["previous_picker_id"] = assigned
         details["reason"] = _clean(details.get("reason"))
     elif event_type == traceability.EVENT_ORDER_PICKED:
         if assigned != actor.get("id"):
-            return fail("El pedido está asignado a otro despachador.")
+            return fail("El pedido está asignado a otro operario.")
         readings = details.get("readings") or []
         if len(readings) != quantity:
             return fail(f"Faltan lecturas: se requieren {quantity} y hay {len(readings)}.")
@@ -219,7 +219,7 @@ def queue_for(storage, actor: dict) -> list:
 
 
 def pending_authorization(storage, actor: dict) -> list:
-    """Aprobadas sin autorización (p. ej. anteriores a v1.15) para el encargado."""
+    """Aprobadas sin autorización (p. ej. anteriores a v1.15) para el supervisor."""
     permissions.require_cap(actor, permissions.CAP_AUTHORIZE_DISPATCH)
     rows = []
     for request in storage.get_service_requests(status="approved"):
@@ -237,7 +237,7 @@ def pending_authorization(storage, actor: dict) -> list:
 
 
 def my_history(storage, actor: dict, limit: int = 20) -> list:
-    """Resumen de lo que ``actor`` tomó, sin datos de otros despachadores."""
+    """Resumen de lo que ``actor`` tomó, sin datos de otros operarios."""
     permissions.require_cap(actor, permissions.CAP_VIEW_DISPATCH_QUEUE)
     rows = []
     for request in storage.get_service_requests():
@@ -312,7 +312,7 @@ def release_request(storage, request_id: str, actor: dict, reason: str = ""):
 def reassign_request(storage, request_id: str, actor: dict, picker: dict, reason: str = ""):
     permissions.require_cap(actor, permissions.CAP_REASSIGN)
     if not picker or picker.get("status") != "active" or picker.get("role") != permissions.ROLE_OPERATOR:
-        return False, "Selecciona un encargado de despacho activo.", None
+        return False, "Selecciona un operario activo.", None
     return storage.transition_request(
         request_id, traceability.EVENT_ORDER_REASSIGNED, actor,
         {"picker_id": picker["id"], "picker_name": picker.get("full_name", ""),

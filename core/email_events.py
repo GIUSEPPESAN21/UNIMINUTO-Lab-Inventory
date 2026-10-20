@@ -90,9 +90,9 @@ PREPARE_FAILED_MESSAGE = "No se pudo preparar el aviso por correo."
 NO_REQUESTER_EMAIL_MESSAGE = "El solicitante no tiene un correo institucional válido."
 NO_OVERDUE_MESSAGE = "No hay préstamos vencidos: no se envió ningún correo."
 
-SOURCE_MASTER = "Perfil maestro"
+SOURCE_MASTER = "Administrador"
 SOURCE_ADMIN = "ADMIN_NOTIFICATION_EMAILS"
-SOURCE_PROFESSOR = "Profesor"
+SOURCE_PROFESSOR = "Supervisor"
 
 _TYPE_PRODUCT = "product"
 _SCOPE_FULL_LAB = "full_lab"
@@ -614,7 +614,7 @@ def diagnostic_content(actor: dict, prefs: dict = None) -> EmailContent:
             ("Configuración", [
                 ("Conexión", status["security"]),
                 ("Avisos activos", f"{active} de {len(EVENTS)}"),
-                ("Incluye profesores", "Sí" if prefs.get("include_professors") else "No"),
+                ("Incluye supervisores", "Sí" if prefs.get("include_professors") else "No"),
             ]),
             ("Cuándo", [("Enviado", _now_text())]),
         ],

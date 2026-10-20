@@ -127,7 +127,7 @@ def submit_reservation(storage, user: dict, scope_type: str, activity: str,
 def review_reservation(storage, reservation_id: str, decision: str,
                        reviewer: dict, notes: str = ""):
     if not permissions.has_cap(reviewer, permissions.CAP_MANAGE_RESERVATIONS):
-        return False, "Solo profesor o maestro pueden revisar reservas."
+        return False, "Solo un supervisor autorizado o un administrador pueden revisar reservas."
     if decision not in (STATUS_APPROVED, STATUS_REJECTED):
         return False, "La decisión debe ser approved o rejected."
     reservation = storage.get_reservation(reservation_id)

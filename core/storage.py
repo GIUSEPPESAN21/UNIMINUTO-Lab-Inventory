@@ -141,9 +141,12 @@ def _trace_positions(df: pd.DataFrame, request_id: str) -> list:
 def _normalize_legacy_columns(dfs: dict) -> None:
     users = dfs.get("users")
     if users is not None and "session_epoch" in users:
+        # astype(object): con pandas 3, apply sobre texto devuelve dtype `str`
+        # estricto y luego rechaza el entero con el que se sube la época
+        # (revocar sesiones fallaba con TypeError tras reiniciar la app).
         users["session_epoch"] = users["session_epoch"].apply(
             lambda value: 0 if str(value or "").strip() in {"", "nan", "None"} else value
-        )
+        ).astype(object)
     events = dfs.get("trace_events")
     if events is None or events.empty:
         return
@@ -450,7 +453,7 @@ _CONFLICT_MESSAGE = (
     "La base de datos en GitHub es distinta de la que esta app descargo (alguien la edito "
     "fuera de la app, hay otra instancia escribiendo, o aun no se logro descargarla). "
     "Para no pisar esos datos, los cambios recientes quedaron SOLO en este contenedor. "
-    "El perfil maestro debe elegir que version conservar."
+    "El administrador debe elegir que version conservar."
 )
 
 
@@ -795,7 +798,20 @@ def _validate_item_data(data: dict, df_items: pd.DataFrame, custom_id: str, is_n
 
 # Errores que reintentar no puede arreglar: datos invalidos (ValueError) o
 # fallos de programacion. Se propagan de inmediato con su mensaje real.
-_NON_RETRYABLE = (ValueError, KeyError, TypeError, AttributeError)
+_NON_RETRYABLE = (ValueError, KeyError, TypeError, AttributeError, PermissionError)
+
+
+def _authorize(actor, capability: str, message: str = "No tienes permiso para esta acción.") -> None:
+    """Autorización de la capa de datos: con ``actor`` exige la capacidad.
+
+    ``actor=None`` identifica a un llamador interno de confianza (arranque,
+    migraciones, scripts); las vistas y la lógica de dominio siempre pasan el
+    actor, y un test recorre el código para comprobarlo.
+    """
+    if actor is None:
+        return
+    from core import permissions
+    permissions.require_cap(actor, capability, message)
 
 
 def with_retry(func):
@@ -1025,7 +1041,9 @@ class LabStorage:
     # ------------------------------------------------------------------
 
     @firestore_retry
-    def save_item(self, data: dict, custom_id: str, is_new: bool = False, actor_email: str = "", details: str = None):
+    def save_item(self, data: dict, custom_id: str, is_new: bool = False, actor_email: str = "",
+                  details: str = None, actor: dict = None):
+        _authorize(actor, "edit_inventory", "No tienes permiso para crear o editar ítems.")
         with _db_write():
             dfs = _read_excel()
             df_items = dfs["items"]
@@ -1099,9 +1117,10 @@ class LabStorage:
             _write_and_sync(dfs)
             logger.info(f"Item guardado/actualizado: {custom_id}")
 
-    def bulk_upsert_items(self, rows: list, actor_email: str = "") -> dict:
+    def bulk_upsert_items(self, rows: list, actor_email: str = "", actor: dict = None) -> dict:
         """Crea/actualiza muchos items en UNA sola lectura+escritura+sync
         (evita decenas de commits a GitHub en una importacion masiva)."""
+        _authorize(actor, "edit_inventory", "No tienes permiso para importar ítems.")
         created, updated, errors = [], [], []
         with _db_write():
             dfs = _read_excel()
@@ -1173,7 +1192,8 @@ class LabStorage:
 
         return {"created": created, "updated": updated, "errors": errors}
 
-    def retire_item(self, item_id: str, actor_email: str = ""):
+    def retire_item(self, item_id: str, actor_email: str = "", actor: dict = None):
+        _authorize(actor, "edit_inventory", "No tienes permiso para dar de baja ítems.")
         with _db_write():
             dfs = _read_excel()
             df_items = dfs["items"]
@@ -1213,7 +1233,7 @@ class LabStorage:
             _write_and_sync(dfs)
             return True, "Item dado de baja correctamente."
 
-    def delete_item(self, item_id: str, actor_email: str = ""):
+    def delete_item(self, item_id: str, actor_email: str = "", actor: dict = None):
         """Elimina DEFINITIVAMENTE un item de la base de datos. Devuelve (ok, mensaje).
 
         A diferencia de `retire_item` (baja logica que conserva la fila), aqui
@@ -1221,6 +1241,7 @@ class LabStorage:
         Contenedor Principal tambien se eliminan los items que contiene. Las
         solicitudes pendientes o aprobadas del producto se cancelan. Se bloquea si
         hay prestamos abiertos. El codigo queda libre para volver a usarse."""
+        _authorize(actor, "edit_inventory", "No tienes permiso para eliminar ítems.")
         item_id = (item_id or "").strip()
         with _db_write():
             dfs = _read_excel()
@@ -1391,14 +1412,25 @@ class LabStorage:
                 return None
             changes = dict(changes)
             old_role = str(df.at[idx[0], "role"] or "")
-            if actor is not None and {"role", "status"} & set(changes):
+            if {"role", "status"} & set(changes):
+                # Cambiar rol o estado exige un actor con `manage_users`: sin actor
+                # no hay a quién atribuir ni qué autorizar (por eso el parámetro
+                # es obligatorio para estas dos claves).
                 from core import permissions
+                if actor is None:
+                    raise PermissionError("Cambiar roles o estados requiere un actor autorizado.")
                 permissions.require_cap(
                     actor, permissions.CAP_MANAGE_USERS,
-                    "Solo el perfil maestro puede cambiar roles o estados.",
+                    "Solo el administrador puede cambiar roles o estados.",
                 )
                 if actor.get("id") == user_id:
                     raise PermissionError("No puedes cambiar tu propio rol ni deshabilitarte.")
+            elif actor is not None and actor.get("id") != user_id:
+                from core import permissions
+                permissions.require_cap(
+                    actor, permissions.CAP_MANAGE_USERS,
+                    "Solo el administrador puede editar a otra persona.",
+                )
             if "institutional_email" in changes:
                 email = str(changes["institutional_email"] or "").lower().strip()
                 duplicate = df[(df["institutional_email"].str.lower().str.strip() == email) & (df["id"] != user_id)]
@@ -1533,7 +1565,9 @@ class LabStorage:
             _write_and_sync(dfs)
             return row
 
-    def return_loan(self, loan_id: str, actor_email: str = ""):
+    def return_loan(self, loan_id: str, actor_email: str = "", actor: dict = None):
+        """Reingresa un préstamo. Con ``actor``: quien tiene `checkin_any_loan`
+        reingresa cualquiera; los demás solo los suyos (con `checkout`)."""
         with _db_write():
             dfs = _read_excel()
             df = dfs["loans"]
@@ -1541,6 +1575,12 @@ class LabStorage:
             if not idx:
                 return False, "El prestamo no existe."
             i = idx[0]
+            if actor is not None:
+                from core import permissions
+                owner = bool(actor.get("id")) and str(df.at[i, "user_id"]) == str(actor.get("id"))
+                if not (permissions.has_cap(actor, permissions.CAP_CHECKIN_ANY)
+                        or (owner and permissions.has_cap(actor, permissions.CAP_CHECKOUT))):
+                    raise PermissionError("No puedes reingresar un préstamo de otra persona.")
             if str(df.at[i, "return_at"]).strip() not in ("", "nan", "None"):
                 return False, "Este prestamo ya fue devuelto."
 
@@ -2000,7 +2040,8 @@ class LabStorage:
     # ------------------------------------------------------------------
 
     @firestore_retry
-    def save_items_bulk(self, items: list, actor_email: str = "", details: str = None) -> list:
+    def save_items_bulk(self, items: list, actor_email: str = "", details: str = None,
+                        actor: dict = None) -> list:
         """Crea varios items NUEVOS con UNA sola lectura + escritura + sincronizacion
         (un solo commit en GitHub en vez de uno por producto).
 
@@ -2014,6 +2055,10 @@ class LabStorage:
         historial ("Alta", con el `details` de la fila o el general). Devuelve los
         codigos creados, en orden."""
         items = list(items or [])
+        only_locations = bool(items) and all(row.get("item_type") == LOCATION_TYPE for row in items)
+        _authorize(actor, "manage_locations" if only_locations else "edit_inventory",
+                   "No tienes permiso para crear ubicaciones." if only_locations
+                   else "No tienes permiso para crear ítems.")
         if not items:
             return []
 
