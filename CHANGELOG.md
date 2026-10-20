@@ -1,5 +1,52 @@
 # Changelog
 
+## v1.15.0 — Roles por capacidad, despacho usable y sesión que no se pierde
+
+### Roles (Cliente, Operario, Supervisor, Administrador)
+- Etiquetas únicas en `ROLE_LABELS`: **Cliente** (`estudiante`), **Operario** (`operario`), **Supervisor**
+  (`encargado` y `profesor`) y **Administrador** (`maestro`). Los ids técnicos no cambian; en **Usuarios** el
+  supervisor se distingue como «(encargado)» o «(profesor)». Se reemplazaron «Encargado de despacho»,
+  «Encargado del laboratorio», «Estudiante» y «Perfil maestro» en la interfaz, los correos, Inicio, Acerca de,
+  Usuarios y el README (una prueba vigila que no vuelvan).
+- **Seguridad por capacidad:** se eliminó todo `role == "estudiante"`. Capacidades nuevas `checkout`,
+  `view_all_loans` y `checkin_any_loan` (estas dos solo profesor y administrador: el **encargado ya no ve ni reingresa
+  préstamos ajenos ni crea ítems desde Escanear**). `loans.checkout/checkin` exigen la capacidad;
+  `LabStorage.save_item`, `save_items_bulk`, `bulk_upsert_items`, `retire_item`, `delete_item` y `return_loan` aceptan el
+  `actor` y lo verifican dentro del bloqueo; **`update_user` exige un actor para cambiar `role` o `status`**. El operario no ve
+  inventario ni reportes (su Inicio muestra pedidos, no existencias). `PermissionError` ya no se reintenta (era `OSError`).
+
+### Despacho
+- Cada pedido muestra **ruta, referencia de ubicación y foto**; el panel de **picking va arriba**.
+- **Método real** de cada lectura (`barcode_gun`, `camera`, `nfc`, `manual`); el **escenario A/B/C** se fija en
+  Despacho → Ajustes (solo administrador) y reemplaza al radio libre. NFC siempre se registra como `nfc`.
+- **NFC entre pestañas:** las lecturas del picking viven en `core/picking.py` (memoria del proceso, por usuario y pedido),
+  no en `st.session_state`: el toque que abre una pestaña nueva suma al picking y vuelve a Despacho.
+- **Operador en el préstamo:** `loans.operator_id/operator_name` (bases viejas se completan solas), «despachado por X» en el
+  historial, en Préstamos y en el correo; la salida del picking avisa a los responsables como una salida directa.
+- Las lecturas fallidas se acumulan y se guardan en **un solo evento** con el picking completo.
+
+### Rendimiento
+- Listas de Despacho calculadas **una vez por versión de datos** y solo con pedidos abiertos.
+- `scripts/bench_concurrency.py` (8 operarios + 4 supervisores, GitHub simulado a 1–2 s por llamada, base temporal):
+  modo normal **p50 8.5 s / p95 23.4 s** por escritura; con el nuevo **`SYNC_MODE=deferred`** (apagado por omisión)
+  **p50 0.12 s / p95 0.37 s** y 3 publicaciones en vez de 122. Ver README → *Integridad de datos* para el riesgo asumido.
+
+### Trazabilidad y sesión
+- `is_stuck` ya no cuenta como atascada una solicitud **«entregada»** que espera la confirmación del cliente.
+- El supervisor **no aprueba su propia solicitud** (`ALLOW_SELF_APPROVAL`, apagado por omisión).
+- El **cierre de sesión se guarda en la base** hasta el vencimiento del token y sobrevive a un reinicio. Recuerda
+  configurar `SESSION_SECRET`: sin él, F5 cierra la sesión.
+
+### Lúdica
+- **CSV de eventos** (`sesion_id, timestamp, estacion, tipo_evento, item_codigo, transaccion_id, usuario_sim,
+  resultado_sistema`) sin datos personales; `scripts/seed_ludica.py` y `scripts/reset_ludica.py`, que **se niegan a correr sobre
+  la base real**.
+
+### Correcciones
+- `st.text_input(autofocus=...)` no existe en Streamlit 1.65 y tumbaba el panel de picking: el foco para la pistola se pide por script.
+- Con pandas 3, `session_epoch` quedaba con dtype `str` y revocar sesiones tras reiniciar lanzaba `TypeError`.
+- `test_product_timeline_walks_from_created_to_returned` fallaba solo por el paso del tiempo: ahora usa un reloj fijo.
+
 ## v1.14.2 — Sin controles de plataforma visibles
 
 - Se ocultan para todos los usuarios los controles que añade Streamlit: **Share, favorito, editar y GitHub**, el botón **Deploy** y el
