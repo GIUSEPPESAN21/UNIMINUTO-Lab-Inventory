@@ -653,8 +653,11 @@ def stage_changed_at(request: dict, events: list = None):
 
 
 def is_stuck(request: dict, events: list = None, minutes: int = 30, now=None) -> bool:
+    """Un pedido está «atascado» cuando lleva demasiado en una etapa que depende del
+    laboratorio. «Entregada» espera al cliente (confirmar la recepción): no cuenta,
+    el laboratorio ya cumplió y no puede apurar a quien recibió."""
     stage = request_stage_key(request, events)
-    if stage in {STAGE_CONFIRMED, STAGE_REJECTED, STAGE_CANCELLED, STAGE_RETURNED}:
+    if stage in {STAGE_DELIVERED, STAGE_CONFIRMED, STAGE_REJECTED, STAGE_CANCELLED, STAGE_RETURNED}:
         return False
     changed = stage_changed_at(request, events)
     return bool(changed and (_now(now) - changed).total_seconds() >= max(1, int(minutes)) * 60)

@@ -9,11 +9,21 @@ import csv
 import hashlib
 import io
 import logging
+import threading
 from datetime import datetime, timezone
 
 from core import permissions, picking, traceability
+from core.config import safe_secret
 
 logger = logging.getLogger(__name__)
+
+
+def allow_self_approval() -> bool:
+    """ALLOW_SELF_APPROVAL (Secrets, apagado por defecto): permite que quien revisa
+    apruebe una solicitud suya. Útil en una demostración con una sola persona."""
+    return str(safe_secret("ALLOW_SELF_APPROVAL", "false") or "").strip().lower() in {
+        "1", "true", "yes", "si", "sí",
+    }
 
 
 # Cómo llegó de verdad cada lectura del picking. NFC lo fija el propio flujo del
@@ -185,6 +195,8 @@ def plan_transition(request: dict, events: list, actor: dict, event_type: str,
         plan["status"] = "cancelled"
     elif event_type in {traceability.EVENT_ORDER_APPROVED, traceability.EVENT_ORDER_REJECTED}:
         approved = event_type == traceability.EVENT_ORDER_APPROVED
+        if approved and owner and not allow_self_approval():
+            return fail("No puedes aprobar tu propia solicitud: la revisa otra persona.")
         pickers = _picker_list(details.pop("authorized_pickers", None))
         if approved and is_product:
             if available is None or quantity > available:
@@ -278,21 +290,82 @@ def plan_transition(request: dict, events: list, actor: dict, event_type: str,
     return plan
 
 
+# --- Listas de Despacho: solo etapas abiertas, calculadas una vez por versión de datos ---------
+#
+# Cada operario y cada supervisor refresca sus listas cada pocos segundos. Recorrer
+# todas las solicitudes aprobadas (con su historial de eventos) en cada refresco y
+# para cada persona crecía con el historial de la lúdica; ahora se calcula UNA vez
+# por versión de la base (data_state) y se comparte entre sesiones y listas. Los
+# pedidos que ya salieron de las listas (entregados, confirmados, devueltos al
+# estante) no vuelven a abrirse: se recuerdan por id y se excluyen sin leerlos.
+
+OPEN_STAGES = frozenset({
+    traceability.STAGE_APPROVED, traceability.STAGE_CLAIMED,
+    traceability.STAGE_PICKED, traceability.STAGE_RECEIVED,
+})
+_CLOSED_FOR_LISTS = frozenset({
+    traceability.STAGE_DELIVERED, traceability.STAGE_CONFIRMED, traceability.STAGE_RETURNED,
+})
+
+_orders_lock = threading.Lock()
+_orders_cache = {"generation": None, "version": None, "rows": [], "closed": set()}
+
+
+def reset_orders_cache() -> None:
+    """Olvida lo calculado (pruebas)."""
+    with _orders_lock:
+        _orders_cache.update(generation=None, version=None, rows=[], closed=set())
+
+
+def _data_state(storage):
+    reader = getattr(storage, "get_data_state", None)
+    try:
+        return reader() if reader else None
+    except Exception:
+        return None
+
+
+def _compute_open_orders(storage, closed: set) -> list:
+    rows = []
+    for request in storage.get_service_requests(status="approved", exclude_ids=closed):
+        if request.get("request_type") != "product":
+            continue
+        events = storage.get_trace_events(request_id=request["id"])
+        stage = traceability.request_stage_key(request, events)
+        if stage in OPEN_STAGES:
+            rows.append({"request": request, "events": events, "stage": stage})
+        elif stage in _CLOSED_FOR_LISTS:
+            closed.add(request["id"])
+    return rows
+
+
+def open_orders(storage) -> list:
+    """Pedidos de producto aprobados que siguen abiertos: ``[{request, events, stage}]``.
+
+    Sin ``get_data_state`` (almacenamientos de prueba) se calcula en cada llamada."""
+    state = _data_state(storage)
+    if state is None:
+        return _compute_open_orders(storage, set())
+    with _orders_lock:
+        if _orders_cache["generation"] != state.get("generation"):
+            _orders_cache.update(generation=state.get("generation"), version=None, rows=[], closed=set())
+        if _orders_cache["version"] != state.get("version"):
+            _orders_cache["rows"] = _compute_open_orders(storage, _orders_cache["closed"])
+            _orders_cache["version"] = state.get("version")
+        rows = _orders_cache["rows"]
+    return [{"request": dict(row["request"]), "events": row["events"], "stage": row["stage"]} for row in rows]
+
+
 def queue_for(storage, actor: dict) -> list:
     """Pedidos aprobados y autorizados que ``actor`` puede tomar."""
     permissions.require_cap(actor, permissions.CAP_VIEW_DISPATCH_QUEUE)
     rows = []
-    for request in storage.get_service_requests(status="approved"):
-        if request.get("request_type") != "product":
+    for order in open_orders(storage):
+        if order["stage"] != traceability.STAGE_APPROVED or not is_authorized(order["events"]):
             continue
-        events = storage.get_trace_events(request_id=request["id"])
-        if traceability.request_stage_key(request, events) != traceability.STAGE_APPROVED:
-            continue
-        if not is_authorized(events):
-            continue
-        allowed = authorized_pickers(events)
+        allowed = authorized_pickers(order["events"])
         if not allowed or actor.get("id") in allowed:
-            rows.append(request)
+            rows.append(order["request"])
     return rows
 
 
@@ -300,17 +373,14 @@ def pending_authorization(storage, actor: dict) -> list:
     """Aprobadas sin autorización (p. ej. anteriores a v1.15) para el supervisor."""
     permissions.require_cap(actor, permissions.CAP_AUTHORIZE_DISPATCH)
     rows = []
-    for request in storage.get_service_requests(status="approved"):
-        if request.get("request_type") != "product":
+    for order in open_orders(storage):
+        if order["stage"] != traceability.STAGE_APPROVED:
             continue
-        events = storage.get_trace_events(request_id=request["id"])
-        if traceability.request_stage_key(request, events) != traceability.STAGE_APPROVED:
-            continue
-        legacy = {event.get("event_type") for event in events} & {
+        legacy = {event.get("event_type") for event in order["events"]} & {
             traceability.EVENT_PICKED_UP, traceability.EVENT_ROUTE_VERIFIED,
         }
-        if not is_authorized(events) and not legacy:
-            rows.append(request)
+        if not is_authorized(order["events"]) and not legacy:
+            rows.append(order["request"])
     return rows
 
 
@@ -340,27 +410,26 @@ def my_history(storage, actor: dict, limit: int = 20) -> list:
 
 def my_orders(storage, actor: dict) -> list:
     permissions.require_cap(actor, permissions.CAP_VIEW_DISPATCH_QUEUE)
-    rows = []
-    for request in storage.get_service_requests(status="approved"):
-        events = storage.get_trace_events(request_id=request["id"])
-        stage = traceability.request_stage_key(request, events)
-        if assigned_picker(events) == actor.get("id") and stage in {
-            traceability.STAGE_CLAIMED, traceability.STAGE_PICKED,
-        }:
-            rows.append(request)
-    return rows
+    return [
+        order["request"] for order in open_orders(storage)
+        if order["stage"] in {traceability.STAGE_CLAIMED, traceability.STAGE_PICKED}
+        and assigned_picker(order["events"]) == actor.get("id")
+    ]
 
 
 def review_queue(storage, actor: dict) -> list:
     permissions.require_cap(actor, permissions.CAP_RECEIVE_AND_DELIVER)
-    rows = []
-    for request in storage.get_service_requests(status="approved"):
-        events = storage.get_trace_events(request_id=request["id"])
-        if traceability.request_stage_key(request, events) in {
-            traceability.STAGE_PICKED, traceability.STAGE_RECEIVED,
-        }:
-            rows.append(request)
-    return rows
+    return [
+        order["request"] for order in open_orders(storage)
+        if order["stage"] in {traceability.STAGE_PICKED, traceability.STAGE_RECEIVED}
+    ]
+
+
+def claimed_orders(storage, actor: dict) -> list:
+    """Pedidos en picking (para reasignar o liberar): ``[(solicitud, eventos)]``."""
+    permissions.require_cap(actor, permissions.CAP_REASSIGN)
+    return [(order["request"], order["events"]) for order in open_orders(storage)
+            if order["stage"] == traceability.STAGE_CLAIMED]
 
 
 def authorize_request(storage, request_id: str, actor: dict, picker_ids=None):

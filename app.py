@@ -62,7 +62,7 @@ if not st.session_state.user and session.enabled():
     if saved_token:
         restored_user, restored_claims, restore_problem = session.verify_token(saved_token, storage)
         if restored_user and session.tab_closed(restored_claims):
-            session.revoke(restored_claims)
+            session.revoke(restored_claims, storage)
             restored_user, restore_problem = None, "Tu sesión se cerró al cerrar la pestaña."
         if restored_user:
             st.session_state.user = restored_user
@@ -101,7 +101,7 @@ if session_user is None:
     if st.session_state.get("user") and session_problem:
         session.audit(storage, "session_expired", st.session_state.user,
                       {"reason": session_problem})
-    session.revoke(token)
+    session.revoke(token)   # ya es inválida por caducidad, época o estado: no hace falta persistirla
     session.queue_cookie(clear=True)
     st.session_state.user = None
     st.session_state.login_at = None
@@ -200,7 +200,7 @@ with st.sidebar:
     st.markdown(user_chip_html(user), unsafe_allow_html=True)
     if st.button("Cerrar sesión", icon=":material/logout:", use_container_width=True):
         session.audit(storage, "session_logout", user)
-        session.revoke(st.session_state.get("session_token", ""))
+        session.revoke(st.session_state.get("session_token", ""), storage)
         session.queue_cookie(clear=True)
         st.session_state.user = None
         st.session_state.login_at = None

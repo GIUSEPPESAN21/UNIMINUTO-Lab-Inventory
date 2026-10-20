@@ -13,7 +13,7 @@ import json
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import dispatch, live_data, permissions, picking, traceability
+from core import dispatch, live_data, ludica, permissions, picking, traceability
 from core.ui import badge_html, empty_state, esc, guard_cap, page_header, section_title
 from views import location_guide, photo_panel
 
@@ -243,11 +243,7 @@ def _review_action_panel(storage, user: dict) -> None:
 def _oversight(storage, user: dict) -> None:
     if not permissions.has_cap(user, permissions.CAP_REASSIGN):
         return
-    claimed = []
-    for request in storage.get_service_requests(status="approved"):
-        events = storage.get_trace_events(request_id=request["id"])
-        if traceability.request_stage_key(request, events) == traceability.STAGE_CLAIMED:
-            claimed.append((request, events))
+    claimed = dispatch.claimed_orders(storage, user)
     if not claimed:
         return
     with st.expander(f"Reasignar o liberar ({len(claimed)})"):
@@ -278,6 +274,12 @@ def _reports(storage, user: dict) -> None:
     st.dataframe(rows, use_container_width=True, hide_index=True)
     st.download_button("Descargar tiempos CSV", dispatch.dispatch_csv(storage, user),
                        "tiempos-despacho.csv", "text/csv", use_container_width=True)
+    st.download_button(
+        "Descargar eventos de la lúdica (CSV sin datos personales)", ludica.events_csv(storage, user),
+        f"eventos-{ludica.session_id(storage)}.csv", "text/csv", use_container_width=True,
+        help="Columnas: sesion_id, timestamp, estacion, tipo_evento, item_codigo, transaccion_id, "
+             "usuario_sim, resultado_sistema. Los identificadores van seudonimizados.",
+    )
 
 
 def _settings(storage, user: dict) -> None:

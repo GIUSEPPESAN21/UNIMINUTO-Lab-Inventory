@@ -35,7 +35,17 @@ _ACTIONS = [
 ]
 
 
+_ROLE_GUIDE = (
+    "el **{cliente}** solicita y confirma que recibió; el **{operario}** toma pedidos y hace el picking; "
+    "el **{supervisor}** aprueba, autoriza operarios, recibe y entrega; el **{admin}** gestiona usuarios y ajustes."
+)
+
+
 def _quick_guide():
+    roles = _ROLE_GUIDE.format(
+        cliente=ROLE_LABELS[permissions.ROLE_STUDENT], operario=ROLE_LABELS[permissions.ROLE_OPERATOR],
+        supervisor=ROLE_LABELS[permissions.ROLE_ATTENDANT], admin=ROLE_LABELS[permissions.ROLE_MASTER],
+    )
     with st.expander(":material/lightbulb: Guía rápida: ¿cómo funciona este sistema?", expanded=False):
         st.markdown(f"""
         1. **{ITEM_TYPE_NAMES['master']}**: la caja o kit físico que agrupa varios productos.
@@ -48,6 +58,7 @@ def _quick_guide():
         6. En **:material/calendar_month: Reservas** solicita una actividad o el laboratorio completo y consulta su aprobación.
         7. En **:material/assignment: Préstamos** puedes ver en todo momento qué tienes prestado (o, si eres administrador
            o supervisor autorizado, quién tiene qué en todo el laboratorio).
+        8. **Roles:** {roles}
         """)
 
 
