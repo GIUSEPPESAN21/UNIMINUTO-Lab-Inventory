@@ -23,7 +23,7 @@ import io
 import os
 from datetime import datetime, timezone
 
-from core import dispatch, permissions, traceability
+from core import dispatch, excel_safe, permissions, traceability
 from core.config import safe_secret
 
 COLUMNS = (
@@ -125,7 +125,7 @@ def events_csv(storage, actor: dict, sid: str = None, salt: str = DEFAULT_SALT, 
     writer = csv.DictWriter(output, fieldnames=list(COLUMNS), lineterminator="\n")
     writer.writeheader()
     for row in event_rows(storage, sid, salt, since):
-        writer.writerow(row)
+        writer.writerow({key: excel_safe.csv_safe(value) for key, value in row.items()})
     return output.getvalue().encode("utf-8")
 
 

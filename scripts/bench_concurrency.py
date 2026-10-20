@@ -51,6 +51,8 @@ class FakeGithub:
         time.sleep(delay)
         with self.lock:
             if method == "GET":
+                if self.puts == 0:      # la base aún no existe en GitHub: la primera escritura la crea
+                    return SimpleNamespace(status_code=404, text="", json=lambda: {})
                 return SimpleNamespace(status_code=200, text="", json=lambda sha=self.sha: {"sha": sha})
             self.puts += 1
             self.counter += 1

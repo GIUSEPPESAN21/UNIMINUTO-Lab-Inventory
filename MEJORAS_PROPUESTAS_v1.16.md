@@ -129,6 +129,13 @@ reserializa el libro completo, 130–155 ms en local, mucho más con GitHub).
 | 66 | Dividir archivos grandes (`storage.py` 2456 líneas, `inventory_suggestions.py` 2438, `labels.py` 1462, `traceability.py` 1324); extraer duplicados a `views/_shared.py`; eliminar código muerto (`guard_role`, `centered_logo`, `dispatch.py:372,387,435`, `traceability.py:1230`) | varios | L | B | R |
 | 67 | Ruta de migración a Postgres gestionado cuando se cumpla un disparador: p95 de escritura > 2 s, libro > 10 MB o > 300 000 celdas, más de una réplica, repo > 1 GB o necesidad real de supresión. Pasos: formalizar `LabStorage` como interfaz → DDL desde `SHEET_COLUMNS` → `PostgresStorage` → script de migración → doble escritura en sombra → secret `STORAGE_BACKEND` con exportación diaria a Excel como retorno | `storage.py:32-96` | L | B | R |
 
+## Estado
+
+**v1.16.0 «Datos a salvo» (hecho):** #1 (texto seguro en el Excel), #2 (descarga validada y sin arranque con base vacía),
+#4 (`self_checkout_mode`, por omisión «Libre»), #6 (conflicto de sincronización y lista blanca con capacidad y constancia),
+#7 (409 falsos, límite de tasa y candado compartido con las fotos) y #29 (la matriz lista todas las capacidades).
+**Pendiente a propósito:** #5 (Reservas), porque en v1.15 se pidió no tocar Reservas; basta con confirmar que ya se puede.
+
 ## Orden sugerido
 
 1. **v1.16.0 «Datos a salvo»**: #1, #2, #7, #5, #6, #4 y #29 (cierran pérdida silenciosa, arranque con base vacía y los dos huecos de autorización que quedan).

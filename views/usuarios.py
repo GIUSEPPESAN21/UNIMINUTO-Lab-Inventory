@@ -251,7 +251,7 @@ def render():
                 if not auth.is_institutional_email(email):
                     st.error("Ingresa un correo institucional válido (.edu o .edu.co).")
                 else:
-                    storage.add_to_whitelist(email)
+                    storage.add_to_whitelist(email, actor=current_user)
                     st.success(f"'{email}' agregado a la lista blanca.")
                     st.rerun()
 
@@ -264,5 +264,5 @@ def render():
                 c1, c2 = st.columns([4, 1], vertical_alignment="center")
                 c1.markdown(card_header_html(email, icon=":material/mail:"), unsafe_allow_html=True)
                 if c2.button("Quitar", key=f"remove_wl_{email}", use_container_width=True):
-                    storage.remove_from_whitelist(email)
+                    storage.remove_from_whitelist(email, actor=current_user)
                     st.rerun()

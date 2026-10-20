@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 
 from core import inventory_count as counting
-from core import nfc, permissions, traceability
+from core import excel_safe, nfc, permissions, traceability
 from core.labels import ITEM_TYPE_NAMES
 from core.ui import empty_state, guard_cap, page_header, section_title, stat_cards
 from views.nfc_tap import COUNT_FOCUS_KEY
@@ -447,7 +447,7 @@ def _render_tags(storage, user: dict) -> None:
         "URL": row["url"] or row["problem"],
     } for row in rows])
     st.dataframe(table, hide_index=True, use_container_width=True)
-    st.download_button(":material/download: Descargar las URL (CSV)", data=table.to_csv(index=False).encode("utf-8-sig"),
+    st.download_button(":material/download: Descargar las URL (CSV)", data=excel_safe.csv_safe_frame(table).to_csv(index=False).encode("utf-8-sig"),
                        file_name="chips_nfc.csv", mime="text/csv", use_container_width=True)
 
 

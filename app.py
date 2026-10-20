@@ -12,7 +12,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from core.storage import LabStorage
+from core.storage import LabStorage, RemoteUnavailableError
 from core import auth, live_data, permissions, session
 from core.ui import LOGO_PATH, SYMBOL_PATH, footer, sync_status_banner, user_chip_html
 
@@ -45,6 +45,11 @@ def get_storage():
 
 try:
     storage = get_storage()
+except RemoteUnavailableError as e:
+    # GitHub no respondió y no hay copia local: no se arranca con una base vacía.
+    st.error(f"**No se pudo cargar la base de datos.** {e}", icon=":material/cloud_off:")
+    st.button(":material/refresh: Reintentar", key="retry_storage_boot")   # el rerun vuelve a intentarlo
+    st.stop()
 except Exception as e:
     st.error(f"**Error critico de inicializacion de la base de datos:** {e}")
     st.stop()

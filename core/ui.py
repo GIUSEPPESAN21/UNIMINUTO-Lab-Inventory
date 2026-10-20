@@ -435,24 +435,30 @@ def footer(text: str = "© 2026 UNIMINUTO · Laboratorio de Ingeniería") -> Non
 
 
 def _render_conflict_controls(storage, user: dict) -> None:
-    """Acciones para resolver un conflicto de sincronizacion (solo maestro)."""
-    if user.get("role") != permissions.ROLE_MASTER:
+    """Acciones para resolver un conflicto de sincronizacion (capacidad ``resolve_sync``)."""
+    if not permissions.has_cap(user, permissions.CAP_RESOLVE_SYNC):
         st.info("Pide a un administrador que resuelva el conflicto desde cualquier pagina de la app.")
         return
+    confirmed = st.checkbox(
+        "Entiendo que elegir una versión reemplaza a la otra y que esto afecta a todas las personas que usan la app.",
+        key="sync_conflict_confirm",
+    )
     keep_remote, keep_local = st.columns(2)
     if keep_remote.button(
         ":material/download: Conservar la versión de GitHub", key="sync_keep_remote", use_container_width=True,
         help="Descarta los cambios hechos desde el conflicto y carga la base que esta en GitHub.",
+        disabled=not confirmed,
     ):
-        ok, message = storage.resolve_sync_conflict("remote")
+        ok, message = storage.resolve_sync_conflict("remote", actor=user)
         st.toast(message, icon=":material/check_circle:" if ok else ":material/warning:")
         if ok:
             st.rerun()
     if keep_local.button(
         ":material/upload: Conservar la versión de esta app", key="sync_keep_local", use_container_width=True,
         help="Publica esta version sobre la de GitHub. La anterior sigue en el historial de commits.",
+        disabled=not confirmed,
     ):
-        ok, message = storage.resolve_sync_conflict("local")
+        ok, message = storage.resolve_sync_conflict("local", actor=user)
         st.toast(message, icon=":material/check_circle:" if ok else ":material/warning:")
         if ok:
             st.rerun()

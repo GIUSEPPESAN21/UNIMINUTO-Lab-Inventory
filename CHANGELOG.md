@@ -1,5 +1,48 @@
 # Changelog
 
+## v1.16.0 — Datos a salvo
+
+Primera entrega de la lista de mejoras (`MEJORAS_PROPUESTAS_v1.16.md`): cierra la pérdida silenciosa de
+datos, el arranque con base vacía y los huecos de autorización que quedaban.
+
+### Datos
+- **Texto seguro en el Excel** (`core/excel_safe.py`): un nombre, nota o descripción que empieza por `=` ya no se
+  guarda como fórmula (se perdía al recargar y se ejecutaba en el archivo descargado) y los caracteres de control
+  —p. ej. el separador `\x1d` de algunas pistolas— se quitan en vez de hacer fallar el guardado y, en
+  `SYNC_MODE=deferred`, dejar al hilo de fondo reintentando para siempre. Aplica a la base y a la exportación de
+  Reportes; los CSV de chips NFC y de la lúdica neutralizan lo que Excel evaluaría.
+- **Descarga validada:** lo que baja de GitHub debe abrirse como libro con hojas de la base; si no, se descarta y se
+  conserva la copia local (queda `.bak` de la anterior en cada reemplazo válido).
+- **Sin arranque con base vacía:** con GitHub configurado, sin copia local y con la descarga fallando (no un 404), la app
+  se detiene con un botón *Reintentar* (`RemoteUnavailableError`) en vez de servir datos vacíos y dejar al
+  administrador a un clic de sobrescribir la base real. El `except Exception: pass` de la revisión del libro ahora
+  registra el motivo.
+
+### Sincronización con GitHub
+- Un **409/422** al publicar se reintenta con espera y solo es conflicto si el archivo remoto de verdad cambió; si no,
+  los cambios quedan pendientes sin pedirle al administrador que elija versión.
+- **Límite de tasa:** 403/429 con `Retry-After` o `X-RateLimit-Remaining: 0` se espera (hasta 10 s) o se explica como
+  límite de tasa, no como «token inválido».
+- Subir o borrar una **foto** usa el mismo candado de publicación que la base (dos commits simultáneos al repositorio
+  daban 409 falsos).
+
+### Autorización
+- `resolve_sync_conflict`, `add_to_whitelist` y `remove_from_whitelist` reciben el `actor` y exigen capacidad
+  (`resolve_sync` —nueva, solo administrador— y `manage_users`). La interfaz decide por capacidad, no por el texto del
+  rol, y pide **confirmar** antes de elegir una versión.
+- Nuevos eventos de trazabilidad: *Lista blanca modificada* y *Conflicto de sincronización resuelto* (quién y qué).
+
+### Retiro por autoservicio
+- Ajuste del administrador en Despacho → Ajustes: **Libre** (por omisión, sin cambios), **Solo con solicitud aprobada**
+  o **Apagado**. Limita a quien no aprueba solicitudes y se aplica en `core/loans.checkout`, no solo en Escanear.
+  `checkout` acepta `request_id`.
+
+### Pruebas
+- `test_excel_safe`, `test_sync_safety`, `test_admin_actions`, `test_self_checkout`.
+- La matriz de capacidades ahora lista **todas** las capacidades (una nueva sin fila hace fallar la prueba) y compara cada
+  rol con `ROLE_CAPS`. La prueba que recorre el código exige `actor` también en los tres métodos nuevos.
+- `test_sync`: arrancar sin copia local y con GitHub caído ahora se detiene en vez de crear una base vacía.
+
 ## v1.15.0 — Roles por capacidad, despacho usable y sesión que no se pierde
 
 ### Roles (Cliente, Operario, Supervisor, Administrador)

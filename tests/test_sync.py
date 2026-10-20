@@ -186,8 +186,24 @@ def test_resolve_conflict_keeping_remote_discards_local_changes(github):
 
 
 def test_never_overwrites_a_remote_it_could_not_download(github):
-    """Si al arrancar GitHub fallo (no se descargo), un push no debe pisar la base
-    real con una vacia: antes esto podia borrar los datos remotos."""
+    """Si al arrancar GitHub falló y quedaba una copia local vieja, un push no debe
+    pisar la base real: el SHA remoto desconocido se trata como conflicto."""
+    seed = LabStorage()
+    _add(seed, "LAB-REAL")
+    real_remote = github.content
+    sm._cached_dfs = None
+    sm._reset_sync_state()                       # la app «olvida» qué versión remota conoce
+
+    github.fail_next = [500, 500, 500]          # el pull inicial agota sus reintentos
+    db = LabStorage()                            # sigue con la copia local
+    _add(db, "LAB-NUEVO")
+
+    assert github.content == real_remote         # la base real sigue intacta
+    assert sm.get_sync_status()["conflict"] is True
+
+
+def test_startup_without_local_copy_and_without_github_stops_instead_of_inventing_an_empty_base(github):
+    """Sin copia local y con GitHub caído (no es un 404) la app no arranca con datos vacíos."""
     seed = LabStorage()
     _add(seed, "LAB-REAL")
     real_remote = github.content
@@ -195,13 +211,21 @@ def test_never_overwrites_a_remote_it_could_not_download(github):
     sm._cached_dfs = None
     sm._reset_sync_state()
 
-    github.fail_next = [500, 500, 500]          # el pull inicial agota sus reintentos
-    db = LabStorage()                            # arranca con base vacia local
-    assert db.get_item("LAB-REAL") is None
-    _add(db, "LAB-NUEVO")
+    github.fail_next = [500, 500, 500]
+    with pytest.raises(sm.RemoteUnavailableError) as raised:
+        LabStorage()
+    assert "no hay una copia local" in str(raised.value)
+    assert not os.path.exists(sm.EXCEL_PATH)             # no se creó un libro vacío
+    assert github.content == real_remote                 # y la base real quedó intacta
 
-    assert github.content == real_remote         # la base real sigue intacta
-    assert sm.get_sync_status()["conflict"] is True
+    github.fail_next = []                                 # al volver GitHub, el reintento arranca bien
+    assert LabStorage().get_item("LAB-REAL") is not None
+
+
+def test_a_missing_remote_file_is_not_an_outage_and_a_new_base_is_created(github):
+    assert github.content is None                        # 404: la base aún no existe en GitHub
+    LabStorage()
+    assert github.content is not None
 
 
 # --- fallos transitorios y reintentos -----------------------------------------

@@ -86,7 +86,16 @@ def _render_item_actions(item: dict, parent: dict = None):
     routes = {request["id"]: traceability.route_event_for(storage, request["id"]) for request in pickups}
     if pickups:
         _render_pickup_notice(pickups, routes)
-    if item["available"] <= 0:
+    mode = loans_core.self_checkout_mode(storage)
+    restricted = mode != loans_core.MODE_FREE and loans_core.is_self_checkout_restricted(user)
+    must_link = restricted and mode == loans_core.MODE_APPROVED_ONLY
+    if restricted and mode == loans_core.MODE_OFF:
+        st.info("El retiro por autoservicio está apagado. Pide el producto desde **Solicitudes** y el "
+                "laboratorio te lo entrega.", icon=":material/info:")
+    elif must_link and not pickups:
+        st.info("Para retirar este producto necesitas una solicitud aprobada a tu nombre. "
+                "Pídelo desde **Solicitudes**.", icon=":material/info:")
+    elif item["available"] <= 0:
         st.warning("No hay unidades disponibles para dar salida en este momento.")
     else:
         with st.form(f"checkout_form_{item['id']}"):
@@ -95,7 +104,7 @@ def _render_item_actions(item: dict, parent: dict = None):
             if pickups:
                 options = {request["id"]: request for request in pickups}
                 choice = st.selectbox(
-                    "Solicitud aprobada que retiras", [*options, ""],
+                    "Solicitud aprobada que retiras", [*options] if must_link else [*options, ""],
                     format_func=lambda rid: _pickup_label(options[rid], routes) if rid else "No vincular con una solicitud",
                     help="La salida queda enlazada a la solicitud en Trazabilidad (evento «retirado»).",
                 )
@@ -115,7 +124,10 @@ def _render_item_actions(item: dict, parent: dict = None):
                 if with_date:
                     expected_dt = loans_core.deadline_from_date(expected_date)
                 try:
-                    ok, msg, loan = loans_core.checkout(storage, item["id"], int(qty), user, expected_dt, notes)
+                    ok, msg, loan = loans_core.checkout(
+                        storage, item["id"], int(qty), user, expected_dt, notes,
+                        request_id=(linked_request or {}).get("id", ""),
+                    )
                 except PermissionError as exc:
                     ok, msg, loan = False, str(exc), None
                 if ok:

@@ -285,13 +285,14 @@ def _remote_sha(path: str, session=None) -> str:
 def upload(path: str, data: bytes, message: str, session=None) -> str:
     """Sube un archivo NUEVO y devuelve su sha. Lanza PhotoError si falla."""
     payload = {"message": message, "content": base64.b64encode(data).decode("ascii")}
-    resp = _github("PUT", path, session=session, json=payload, timeout=60)
+    with db._push_lock:     # un commit a la vez en el repositorio: dos a la vez dan 409 falsos
+        resp = _github("PUT", path, session=session, json=payload, timeout=60)
     if resp.status_code in (200, 201):
         sha = ((resp.json() or {}).get("content") or {}).get("sha")
         return sha or blob_sha(data)
     if resp.status_code == 422 and _remote_sha(path, session) == blob_sha(data):
         return blob_sha(data)  # un reintento tras un timeout que si alcanzo a subirla
-    raise PhotoError(db._describe_github_error(resp.status_code, resp.text))
+    raise PhotoError(db._describe_response(resp))
 
 
 def download(path: str, session=None) -> bytes:
@@ -300,7 +301,7 @@ def download(path: str, session=None) -> bytes:
     if resp.status_code == 404:
         raise PhotoError("La foto ya no está en el repositorio de datos.")
     if resp.status_code != 200:
-        raise PhotoError(db._describe_github_error(resp.status_code, resp.text))
+        raise PhotoError(db._describe_response(resp))
     payload = resp.json() or {}
     if payload.get("encoding") == "base64" and payload.get("content"):
         return base64.b64decode(payload["content"])
@@ -316,10 +317,11 @@ def download(path: str, session=None) -> bytes:
 
 def remove_remote(path: str, sha: str, message: str, session=None) -> None:
     """Borra un archivo del repo (si ya no estaba, no es un error)."""
-    resp = _github("DELETE", path, session=session, json={"message": message, "sha": sha}, timeout=30)
+    with db._push_lock:
+        resp = _github("DELETE", path, session=session, json={"message": message, "sha": sha}, timeout=30)
     if resp.status_code in (200, 204, 404):
         return
-    raise PhotoError(db._describe_github_error(resp.status_code, resp.text))
+    raise PhotoError(db._describe_response(resp))
 
 
 # ---------------------------------------------------------------------------

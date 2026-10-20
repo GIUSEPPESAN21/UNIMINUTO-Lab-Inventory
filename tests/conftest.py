@@ -131,7 +131,7 @@ class FakeStorage:
     def is_email_whitelisted_professor(self, email):
         return email.lower().strip() in self.whitelist
 
-    def add_to_whitelist(self, email):
+    def add_to_whitelist(self, email, actor=None):
         self.whitelist.add(email.lower().strip())
 
     def get_availability_map(self):

@@ -13,7 +13,7 @@ import json
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import dispatch, live_data, ludica, permissions, picking, traceability
+from core import dispatch, live_data, loans, ludica, permissions, picking, traceability
 from core.ui import badge_html, empty_state, esc, guard_cap, page_header, section_title
 from views import location_guide, photo_panel
 
@@ -300,6 +300,21 @@ def _settings(storage, user: dict) -> None:
     if st.button("Guardar escenario", key="dispatch_scenario_save", type="primary",
                  disabled=choice == current):
         ok, message = dispatch.set_scenario(storage, user, choice)
+        _notice(ok, message)
+        st.rerun()
+
+    section_title("Retiro por autoservicio", icon=":material/outbox:",
+                  caption="Qué pueden retirar los clientes desde Escanear sin pasar por Despacho. "
+                          "El personal que aprueba solicitudes no se ve limitado.")
+    modes = list(loans.SELF_CHECKOUT_MODES)
+    saved = loans.self_checkout_mode(storage)
+    mode = st.selectbox(
+        "Modo", modes, index=modes.index(saved), key="self_checkout_choice",
+        format_func=lambda key: loans.SELF_CHECKOUT_MODES[key][0],
+    )
+    st.caption(loans.SELF_CHECKOUT_MODES[mode][1])
+    if st.button("Guardar modo", key="self_checkout_save", type="primary", disabled=mode == saved):
+        ok, message = loans.set_self_checkout_mode(storage, user, mode)
         _notice(ok, message)
         st.rerun()
 

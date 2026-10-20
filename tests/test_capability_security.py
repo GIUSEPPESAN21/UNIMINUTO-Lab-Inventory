@@ -263,7 +263,10 @@ def test_no_code_decides_by_the_literal_student_role():
     assert offenders == []
 
 
-_MUTATORS = {"save_item", "save_items_bulk", "bulk_upsert_items", "delete_item", "retire_item", "return_loan"}
+_MUTATORS = {
+    "save_item", "save_items_bulk", "bulk_upsert_items", "delete_item", "retire_item", "return_loan",
+    "add_to_whitelist", "remove_from_whitelist", "resolve_sync_conflict",
+}
 
 
 def test_every_application_call_to_a_mutator_passes_the_actor():

@@ -267,6 +267,22 @@ producto) nunca suma. Las lecturas **fallidas se acumulan y se guardan en UN sol
 picking completo (antes cada error escribía en el Excel y en GitHub). Si la app se reinicia a mitad de un
 picking, las lecturas pendientes se pierden (el pedido sigue «tomado» y se retoma).
 
+### Retiro por autoservicio (Escanear)
+
+Por omisión (**Libre**, igual que en v1.15) un cliente puede dar salida desde **Escanear** a
+cualquier producto con unidades disponibles. El administrador puede endurecerlo en
+**Despacho → Ajustes → Retiro por autoservicio**:
+
+| Modo | Qué puede hacer un cliente en Escanear |
+|---|---|
+| **Libre** | Retirar lo que esté disponible, con o sin solicitud (comportamiento actual) |
+| **Solo con solicitud aprobada** | Retirar únicamente un producto con una solicitud **aprobada a su nombre**, vinculada, y hasta la cantidad aprobada |
+| **Apagado** | Nada: todo pasa por Solicitudes y Despacho |
+
+El modo limita a quien **no aprueba solicitudes**; los supervisores y el administrador siguen
+pudiendo dar salida. La regla vive en `core/loans.checkout` (no solo en la pantalla), y un pedido
+que ya tomó un operario o que ya se retiró no se puede retirar de nuevo.
+
 ### Ruta verificable y trazabilidad (🧭 Trazabilidad)
 
 Cada producto muestra su ruta derivada del código V3 (estantería › piso ›
@@ -452,7 +468,7 @@ los nombres).
 | **Operario** | `operario` | Toma un pedido autorizado, recorre el laboratorio, hace el **picking** unidad por unidad y lo entrega al supervisor. **No aprueba, no recibe, no ve inventario ni reportes** |
 | **Supervisor** | `encargado` | **Aprueba** solicitudes, **autoriza operarios**, **recibe** el picking del operario, lo revisa y lo **entrega al cliente**; ve las trazas y los tiempos. **No edita el inventario ni ve los préstamos de otras personas** |
 | **Supervisor** | `profesor` | Todo lo del encargado + alta/edición/baja de ítems, ubicaciones, fotos, chips NFC, conteos, reportes, reservas y **todos los préstamos** |
-| **Administrador** | `maestro` | Todo lo anterior + usuarios, roles y contraseñas, correos automáticos, el escenario de despacho, eliminar fotos y ajustar cantidades tras un conteo |
+| **Administrador** | `maestro` | Todo lo anterior + usuarios, roles y contraseñas, la lista blanca, correos automáticos, el escenario de despacho y el **retiro por autoservicio**, **resolver conflictos de sincronización**, eliminar fotos y ajustar cantidades tras un conteo |
 
 *Supervisor* es una sola etiqueta para `encargado` y `profesor`: en **Usuarios** el administrador
 los distingue como «Supervisor (encargado)» y «Supervisor (profesor)».
@@ -470,7 +486,10 @@ en tres capas, porque ocultar un botón no es autorizar:
 3. **Capa de datos** (`LabStorage`): `save_item`, `save_items_bulk`, `bulk_upsert_items`,
    `retire_item`, `delete_item` y `return_loan` reciben el `actor` y vuelven a verificar dentro
    del bloqueo; `update_user` **exige** un actor con `manage_users` para cambiar `role` o
-   `status`. Un llamador interno de confianza (arranque, migraciones, scripts) usa `actor=None`.
+   `status`; `add_to_whitelist` / `remove_from_whitelist` (`manage_users`) y
+   `resolve_sync_conflict` (`resolve_sync`) también, y dejan constancia en la trazabilidad
+   (*Lista blanca modificada*, *Conflicto de sincronización resuelto*). Un llamador interno de
+   confianza (arranque, migraciones, scripts) usa `actor=None`.
 
 **Seguridad del registro:** nadie elige su rol al registrarse. Toda cuenta nace
 `estudiante` (Cliente); solo nace `profesor` (Supervisor) si su correo está en la lista blanca
@@ -599,6 +618,21 @@ Cómo se protege la base (Excel + GitHub):
   que se reemplace sigue en el historial de commits del repositorio de datos.
   Esto evita, por ejemplo, que un arranque sin red publique una base vacía sobre la
   real.
+- **La descarga se valida antes de reemplazar nada:** el archivo que baja de GitHub debe abrirse
+  como libro Excel y traer al menos una hoja de la base; si no, se descarta, se conserva la copia
+  local y el banner explica el motivo. Antes de cada reemplazo válido la copia anterior queda en
+  `UNIMINUTO_LAB_DB.xlsx.bak`.
+- **Nunca arranca con una base vacía por un fallo de red:** si GitHub está configurado, no hay copia
+  local y la descarga falla (algo distinto de «el archivo aún no existe»), la app **se detiene** con un
+  botón *Reintentar* en vez de mostrar datos vacíos.
+- **Texto seguro en el Excel:** un texto que empieza por `=` se guarda como texto (antes se perdía al
+  recargar y, en un archivo descargado, se ejecutaba como fórmula) y los caracteres de control (p. ej. el
+  que añaden algunas pistolas de códigos) se quitan en vez de hacer fallar el guardado. Los CSV descargables
+  (chips NFC, lúdica) anteponen un apóstrofo a lo que Excel evaluaría.
+- **Conflictos reales frente a falsos:** un 409/422 al publicar se reintenta (con espera) y solo es un
+  conflicto si el archivo remoto de verdad cambió; un límite de tasa de GitHub (403/429 con `Retry-After`)
+  se espera si es corto y, si no, se explica como tal en vez de acusar al token. Las fotos usan el mismo
+  candado de publicación que la base, así que dos commits no llegan a la vez al repositorio.
 - **Rendimiento con varias personas (`SYNC_MODE`).** Por omisión cada escritura serializa el libro
   y lo publica antes de devolver el control. Con una lúdica de **8 operarios y 4 supervisores y
   1–2 s por llamada a GitHub** (`scripts/bench_concurrency.py`, base temporal) eso da escrituras con
@@ -620,7 +654,8 @@ Cómo se protege la base (Excel + GitHub):
 > `UNIMINUTO_LAB_DB.xlsx` en el repositorio de datos mientras la app está corriendo,
 > la app lo detectará como conflicto en su siguiente escritura. Lo más simple es
 > reiniciar la app (Reboot) después de cambiar el archivo, para que descargue la
-> versión nueva.
+> versión nueva. Si algo sale mal, `UNIMINUTO_LAB_DB.xlsx.bak` (en el contenedor de la app) guarda la
+> copia local anterior al último reemplazo.
 
 ## Importación masiva de inventario
 
@@ -735,6 +770,10 @@ Despacho y rendimiento (todos opcionales): `ALLOW_SELF_APPROVAL` (false), `AUTO_
   réplicas habría que moverlos a la base.
 - **`SYNC_MODE=deferred`** acepta una ventana de pérdida (ver *Integridad de datos*) y sigue siendo opcional.
 - **Manage app** (botón de Streamlit Community Cloud) no se puede ocultar desde el código.
+- **Autoservicio «solo con solicitud aprobada»:** si la misma persona confirma el retiro de una solicitud en dos
+  pestañas a la vez, la verificación y el registro del retiro no son una sola operación atómica; la
+  trazabilidad muestra el retiro duplicado. Es un caso de una persona, no de varias.
+- Los caracteres de control se **quitan sin avisar** al guardar (queda una línea en el registro del servidor).
 - No se probaron en dispositivos reales ni la cámara en vivo ni chips NFC físicos con el flujo de despacho.
 
 ## Material para la lúdica

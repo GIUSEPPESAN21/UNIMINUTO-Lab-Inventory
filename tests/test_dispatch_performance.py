@@ -153,6 +153,8 @@ class FakeGithub:
     def __call__(self, method, url, attempts=3, session=None, **kwargs):
         if method == "GET":
             self.gets += 1
+            if self.content is None and self.puts == 0 and not self.remote_changes:
+                return SimpleNamespace(status_code=404, text="", json=lambda: {})   # aún no existe en GitHub
             sha = "otra-version" if self.remote_changes else self.sha
             body = {"sha": sha}
             if self.content is not None:
