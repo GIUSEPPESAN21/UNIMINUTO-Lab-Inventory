@@ -101,6 +101,7 @@ NOTIFICATION_LOG_LIMIT = 500
 _cached_dfs = None
 _trace_request_index = {}
 _excel_lock = Lock()
+_load_lock = Lock()
 _events_index_lock = Lock()
 _events_index = {"version": None, "index": {}}   # ver LabStorage.get_events_index
 _data_state_lock = Lock()
@@ -831,7 +832,11 @@ def _db_write():
 def _load_cache() -> dict:
     """Carga (una sola vez) las hojas del Excel a memoria."""
     global _cached_dfs
-    if _cached_dfs is None:
+    if _cached_dfs is not None:
+        return _cached_dfs
+    with _load_lock:                  # un solo lector parsea; los demás esperan y reutilizan
+        if _cached_dfs is not None:
+            return _cached_dfs
         try:
             xls = pd.ExcelFile(EXCEL_PATH, engine="openpyxl")
             dfs = {}
@@ -854,10 +859,12 @@ def _load_cache() -> dict:
         except FileNotFoundError:
             dfs = {sheet: pd.DataFrame(columns=cols) for sheet, cols in SHEET_COLUMNS.items()}
         _normalize_legacy_columns(dfs)
+        if _cached_dfs is not None:   # una escritura publicó una versión nueva mientras se parseaba: gana la nueva
+            return _cached_dfs
         _cached_dfs = dfs
         _rebuild_trace_index(dfs["trace_events"])
         _bump_data_version(read=True, reload=True)
-    return _cached_dfs
+        return _cached_dfs
 
 
 def _read_excel(*sheets: str) -> dict:
@@ -929,8 +936,29 @@ def _peek(*sheets: str) -> dict:
     return {name: cache[name] for name in (sheets or tuple(cache))}
 
 
+_write_times_ms: list = []          # duración de las últimas escrituras del libro (salud de la base)
+
+
+def write_stats() -> dict:
+    """Duración (ms) de la última escritura del libro y percentil 95 de las recientes."""
+    recent = sorted(_write_times_ms)
+    if not recent:
+        return {"last_ms": None, "p95_ms": None, "count": 0}
+    return {"last_ms": _write_times_ms[-1], "p95_ms": recent[min(len(recent) - 1, int(len(recent) * 0.95))],
+            "count": len(recent)}
+
+
 def _serialize_to_disk(dfs: dict) -> None:
     """Serializa las hojas y reemplaza el archivo de forma atomica."""
+    started = time.perf_counter()
+    try:
+        _serialize_workbook(dfs)
+    finally:
+        _write_times_ms.append(round((time.perf_counter() - started) * 1000))
+        del _write_times_ms[:-50]
+
+
+def _serialize_workbook(dfs: dict) -> None:
     buffer = io.BytesIO()
     try:
         fastxlsx.write_workbook(buffer, dfs)         # ~15 veces más rápido que pandas con una base grande
@@ -1765,6 +1793,11 @@ class LabStorage:
     def create_user(self, full_name: str, email: str, password_hash: str, role: str, program: str = "", student_id: str = "", status: str = "active") -> dict:
         with _db_write():
             dfs = _read_excel()
+            normalized = email.lower().strip()
+            if normalized in set(dfs["users"]["institutional_email"].astype(str).str.lower().str.strip()):
+                # La comprobación de quien llama (auth) pudo quedar obsoleta: dos registros simultáneos
+                # con el mismo correo crearían dos cuentas y todo usa la primera que encuentra.
+                raise ValueError("Ya existe una cuenta registrada con ese correo.")
             row = {
                 "id": _new_id(),
                 "full_name": full_name,
@@ -1932,8 +1965,13 @@ class LabStorage:
 
     def create_loan(self, item: dict, quantity: int, user: dict, expected_return_at=None,
                     notes: str = "", request_id: str = "", operator: dict = None) -> dict:
+        if int(quantity) <= 0:
+            raise ValueError("La cantidad debe ser mayor a cero.")
         with _db_write():
             dfs = _read_excel()
+            current = dfs["items"][dfs["items"]["id"] == item["id"]]
+            if not current.empty and current.iloc[0]["status"] == "retired":
+                raise ValueError("El producto fue dado de baja: no se puede prestar.")
             # La disponibilidad se re-verifica DENTRO del lock: la comprobacion previa
             # de core.loans.checkout puede haber quedado obsoleta si otra persona
             # saco unidades en el mismo instante (evita prestar mas de lo que hay).
@@ -2097,6 +2135,9 @@ class LabStorage:
             idx = df.index[df["id"] == reservation_id].tolist()
             if not idx:
                 return False
+            if status in ("approved", "rejected") and df.at[idx[0], "status"] != "pending":
+                # Dos personas revisando a la vez: gana la primera, la otra no la pisa.
+                raise ValueError("La reserva ya fue revisada por otra persona.")
             if status == "approved":
                 conflict = reservation_rules.find_conflict(
                     self._approved_reservations(dfs), _row_to_reservation(df.loc[idx[0]]),
@@ -2553,6 +2594,17 @@ class LabStorage:
                 df = df[df[column] == value]
         rows = [_clean_nan(record) for record in df.to_dict("records")]
         return sorted(rows, key=lambda row: (str(row.get("created_at") or ""), _int(row.get("seq"))))
+
+    def get_health(self) -> dict:
+        """Cómo está la base: tamaño, filas por hoja, velocidad de escritura y estado de la sincronización."""
+        try:
+            size = os.path.getsize(EXCEL_PATH) / 1_000_000
+        except OSError:
+            size = 0.0
+        frames = _peek()
+        rows = {sheet: len(frame) for sheet, frame in frames.items()}
+        return {"workbook_mb": round(size, 2), "rows": rows, "cells": sum(len(frames[s]) * len(frames[s].columns) for s in frames),
+                "write": write_stats(), "sync": get_sync_status()}
 
     def get_events_index(self) -> dict:
         """``{request_id: [eventos]}`` (del más antiguo al más reciente) de TODAS las solicitudes.

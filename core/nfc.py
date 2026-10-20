@@ -130,7 +130,9 @@ def check_signature(code: str, signature: str, secret: str) -> str:
     signature = str(signature or "").strip().upper()
     if not signature:
         return SIG_MISSING
-    return SIG_VALID if hmac.compare_digest(signature, sign_code(code, secret)) else SIG_INVALID
+    # En bytes: compare_digest con texto no ASCII lanza TypeError (una firma escrita a mano no debe tumbar el toque).
+    expected = sign_code(code, secret)
+    return SIG_VALID if hmac.compare_digest(signature.encode("utf-8"), expected.encode("utf-8")) else SIG_INVALID
 
 
 def signature_accepted(status: str) -> bool:

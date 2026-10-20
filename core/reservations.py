@@ -110,6 +110,7 @@ def find_conflict(existing_reservations: list, candidate: dict, exclude_id: str 
 
 def submit_reservation(storage, user: dict, scope_type: str, activity: str,
                        purpose: str, attendees, start_at, end_at):
+    permissions.require_cap(user, permissions.CAP_RESERVE, "No tienes permiso para reservar.")
     data = validate_reservation(scope_type, activity, purpose, attendees, start_at, end_at)
     conflict = find_conflict(storage.get_reservations(status=STATUS_APPROVED), data)
     if conflict:
@@ -135,6 +136,11 @@ def review_reservation(storage, reservation_id: str, decision: str,
         return False, "La reserva no existe."
     if reservation.get("status") != STATUS_PENDING:
         return False, "Solo se pueden revisar reservas pendientes."
+    from core import dispatch      # la misma regla que las solicitudes: nadie aprueba lo suyo
+
+    if (decision == STATUS_APPROVED and reservation.get("requester_id") == reviewer.get("id")
+            and not dispatch.allow_self_approval()):
+        return False, "Es tu propia reserva: la aprueba otra persona."
     if decision == STATUS_APPROVED:
         conflict = find_conflict(
             storage.get_reservations(status=STATUS_APPROVED), reservation, exclude_id=reservation_id

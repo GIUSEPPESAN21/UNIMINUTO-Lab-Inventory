@@ -23,6 +23,7 @@ Componentes adicionales (también estables, documentados en cada función):
 Todo texto se escapa con esc(): puede venir de usuarios.
 """
 
+import logging
 import base64
 import html
 from datetime import datetime
@@ -249,6 +250,13 @@ def show_flash(key: str = "page") -> None:
         return
     kind, message = shown
     {"success": st.success, "warning": st.warning, "info": st.info}.get(kind, st.error)(message)
+
+
+def load_error(what: str, exc: Exception) -> None:
+    """Aviso claro cuando algo no se pudo cargar: el detalle técnico va al registro del servidor, no a la pantalla."""
+    logging.getLogger("core.ui").error("%s: %s", what, exc, exc_info=exc)
+    st.error(f"{what}. Pulsa **Actualizar** en la barra lateral; si sigue igual, avisa al administrador.",
+             icon=":material/error:")
 
 
 PAGE_SIZE = 20

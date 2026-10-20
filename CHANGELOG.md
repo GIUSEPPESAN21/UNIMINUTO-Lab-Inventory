@@ -1,5 +1,42 @@
 # Changelog
 
+## v1.18.0 — Más ágil y sin fallos latentes
+
+Medido con `scripts/bench_storage.py` (base sintética de ≈800 mil celdas: 32 000 eventos, 6 000 préstamos, 4 000 pedidos).
+
+### Velocidad
+- **Guardar un cambio: 12.2 s → 0.7 s.** `core/fastxlsx.py` escribe el XML del libro directamente (sin celda por celda) y
+  reutiliza las hojas sin cambios; el `.xlsx` es el mismo para Excel, pandas y openpyxl. Si falla, se usa pandas.
+  Un texto `=…` sigue siendo texto y los caracteres inválidos se quitan.
+- **Lecturas sin copia** (`_peek`) y conversión por registros: `get_all_items` 194 → 14 ms, `get_all_loans` 628 → 55 ms,
+  `get_service_requests` 491 → 94 ms; disponibilidad y mapa de disponibilidad vectorizados.
+- **Índice de eventos por pedido** (`get_events_index`, una vez por versión de los datos): `dispatch_metrics` 6.5 s →
+  0.1 s; los atascados y la conciliación ya no piden los eventos pedido por pedido.
+- **Arranque:** el esquema se revisa leyendo solo la primera fila de cada hoja (antes 2.5–5 s con una base grande).
+- **Páginas de 20–30 filas** con «Mostrar más» en Inventario, Préstamos, Usuarios y Solicitudes → Gestionar: Inventario
+  con 2 000 productos 46 s → 1 s; Solicitudes (gestión) 8.8 s → 0.3 s. Los CSV de Despacho se generan al pulsarlos.
+- La suite de pruebas pasó de 4:35 a 2:45.
+
+### Fallos corregidos
+- **Carrera al cargar la caché:** un lector lento podía pisar con datos viejos una escritura recién publicada y la siguiente
+  escritura perdía cambios; ahora hay un candado y gana la versión nueva.
+- **Cuentas duplicadas:** la unicidad del correo se verifica dentro del bloqueo (dos registros simultáneos creaban dos cuentas).
+- **Préstamos:** cantidad ≤ 0 y productos dados de baja se rechazan en la capa de datos.
+- **Reservas:** exigen la capacidad de reservar, nadie aprueba la suya (`ALLOW_SELF_APPROVAL`) y dos revisiones simultáneas
+  ya no se pisan.
+- **NFC:** una firma con caracteres no ASCII era un `TypeError`; ahora es una firma inválida.
+- **Sesiones cerradas:** al llenarse la memoria se vaciaban todas (reactivando sesiones cerradas); ahora salen las más antiguas.
+- **Mensajes de error** sin detalles técnicos (rutas, excepciones): van al registro del servidor, no a la pantalla.
+- Fechas de nombres de archivo y de «devolver antes de» en hora de Bogotá (en la nube eran UTC).
+- Fotos: tope de 25 MP al decodificar (antes 60 MP ≈ 180 MB en memoria).
+
+### Operación
+- **Usuarios → Datos → Estado de la base:** tamaño, celdas, velocidad de escritura y sincronización, con aviso si es grande o lenta.
+- `scripts/bench_storage.py` mide lecturas y escrituras con una base sintética.
+
+### Pruebas
+- `test_fastxlsx`, `test_robustness` (incluye carreras con hilos y mutaciones comprobadas).
+
 ## v1.17.0 — Más simple: Buscar, Solicitudes unificadas y datos limpios
 
 ### Errores

@@ -289,15 +289,18 @@ def create_account(storage, prepared: dict, email_verified: bool = False):
     if storage.get_user_by_email(email):  # puede haber cambiado desde la validacion
         return None, "Ya existe una cuenta registrada con ese correo."
     is_professor = email_verified and storage.is_email_whitelisted_professor(email)
-    user = storage.create_user(
-        full_name=prepared["full_name"],
-        email=email,
-        password_hash=prepared["password_hash"],
-        role="profesor" if is_professor else "estudiante",
-        program=prepared["program"],
-        student_id=prepared["student_id"],
-        status="active",
-    )
+    try:
+        user = storage.create_user(
+            full_name=prepared["full_name"],
+            email=email,
+            password_hash=prepared["password_hash"],
+            role="profesor" if is_professor else "estudiante",
+            program=prepared["program"],
+            student_id=prepared["student_id"],
+            status="active",
+        )
+    except ValueError as exc:          # otro registro con el mismo correo ganó la carrera
+        return None, str(exc)
     return user, None
 
 

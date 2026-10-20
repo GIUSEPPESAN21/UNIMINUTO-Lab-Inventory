@@ -21,8 +21,8 @@ from core.labels import (
     ITEM_TYPE_BY_CHOICE, ITEM_TYPE_CHOICES, ITEM_TYPE_HELP, ITEM_TYPE_ICONS, ITEM_TYPE_LABELS, ITEM_TYPE_NAMES,
 )
 from core.ui import (
-    badge_html, centered_columns, empty_state, esc, guard_cap, icon_html, more_button, page_header, paginate, persistent_tabs, section_title,
-    stat_cards, timeline,
+    badge_html, centered_columns, empty_state, esc, guard_cap, icon_html, load_error, more_button, page_header, paginate,
+    persistent_tabs, section_title, stat_cards, timeline,
 )
 from views import label_settings, photo_panel, ubicaciones
 from views.code_input import render_code_input
@@ -387,7 +387,7 @@ def _render_generator(storage, user: dict, master: dict) -> None:
     try:
         all_items = storage.get_all_items(include_retired=True)  # tambien los dados de baja: sus codigos no se proponen
     except Exception as exc:
-        st.error(f"No se pudo leer el inventario: {exc}")
+        load_error("No se pudo leer el inventario", exc)
         return
     analysis = suggestions.suggest_products(master, all_items)
     proposals = analysis["proposals"]
@@ -499,7 +499,7 @@ def _render_catalog(storage, user: dict, spec) -> None:
         # Las ubicaciones (estanterias, pisos, mesas) tienen su propia pestaña: no son productos.
         items = [i for i in storage.get_all_items() if i.get("item_type") != "location"]
     except Exception as e:
-        st.error(f"Error al cargar el inventario: {e}")
+        load_error("No se pudo cargar el inventario", e)
         items = []
     availability = storage.get_availability_map() if items else {}
 

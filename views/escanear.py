@@ -10,7 +10,7 @@ import streamlit as st
 
 from core import barcode, labels, loans as loans_core, notifications, permissions, search, traceability
 from core.labels import ITEM_TYPE_BY_CHOICE, ITEM_TYPE_CHOICES, ITEM_TYPE_HELP, ITEM_TYPE_NAMES
-from core.ui import empty_state, esc, guard_cap, page_header, section_title, show_flash
+from core.ui import empty_state, esc, guard_cap, load_error, page_header, section_title, show_flash
 from views import photo_panel, solicitudes
 from views.code_input import render_code_input
 from views import ubicaciones
@@ -120,7 +120,7 @@ def _render_item_actions(item: dict, parent: dict = None):
             with_date = st.checkbox("Definir fecha esperada de devolucion")
             expected_date = None
             if with_date:
-                expected_date = st.date_input("Devolver antes de", value=datetime.now().date() + timedelta(days=7))
+                expected_date = st.date_input("Devolver antes de", value=datetime.now(loans_core.BOGOTA_TZ).date() + timedelta(days=7))
             notes = st.text_input("Notas (opcional)", placeholder="Motivo de uso, practica, proyecto...")
             submitted = st.form_submit_button(":material/check_circle: Confirmar salida", type="primary", use_container_width=True)
 
@@ -256,7 +256,7 @@ def _render_new_item_wizard(scanned_code: str):
                     st.session_state.scan_result = barcode.scan(storage, code_to_save)
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Error al registrar: {e}")
+                    load_error("No se pudo registrar el producto", e)
 
 
 _FLASH = "buscar"
