@@ -145,6 +145,8 @@ def validate_tag_code(code) -> str:
     code = str(code or "").strip()
     if not code:
         raise ValueError("El código está vacío.")
+    if barcode.location_code(code):
+        return code        # estantería, piso, mesa o zona: sus códigos (2-1-00-00-000…) no son de producto, pero llevan chip
     barcode.validate_code_format(code)
     return code
 

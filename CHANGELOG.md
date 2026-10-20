@@ -30,6 +30,16 @@ Medido con `scripts/bench_storage.py` (base sintética de ≈800 mil celdas: 32 
 - Fechas de nombres de archivo y de «devolver antes de» en hora de Bogotá (en la nube eran UTC).
 - Fotos: tope de 25 MP al decodificar (antes 60 MP ≈ 180 MB en memoria).
 
+### Chips NFC (rediseño)
+- La página sigue el estilo de Inventario: indicadores y **barra de cobertura** (chips probados) arriba de todas las
+  pestañas, avisos de configuración compactos (APP_URL y NFC_SECRET), **tarjetas** por producto con su estado
+  (Sin chip · Grabado · Probado), buscador, filtro por tipo y por estado, **URL del chip** en un popover, «Marcar grabado» /
+  «Quitar chip» en la misma tarjeta y «Mostrar más». La tabla completa y el CSV quedan en un desplegable.
+- **Inventario con el teléfono:** tres pasos en tarjetas y los conteos anteriores como tarjetas con su avance.
+- **Toques recientes:** línea de tiempo («Ana tocó «Caja…»», firmado o no, durante un conteo) con búsqueda.
+- **Error corregido:** las ubicaciones (Estantería 2, Piso 1: `2-0-00-00-000`, `2-1-00-00-000`) decían «No se puede generar
+  la URL… Contenedor inválido»; ahora también llevan chip.
+
 ### Operación
 - **Usuarios → Datos → Estado de la base:** tamaño, celdas, velocidad de escritura y sincronización, con aviso si es grande o lenta.
 - `scripts/bench_storage.py` mide lecturas y escrituras con una base sintética.
