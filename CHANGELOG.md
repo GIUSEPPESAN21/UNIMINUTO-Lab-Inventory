@@ -25,8 +25,14 @@
   y cuántas devuelve, **sin inventario por pieza** y sin tocar el stock. El saldo por persona sale de la cadena de custodia
   (`pieces_taken`/`pieces_returned`). Columna nueva `items.loose_pieces` (se completa sola en bases antiguas).
 
+### Etiquetas de un contenedor (nuevo)
+- En **Inventario**, cada Contenedor Principal con productos tiene el botón **«Etiquetas de los N productos»**: un PDF
+  con una página por producto (tamaño real de la etiqueta, en orden natural de código) para imprimir de corrido. Incluye
+  todos los productos del contenedor aunque los filtros muestren solo algunos; los códigos no imprimibles se omiten.
+  Se genera al pulsar el botón. Código: `labels.generate_container_labels_pdf_bytes`.
+
 ### Pruebas
-- `tests/test_returns_flow.py`, `tests/test_pieces.py` y la matriz de capacidades actualizada.
+- `tests/test_returns_flow.py`, `tests/test_pieces.py`, `tests/test_container_labels_pdf.py` y la matriz de capacidades actualizada.
 
 ## v1.18.0 — Más ágil y sin fallos latentes
 

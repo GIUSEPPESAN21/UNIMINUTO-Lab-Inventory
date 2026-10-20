@@ -251,6 +251,12 @@ Buscar). Los servicios requieren nombre y descripción; la fecha es opcional. Si
 administradores reciben un correo; si falla, la solicitud permanece guardada y muestra la advertencia.
 Los avisos (pedido enviado, aprobado…) **sobreviven a la recarga** de la página.
 
+### Imprimir las etiquetas de todo un contenedor
+
+En **Inventario**, cada Contenedor Principal con productos muestra **«Etiquetas de los N productos»**: descarga un PDF
+con una página por producto, del tamaño real de la etiqueta configurada (Configuración de etiquetas) y en orden de código,
+para imprimirlo de una vez desde Edge o Chrome (Ctrl + P, papel USER) en lugar de bajar una etiqueta por producto.
+
 ### Retirar piezas de un producto (Lego, bloques, kits…)
 
 En **Inventario → editar** (o al registrar el producto) se marca **«Se retiran por piezas»**. Entonces, en la ficha

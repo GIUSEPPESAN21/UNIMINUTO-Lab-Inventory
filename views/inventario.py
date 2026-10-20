@@ -335,6 +335,20 @@ def _toggle_generator(master_id: str) -> None:
     st.session_state[GENERATOR_KEY] = None if current == master_id else master_id
 
 
+def _children_labels_button(slot, storage, master: dict, spec) -> None:
+    """Un PDF con las etiquetas de TODOS los productos del contenedor (no solo los que dejan ver los filtros)."""
+    count = len(labels.printable_items(storage.get_children(master["id"])))
+    if not count:
+        return
+    slot.download_button(
+        f":material/print: Etiquetas de los {count} productos",
+        data=lambda: labels.generate_container_labels_pdf_bytes(master, storage.get_children(master["id"]), spec),
+        file_name=f"etiquetas_{master['id']}.pdf", mime="application/pdf", key=f"inv_kids_pdf_{master['id']}",
+        use_container_width=True,
+        help="Una página por producto, del tamaño real de la etiqueta y en orden de código: se imprime de corrido.",
+    )
+
+
 def _container_card(storage, user, master: dict, children: list, availability: dict, spec,
                     suggested: int, show_children: bool = True) -> None:
     """Contenedor Principal con sus productos y, si tiene descripcion, el
@@ -344,9 +358,10 @@ def _container_card(storage, user, master: dict, children: list, availability: d
         photo_panel.photo_popover(master)
         has_description = bool((master.get("description") or "").strip())
         is_open = st.session_state.get(GENERATOR_KEY) == master["id"]
-        edit_col, label_col, gen_col = st.columns([1, 1, 3])
+        edit_col, label_col, kids_col, gen_col = st.columns([1, 1, 2, 3])
         _edit_button(edit_col, master, ":material/edit: Editar")
         _label_popover(label_col, master, spec, ":material/label: Etiqueta")
+        _children_labels_button(kids_col, storage, master, spec)
         if has_description:
             gen_col.button(
                 ":material/close: Cerrar el generador" if is_open else GENERATOR_LABEL,
