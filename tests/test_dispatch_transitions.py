@@ -184,14 +184,16 @@ def test_release_and_reassign_rules(lab):
                                           lab.get_trace_events(request_id=request_id)) == traceability.STAGE_APPROVED
 
 
-def test_authorized_pickers_restrict_who_can_claim(lab):
+def test_any_operator_or_supervisor_can_pick_any_authorized_order(lab):
+    """v1.19: ya no se asigna a quién; el pedido lo elige quien lo despacha (aunque una aprobación antigua traiga una lista)."""
     lab.users["o2"] = {"id": "o2", "full_name": "Omar", "institutional_email": "omar@x.edu.co", "role": "operario",
                        "status": "active"}
     row, _, _ = service_requests.submit_request(lab, STUDENT, "product", ITEM, 1)
     assert service_requests.review_request(lab, row["id"], "approved", SUPERVISOR, authorized_pickers=["o2"])[0]
-    assert dispatch.queue_for(lab, OPERATOR) == [] and len(dispatch.queue_for(lab, lab.users["o2"])) == 1
+    assert len(dispatch.queue_for(lab, OPERATOR)) == 1 and len(dispatch.queue_for(lab, lab.users["o2"])) == 1
+    assert len(dispatch.queue_for(lab, SUPERVISOR)) == 1                    # el supervisor también ve la cola
     ok, message, _ = dispatch.claim_request(lab, row["id"], OPERATOR)
-    assert not ok and "autorizado" in message
+    assert ok, message
 
 
 def test_only_product_requests_go_through_dispatch(lab):

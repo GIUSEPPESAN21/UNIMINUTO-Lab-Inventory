@@ -76,10 +76,13 @@ def test_operator_cannot_checkout_or_checkin(lab):
         loans_core.checkin(storage, loan["id"], people["operario"])
 
 
-def test_owner_professor_and_admin_can_return(lab):
+def test_owner_cannot_check_in_directly_but_professor_and_admin_can(lab):
     storage, people = lab
     own = _loan_for(storage, people["encargado"])
-    assert loans_core.checkin(storage, own["id"], people["encargado"])[0]           # lo suyo
+    with pytest.raises(PermissionError):                       # el dueño devuelve por core.returns
+        loans_core.checkin(storage, own["id"], people["encargado"])
+    with pytest.raises(PermissionError):
+        storage.return_loan(own["id"], actor=people["encargado"])
     for role in ("profesor", "maestro"):
         loan = _loan_for(storage, people["estudiante"])
         assert loans_core.checkin(storage, loan["id"], people[role])[0]               # ajeno, con capacidad
@@ -222,8 +225,9 @@ def test_loans_page_is_own_loans_only_for_the_encargado(lab):
     at = _open("prestamos", people["encargado"])
     text = _text(at.markdown)
     assert "Mis préstamos" in text and "Persona estudiante" not in text
-    assert [b for b in at.button if "Reingresar" in b.label]               # el suyo
-    assert len([b for b in at.button if "Reingresar" in b.label]) == 1
+    assert [b for b in at.button if "Devolver" in b.label]                 # el suyo, por el flujo de devolución
+    assert len([b for b in at.button if "Devolver" in b.label]) == 1
+    assert not [b for b in at.button if "Reingresar" in b.label]           # sin reingreso directo
     assert mine["id"]
     prof = _open("prestamos", people["profesor"])
     assert "Persona estudiante" in _text(prof.markdown) and prof.tabs

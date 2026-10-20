@@ -183,6 +183,7 @@ EVENT_LABELS = {
     EVENT_COUNT_CLOSED: "Conteo cerrado",
 }
 SERVICE_STAGES = (EVENT_SERVICE_STARTED, EVENT_SERVICE_DELIVERED)
+_RETURN_CONDITIONS = {"ok": "En buen estado", "damaged": "Con daños", "incomplete": "Incompleto"}
 
 # Fotos de los objetos (core/photos.py): cada alta o borrado de una foto queda
 # en la cadena de custodia del producto. Tipos de foto: al registrar el objeto,
@@ -192,6 +193,22 @@ EVENT_PHOTO_DELETED = "photo_deleted"
 PHOTO_EVENTS = (EVENT_PHOTO_ADDED, EVENT_PHOTO_DELETED)
 EVENT_TYPES = EVENT_TYPES + PHOTO_EVENTS
 EVENT_LABELS.update({EVENT_PHOTO_ADDED: "Foto agregada", EVENT_PHOTO_DELETED: "Foto eliminada"})
+
+# Devoluciones del cliente (core/returns.py): solicitud -> verificación del supervisor -> almacenamiento.
+EVENT_RETURN_REQUESTED = "return_requested"
+EVENT_RETURN_VERIFIED = "return_verified"
+EVENT_RETURN_STORED = "return_stored"
+RETURN_EVENTS = (EVENT_RETURN_REQUESTED, EVENT_RETURN_VERIFIED, EVENT_RETURN_STORED)
+EVENT_TYPES = EVENT_TYPES + RETURN_EVENTS
+EVENT_LABELS.update({
+    EVENT_RETURN_REQUESTED: "Devolución solicitada",
+    EVENT_RETURN_VERIFIED: "Devolución verificada",
+    EVENT_RETURN_STORED: "Devolución guardada",
+})
+EVENT_CAPABILITIES.update({
+    EVENT_RETURN_VERIFIED: permissions.CAP_VERIFY_RETURN,
+    EVENT_RETURN_STORED: permissions.CAP_STORE_RETURN,
+})
 PHOTO_KIND_REGISTRO = "registro"
 PHOTO_KIND_ESTADO = "estado"
 PHOTO_KIND_INVENTARIO = "inventario"
@@ -606,6 +623,15 @@ def describe_event(event: dict) -> str:
             if proof.get("note"):
                 text += f" Nota: {proof['note']}"
         return text
+    if kind == EVENT_RETURN_REQUESTED:
+        return f"Pidió devolver el producto{note}"
+    if kind == EVENT_RETURN_VERIFIED:
+        condition = _RETURN_CONDITIONS.get(str(details.get("condition") or ""), "")
+        units = int(details.get("received") or 0)
+        return (f"Verificó la devolución: {units} unidad(es)" + (f", {condition.lower()}" if condition else "") + note)
+    if kind == EVENT_RETURN_STORED:
+        units = int(details.get("received") or 0)
+        return f"Guardó {units} unidad(es) devueltas en el estante{note}"
     if kind == EVENT_ORDER_RECEIVED:
         return f"Recibió y revisó el picking{note}"
     if kind == EVENT_ORDER_DELIVERED:

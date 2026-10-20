@@ -13,6 +13,7 @@ from core import storage as storage_module
 from core.storage import LabStorage
 
 ACTOR = "profesor@uniminuto.edu.co"
+PROFESSOR = {"id": "prof-1", "role": "profesor", "full_name": "Profe Prueba", "institutional_email": "profe@uniminuto.edu.co"}          # quien reingresa directo (el cliente devuelve por core.returns)
 MASTER_CODE = "2-1-01-00-000"
 CHILD_CODE = "2-1-01-01-000"
 
@@ -60,7 +61,7 @@ def test_delete_removes_history_and_returned_loans(db, student):
     _add(db, "LAB-001", quantity=5)
     ok, _, loan = loans_core.checkout(db, "LAB-001", 2, student)
     assert ok
-    assert loans_core.checkin(db, loan["id"], student)[0]
+    assert loans_core.checkin(db, loan["id"], PROFESSOR)[0]
     assert db.get_item_history("LAB-001")
 
     assert db.delete_item("LAB-001", ACTOR)[0]
@@ -71,7 +72,7 @@ def test_delete_removes_history_and_returned_loans(db, student):
 def test_recreated_code_does_not_inherit_old_history_or_loans(db, student):
     _add(db, "LAB-001", quantity=5)
     _, _, loan = loans_core.checkout(db, "LAB-001", 1, student)
-    loans_core.checkin(db, loan["id"], student)
+    loans_core.checkin(db, loan["id"], PROFESSOR)
     db.delete_item("LAB-001", ACTOR)
 
     _add(db, "LAB-001", quantity=7)
@@ -151,7 +152,7 @@ def test_delete_impact_summarizes_what_will_be_lost(db, student):
     _add(db, MASTER_CODE, "master", quantity=0)
     _add(db, CHILD_CODE, "child", parent_id=MASTER_CODE, quantity=4)
     _, _, loan = loans_core.checkout(db, CHILD_CODE, 1, student)
-    loans_core.checkin(db, loan["id"], student)
+    loans_core.checkin(db, loan["id"], PROFESSOR)
     loans_core.checkout(db, CHILD_CODE, 1, student)
 
     impact = db.get_delete_impact(MASTER_CODE)

@@ -134,9 +134,10 @@ def _self_checkout_blocked(storage, user: dict, item_id: str, quantity: int, req
 
 
 def checkin(storage, loan_id: str, actor_user: dict):
-    """Reingreso. Quien no tiene `checkin_any_loan` solo reingresa lo suyo
-    (la capa de datos lo vuelve a verificar con el préstamo leído bajo bloqueo)."""
-    permissions.require_cap(actor_user, permissions.CAP_CHECKOUT, "No tienes permiso para registrar reingresos.")
+    """Reingreso directo, solo para quien tiene `checkin_any_loan` (profesor, administrador).
+    El cliente devuelve por el flujo de ``core.returns`` (solicitud → verificación → almacenamiento)."""
+    permissions.require_cap(actor_user, permissions.CAP_CHECKIN_ANY,
+                            "Tu devolución la verifica un supervisor: usa «Devolver» en Préstamos.")
     ok, msg = storage.return_loan(
         loan_id, actor_email=actor_user.get("institutional_email", ""), actor=actor_user,
     )
@@ -168,8 +169,5 @@ def get_loans_for_view(storage, user: dict) -> list:
 
 
 def can_checkin_loan(user: dict, loan: dict) -> bool:
-    """True si ``user`` puede reingresar ``loan`` (vistas y pruebas comparten la regla)."""
-    if permissions.has_cap(user, permissions.CAP_CHECKIN_ANY):
-        return True
-    return (permissions.has_cap(user, permissions.CAP_CHECKOUT)
-            and bool(user.get("id")) and loan.get("user_id") == user.get("id"))
+    """True si ``user`` puede reingresar ``loan`` directo (vistas y pruebas comparten la regla)."""
+    return permissions.has_cap(user, permissions.CAP_CHECKIN_ANY)

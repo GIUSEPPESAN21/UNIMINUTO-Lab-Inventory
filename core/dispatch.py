@@ -214,9 +214,7 @@ def plan_transition(request: dict, events: list, actor: dict, event_type: str,
             return fail("El pedido todavía no tiene autorización de despacho.")
         if traceability.first_event(events, traceability.EVENT_PICKED_UP):
             return fail("El solicitante ya retiró este pedido por autoservicio.")
-        allowed = authorized_pickers(events)
-        if allowed and actor.get("id") not in allowed:
-            return fail("No estás autorizado para tomar este pedido.")
+        # Cualquier operario (o supervisor) puede tomar un pedido autorizado: ya no se asigna a quién.
         details["picker_id"] = actor.get("id", "")
         details["picker_name"] = actor.get("full_name", "")
     elif event_type == traceability.EVENT_ORDER_RELEASED:
@@ -357,15 +355,13 @@ def open_orders(storage) -> list:
 
 
 def queue_for(storage, actor: dict) -> list:
-    """Pedidos aprobados y autorizados que ``actor`` puede tomar."""
+    """Pedidos aprobados y autorizados que ``actor`` puede tomar (todos: cualquiera elige el que despacha)."""
     permissions.require_cap(actor, permissions.CAP_VIEW_DISPATCH_QUEUE)
     rows = []
     for order in open_orders(storage):
         if order["stage"] != traceability.STAGE_APPROVED or not is_authorized(order["events"]):
             continue
-        allowed = authorized_pickers(order["events"])
-        if not allowed or actor.get("id") in allowed:
-            rows.append(order["request"])
+        rows.append(order["request"])
     return rows
 
 

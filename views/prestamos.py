@@ -5,7 +5,7 @@ capacidad `view_all_loans` (profesor y administrador)."""
 
 import streamlit as st
 
-from core import loans as loans_core, permissions
+from core import loans as loans_core, permissions, returns
 from core.ui import (
     card, card_header, empty_state, guard_cap, more_button, page_header, paginate, persistent_tabs, section_title,
     stat_cards,
@@ -39,19 +39,41 @@ def _loan_row(storage, loan: dict, user: dict, key_prefix: str):
             c1.caption(f"Notas: {loan['notes']}")
         if loan.get("operator_name"):
             c1.caption(f"Despachado por: {loan['operator_name']}")
-        if loans_core.can_checkin_loan(user, loan) and c3.button(
-            "↩️ Reingresar", key=f"{key_prefix}_{loan['id']}", use_container_width=True,
-            type="primary" if overdue else "secondary",
-        ):
+        if loans_core.can_checkin_loan(user, loan):
+            if c3.button("↩️ Reingresar", key=f"{key_prefix}_{loan['id']}", use_container_width=True,
+                         type="primary" if overdue else "secondary"):
+                try:
+                    ok, msg = loans_core.checkin(storage, loan["id"], user)
+                except PermissionError as exc:
+                    ok, msg = False, str(exc)
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+        elif returns.can_request_return(user, loan):
+            _return_controls(storage, loan, user, c1, c3, key_prefix, overdue)
+
+
+def _return_controls(storage, loan: dict, user: dict, info_col, button_col, key_prefix: str, overdue: bool):
+    """Devolución del cliente: pide, un supervisor verifica y un operario guarda."""
+    stage = returns.stage(storage, loan["id"])
+    if stage == returns.STAGE_NONE:
+        if button_col.button("↩️ Devolver", key=f"{key_prefix}_ret_{loan['id']}", use_container_width=True,
+                             type="primary" if overdue else "secondary"):
             try:
-                ok, msg = loans_core.checkin(storage, loan["id"], user)
+                ok, msg = returns.request_return(storage, loan["id"], user)
             except PermissionError as exc:
                 ok, msg = False, str(exc)
+            (st.success if ok else st.error)(msg)
             if ok:
-                st.success(msg)
                 st.rerun()
-            else:
-                st.error(msg)
+        return
+    info_col.info(returns.STAGE_LABELS[stage], icon=":material/hourglass_top:")
+    if stage == returns.STAGE_VERIFIED:
+        proof = returns.last_details(storage, loan["id"], "return_verified")
+        condition = returns.CONDITIONS.get(str(proof.get("condition") or ""), "")
+        info_col.caption(f"Recibido: {proof.get('received', '?')} de {loan['quantity']} · {condition}")
 
 
 def render():

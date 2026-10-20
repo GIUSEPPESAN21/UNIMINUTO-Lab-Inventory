@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 import streamlit as st
 
-from core import barcode, labels, loans as loans_core, notifications, permissions, search, traceability
+from core import barcode, labels, loans as loans_core, notifications, permissions, returns, search, traceability
 from core.labels import ITEM_TYPE_BY_CHOICE, ITEM_TYPE_CHOICES, ITEM_TYPE_HELP, ITEM_TYPE_NAMES
 from core.ui import empty_state, esc, guard_cap, load_error, page_header, section_title, show_flash
 from views import photo_panel, solicitudes
@@ -160,6 +160,15 @@ def _render_item_actions(item: dict, parent: dict = None):
             with st.container(border=True):
                 cc1, cc2 = st.columns([3, 1])
                 cc1.write(f"**{loan['user_name']}** ({loan['user_role']}) · {loan['quantity']} u.{overdue_tag}")
+                if returns.can_request_return(user, loan):
+                    stage = returns.stage(storage, loan["id"])
+                    if stage != returns.STAGE_NONE:
+                        cc1.caption(returns.STAGE_LABELS[stage])
+                    elif cc2.button("Devolver", key=f"return_{loan['id']}", use_container_width=True):
+                        ok, msg = returns.request_return(storage, loan["id"], user)
+                        (st.success if ok else st.error)(msg)
+                        if ok:
+                            st.rerun()
                 if loans_core.can_checkin_loan(user, loan) and cc2.button(
                         "Reingresar", key=f"checkin_{loan['id']}", use_container_width=True):
                     try:

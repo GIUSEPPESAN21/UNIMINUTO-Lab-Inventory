@@ -255,9 +255,6 @@ def _render_mine(storage, user: dict) -> None:
 
 def _render_manage(storage, user: dict) -> None:
     pending = storage.get_service_requests(status=service_requests.STATUS_PENDING)
-    operators = [row for row in storage.get_all_users()
-                 if row.get("status") == "active" and row.get("role") == permissions.ROLE_OPERATOR]
-    operator_names = {row["id"]: row.get("full_name") or row["id"] for row in operators}
     section_title(f"Solicitudes por revisar ({len(pending)})", icon=":material/fact_check:")
     if not pending:
         st.success("No hay solicitudes pendientes.")
@@ -269,14 +266,8 @@ def _render_manage(storage, user: dict) -> None:
             st.markdown(f"**{esc(_request_title(row) or 'Solicitud')}**{esc(quantity)} · "
                         f"{esc(row.get('requester_name'))} · {esc(traceability.short_id(row.get('id')))}")
             if row.get("description"):
-                st.write(row["description"])
+                st.info(f"Nota del cliente: {row['description']}", icon=":material/sticky_note_2:")
             with st.form(f"review_request_{row['id']}"):
-                authorized = []
-                if row.get("request_type") == service_requests.TYPE_PRODUCT:
-                    authorized = st.multiselect(
-                        "Operarios autorizados", list(operator_names), format_func=operator_names.get,
-                        help="Déjalo vacío para permitir a todos los operarios activos.",
-                    )
                 notes = st.text_input("Respuesta para el solicitante (opcional)")
                 own = row.get("requester_id") == user["id"] and not dispatch.allow_self_approval()
                 if own:
@@ -287,13 +278,13 @@ def _render_manage(storage, user: dict) -> None:
                 if approve or reject:
                     decision = service_requests.STATUS_APPROVED if approve else service_requests.STATUS_REJECTED
                     ok, message = service_requests.review_request(
-                        storage, row["id"], decision, user, notes, authorized_pickers=authorized,
+                        storage, row["id"], decision, user, notes,
                     )
                     flash(message, "success" if ok else "error", key=_FLASH)
                     st.rerun()
     more_button(len(pending), "requests_pending")
-    st.caption("Al aprobar un producto queda autorizado para la cola de Despacho. El préstamo y el descuento de "
-               "disponibilidad se crean al completar el picking.")
+    st.caption("Al aprobar un producto entra a la cola de Despacho: cualquier operario o supervisor lo puede tomar. "
+               "El préstamo y el descuento de disponibilidad se crean al completar el picking.")
 
     if permissions.has_cap(user, permissions.CAP_MANAGE_RESERVATIONS):
         st.divider()

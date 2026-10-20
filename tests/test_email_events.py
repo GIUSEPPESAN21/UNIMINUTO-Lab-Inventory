@@ -218,7 +218,7 @@ def test_sending_never_blocks_the_operation(lab, smtp):
 
 def test_checkin_and_reviews_reach_the_right_people(lab, smtp):
     _, _, loan = loans.checkout(lab, "LAB-MIC-01", 1, lab.student)
-    loans.checkin(lab, loan["id"], lab.student)
+    loans.checkin(lab, loan["id"], {"id": "prof-1", "role": "profesor", "full_name": "Profe Prueba"})
     request = lab.create_service_request(
         {"request_type": "service", "service_name": "Corte láser", "description": "Plantilla"}, lab.student,
     )
@@ -301,7 +301,7 @@ def test_without_smtp_nothing_is_attempted_or_logged(lab):
 
     lab.get_setting = only_the_checkout_mode
     ok, _, loan = loans.checkout(lab, "LAB-MIC-01", 1, lab.student)
-    assert ok and loans.checkin(lab, loan["id"], lab.student)[0]
+    assert ok and loans.checkin(lab, loan["id"], {"id": "prof-1", "role": "profesor"})[0]
     assert email_events.pending_count() == 0 and lab.log == []
 
 

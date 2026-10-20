@@ -54,7 +54,7 @@ def test_checkin_restores_availability(storage):
     user = _make_user(storage)
     _, _, loan = loans_core.checkout(storage, "MULT-01", 2, user)
 
-    ok, msg = loans_core.checkin(storage, loan["id"], user)
+    ok, msg = loans_core.checkin(storage, loan["id"], _make_user(storage, role="profesor"))
 
     assert ok is True
     assert storage.get_available_quantity("MULT-01") == 3
@@ -64,9 +64,10 @@ def test_checkin_fails_if_already_returned(storage):
     storage.add_item("MULT-01", name="Multimetro", quantity=3)
     user = _make_user(storage)
     _, _, loan = loans_core.checkout(storage, "MULT-01", 1, user)
-    loans_core.checkin(storage, loan["id"], user)
+    professor = _make_user(storage, role="profesor")
+    loans_core.checkin(storage, loan["id"], professor)
 
-    ok, msg = loans_core.checkin(storage, loan["id"], user)
+    ok, msg = loans_core.checkin(storage, loan["id"], professor)
 
     assert ok is False
 
