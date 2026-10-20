@@ -40,6 +40,7 @@ LOGO_PATH = ASSETS_DIR / "uniminuto-logo.png"
 # logotipo completo seria ilegible.
 SYMBOL_PATH = ASSETS_DIR / "uniminuto-simbolo.png"
 ROLE_LABELS = permissions.ROLE_LABELS
+ROLE_SHORT_LABELS = permissions.ROLE_SHORT_LABELS
 
 # Colores institucionales para las graficas (azul Pantone 287 C, amarillo
 # Pantone 116 C y sus matices), los mismos de style.css.
@@ -231,6 +232,35 @@ def status_badge(text, tone: str = "neutral", icon: str = None) -> None:
     st.markdown(badge_html(text, tone, icon), unsafe_allow_html=True)
 
 
+_FLASH_PREFIX = "_flash_"
+
+
+def flash(message: str, kind: str = "success", key: str = "page") -> None:
+    """Deja un aviso para mostrarlo **después** del siguiente ``st.rerun()``.
+
+    ``st.success(...)`` seguido de ``st.rerun()`` borra el mensaje antes de que alguien lo lea;
+    con ``flash`` + ``show_flash`` el aviso sobrevive a la recarga y se muestra una sola vez."""
+    st.session_state[f"{_FLASH_PREFIX}{key}"] = (kind, message)
+
+
+def show_flash(key: str = "page") -> None:
+    shown = st.session_state.pop(f"{_FLASH_PREFIX}{key}", None)
+    if not shown:
+        return
+    kind, message = shown
+    {"success": st.success, "warning": st.warning, "info": st.info}.get(kind, st.error)(message)
+
+
+def persistent_tabs(titles: list, key: str):
+    """Pestañas que **recuerdan cuál está abierta** aunque la página se vuelva a ejecutar.
+
+    Con ``st.tabs`` a secas, una acción que termina en ``st.rerun()`` (confirmar una
+    corrección, guardar un ajuste…) puede devolver a la primera pestaña. Con ``key`` y
+    ``on_change="rerun"`` Streamlit guarda la pestaña elegida. El contenido de todas se sigue
+    calculando igual que antes."""
+    return st.tabs(titles, key=f"tabs_{key}", on_change="rerun")
+
+
 def section_title(title: str, icon: str = None, caption: str = None) -> None:
     """Titulo de seccion dentro de una pagina (mas liviano que page_header)."""
     icon_part = f'<span class="lab-section__icon" aria-hidden="true">{icon_html(icon)}</span>' if icon else ""
@@ -295,6 +325,24 @@ def timeline_html(steps: list) -> str:
 
 def timeline(steps: list) -> None:
     st.markdown(timeline_html(steps), unsafe_allow_html=True)
+
+
+def stepper_html(steps: list) -> str:
+    """Pasos en una sola línea (que baja de renglón en el celular). Cada paso:
+    ``{"title", "state": done|current|pending|blocked}``."""
+    items = []
+    for step in steps:
+        state = step.get("state") if step.get("state") in STEP_STATES else "pending"
+        current = ' aria-current="step"' if state == "current" else ""
+        items.append(
+            f'<li class="lab-stepper__item lab-stepper__item--{state}"{current}>'
+            f'<span class="lab-stepper__dot" aria-hidden="true"></span>{esc(step.get("title"))}</li>'
+        )
+    return f'<ol class="lab-stepper">{"".join(items)}</ol>'
+
+
+def stepper(steps: list) -> None:
+    st.markdown(stepper_html(steps), unsafe_allow_html=True)
 
 
 def quick_actions(actions: list, columns: int = 3) -> None:
@@ -435,24 +483,30 @@ def footer(text: str = "© 2026 UNIMINUTO · Laboratorio de Ingeniería") -> Non
 
 
 def _render_conflict_controls(storage, user: dict) -> None:
-    """Acciones para resolver un conflicto de sincronizacion (solo maestro)."""
-    if user.get("role") != permissions.ROLE_MASTER:
+    """Acciones para resolver un conflicto de sincronizacion (capacidad ``resolve_sync``)."""
+    if not permissions.has_cap(user, permissions.CAP_RESOLVE_SYNC):
         st.info("Pide a un administrador que resuelva el conflicto desde cualquier pagina de la app.")
         return
+    confirmed = st.checkbox(
+        "Entiendo que elegir una versión reemplaza a la otra y que esto afecta a todas las personas que usan la app.",
+        key="sync_conflict_confirm",
+    )
     keep_remote, keep_local = st.columns(2)
     if keep_remote.button(
         ":material/download: Conservar la versión de GitHub", key="sync_keep_remote", use_container_width=True,
         help="Descarta los cambios hechos desde el conflicto y carga la base que esta en GitHub.",
+        disabled=not confirmed,
     ):
-        ok, message = storage.resolve_sync_conflict("remote")
+        ok, message = storage.resolve_sync_conflict("remote", actor=user)
         st.toast(message, icon=":material/check_circle:" if ok else ":material/warning:")
         if ok:
             st.rerun()
     if keep_local.button(
         ":material/upload: Conservar la versión de esta app", key="sync_keep_local", use_container_width=True,
         help="Publica esta version sobre la de GitHub. La anterior sigue en el historial de commits.",
+        disabled=not confirmed,
     ):
-        ok, message = storage.resolve_sync_conflict("local")
+        ok, message = storage.resolve_sync_conflict("local", actor=user)
         st.toast(message, icon=":material/check_circle:" if ok else ":material/warning:")
         if ok:
             st.rerun()

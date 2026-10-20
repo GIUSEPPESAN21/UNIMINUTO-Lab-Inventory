@@ -10,6 +10,7 @@ import io
 import json
 import logging
 import os
+import shutil
 import time
 import uuid
 from contextlib import contextmanager
@@ -20,7 +21,7 @@ import pandas as pd
 import requests
 import streamlit as st
 
-from core import barcode
+from core import barcode, excel_safe
 from core import reservations as reservation_rules
 from core.config import safe_secret
 
@@ -326,23 +327,69 @@ def _is_github_configured() -> bool:
     return True
 
 
+_PUT_RACE_RETRIES = 2            # reintentos de un PUT que GitHub rechazó con 409/422 sin que el archivo cambiara
+_MAX_RATE_WAIT_SECONDS = 10     # más que esto no se espera dentro de una petición: se informa y se reintenta después
+
+
+def _header(headers, name: str) -> str:
+    """Valor de una cabecera sin distinguir mayúsculas ("" si no está)."""
+    wanted = name.lower()
+    for key, value in (headers or {}).items():
+        if str(key).lower() == wanted:
+            return str(value)
+    return ""
+
+
+def _rate_limit_seconds(status: int, headers, body: str):
+    """Segundos que pide GitHub esperar si la respuesta es un límite de tasa; si no, ``None``.
+
+    Un 403 con ``Retry-After`` / ``X-RateLimit-Remaining: 0`` o un 429 son límite de tasa,
+    no un token inválido (un 403 sin esas señales sí es de permisos)."""
+    if status not in (403, 429):
+        return None
+    retry_after = _header(headers, "Retry-After")
+    remaining = _header(headers, "X-RateLimit-Remaining")
+    if not (status == 429 or retry_after or remaining == "0" or "rate limit" in str(body or "").lower()):
+        return None
+    try:
+        return max(0.0, float(retry_after))
+    except ValueError:
+        pass
+    try:
+        return max(0.0, float(_header(headers, "X-RateLimit-Reset")) - time.time())
+    except ValueError:
+        return 2.0
+
+
+def _rate_limit_wait(resp):
+    return _rate_limit_seconds(getattr(resp, "status_code", 0), getattr(resp, "headers", None),
+                               getattr(resp, "text", ""))
+
+
 def _github_request(method: str, url: str, attempts: int = 3, session=None, **kwargs):
-    """Llamada a la API de GitHub con reintentos ante fallos transitorios de red
-    o respuestas 429/5xx (esperas de 1 s y 2 s). Los demas codigos HTTP se
+    """Llamada a la API de GitHub con reintentos ante fallos transitorios de red,
+    respuestas 429/5xx y límites de tasa (esperas de 1 s y 2 s, o lo que pida
+    ``Retry-After`` hasta ``_MAX_RATE_WAIT_SECONDS``). Los demas codigos HTTP se
     devuelven tal cual para que el llamador los interprete. `session` (opcional)
     es un requests.Session u objeto con `.request` (las fotos lo usan en pruebas)."""
     last_exc = None
     client = session or requests
     for attempt in range(attempts):
+        delay = 2 ** attempt
         try:
             resp = client.request(method, url, headers=_github_headers(), **kwargs)
         except requests.RequestException as exc:
             last_exc = exc
         else:
-            if resp.status_code not in _TRANSIENT_STATUS or attempt == attempts - 1:
+            limited = _rate_limit_wait(resp)
+            if limited is not None:
+                if limited > _MAX_RATE_WAIT_SECONDS:
+                    return resp          # esperar tanto dentro de una petición no sirve: se informa
+                delay = max(delay, limited)
+            if (resp.status_code not in _TRANSIENT_STATUS and limited is None) or attempt == attempts - 1:
                 return resp
         if attempt < attempts - 1:
-            time.sleep(2 ** attempt)
+            time.sleep(delay)
     raise last_exc
 
 
@@ -384,6 +431,39 @@ def _github_remote_fingerprint():
         return None
 
 
+class RemoteUnavailableError(RuntimeError):
+    """GitHub está configurado pero no se pudo obtener la base y no hay copia local.
+
+    Arrancar con un libro vacío en ese caso serviría datos vacíos y dejaría al
+    administrador a un clic de sobrescribir la base real (conflicto → «conservar la
+    de esta app»). Es preferible detenerse y reintentar."""
+
+
+def _validate_workbook_bytes(data: bytes) -> None:
+    """Lanza ``ValueError`` si ``data`` no es un libro .xlsx con hojas de la base.
+
+    Se usa antes de reemplazar el archivo local con lo descargado: una descarga
+    cortada o un archivo que no es la base nunca debe pisar la copia buena."""
+    try:
+        workbook = pd.ExcelFile(io.BytesIO(data), engine="openpyxl")
+        known = [sheet for sheet in workbook.sheet_names if sheet in SHEET_COLUMNS]
+        for sheet in known:
+            workbook.parse(sheet, nrows=0)
+    except Exception as exc:
+        raise ValueError("el archivo descargado no es un libro Excel válido") from exc
+    if not known:
+        raise ValueError("el archivo descargado no tiene ninguna hoja de la base de datos")
+
+
+def _backup_local_copy() -> None:
+    """Guarda la última copia local buena como ``<base>.bak`` antes de reemplazarla."""
+    try:
+        if os.path.exists(EXCEL_PATH):
+            shutil.copy2(EXCEL_PATH, f"{EXCEL_PATH}.bak")
+    except OSError as exc:      # una copia de seguridad que falla no debe impedir sincronizar
+        logger.warning(f"No se pudo guardar la copia {EXCEL_PATH}.bak: {exc}")
+
+
 def _github_pull() -> bool:
     """Descarga la base desde GitHub y reemplaza el archivo local.
 
@@ -408,7 +488,7 @@ def _github_pull() -> bool:
             return False
 
         if resp.status_code != 200:
-            msg = _describe_github_error(resp.status_code, resp.text)
+            msg = _describe_response(resp)
             logger.error(f"GitHub pull fallo: HTTP {resp.status_code} - {resp.text[:300]}")
             _ui_warning(f"No se pudo sincronizar con GitHub: {msg}")
             _set_sync_status(configured=True, ok=False, message=msg, op="pull")
@@ -429,6 +509,16 @@ def _github_pull() -> bool:
             )
             return False
 
+        try:
+            _validate_workbook_bytes(file_bytes)
+        except ValueError as exc:
+            logger.error(f"GitHub pull: descarga descartada: {exc}")
+            message = f"La descarga de GitHub se descartó porque {exc}. Se conserva la copia local."
+            _ui_warning(message)
+            _set_sync_status(configured=True, ok=False, message=message, op="pull")
+            return False
+
+        _backup_local_copy()
         _atomic_write_bytes(EXCEL_PATH, file_bytes)
         _cached_dfs = None
         _set_remote_sha(data.get("sha"))
@@ -449,14 +539,26 @@ def _github_pull() -> bool:
         return False
 
 
-def _describe_github_error(status_code: int, body: str) -> str:
+def _describe_github_error(status_code: int, body: str, headers=None) -> str:
     """Traduce los codigos de error mas comunes de la API de GitHub a un
     mensaje accionable (en vez de solo el HTTP crudo)."""
+    wait = _rate_limit_seconds(status_code, headers, body)
+    if wait is not None:
+        return (
+            "GitHub limitó temporalmente las solicitudes (límite de tasa); no es un problema del token. "
+            + (f"Podrá reintentar en unos {int(wait) + 1} s. " if wait else "")
+            + "Los cambios quedan pendientes y se vuelven a enviar solos."
+        )
     if status_code == 404:
         repo = safe_secret("GITHUB_REPO", "")
         return (
             f"El repositorio '{repo}' no existe o el token no tiene acceso a el. "
             "Verifica GITHUB_REPO en los Secrets de Streamlit (Settings -> Secrets)."
+        )
+    if status_code == 409:
+        return (
+            "GitHub rechazó la publicación por un commit simultáneo en el repositorio (HTTP 409) aunque "
+            "el archivo no cambió. Los cambios quedan pendientes y se vuelven a enviar solos."
         )
     if status_code in (401, 403):
         return (
@@ -464,6 +566,11 @@ def _describe_github_error(status_code: int, body: str) -> str:
             "('Contents: Read and write') sobre el repositorio configurado."
         )
     return f"HTTP {status_code} - {body[:300]}"
+
+
+def _describe_response(resp) -> str:
+    """Mensaje accionable para una respuesta de GitHub que no fue exitosa."""
+    return _describe_github_error(resp.status_code, resp.text, getattr(resp, "headers", None))
 
 
 _CONFLICT_MESSAGE = (
@@ -495,7 +602,7 @@ def _github_push(force: bool = False) -> bool:
         elif get_resp.status_code == 404:
             remote_sha = ""
         else:
-            msg = _describe_github_error(get_resp.status_code, get_resp.text)
+            msg = _describe_response(get_resp)
             logger.error(f"GitHub push: no se pudo leer el SHA: HTTP {get_resp.status_code}")
             _ui_warning(f"Error de sincronizacion con GitHub: {msg}")
             _set_sync_status(configured=True, ok=False, message=msg, op="push")
@@ -514,6 +621,25 @@ def _github_push(force: bool = False) -> bool:
             payload["sha"] = remote_sha
 
         put_resp = _github_request("PUT", url, json=payload, timeout=60)
+        # Un 409/422 no siempre es un conflicto: GitHub también lo devuelve cuando dos commits
+        # llegan a la vez al mismo repositorio (p. ej. una foto subida justo ahora). Solo es un
+        # conflicto real si el archivo remoto cambió; si sigue igual, se reintenta con espera.
+        remote_changed = False
+        for retry in range(1, _PUT_RACE_RETRIES + 1):
+            if put_resp.status_code not in (409, 422):
+                break
+            time.sleep(0.5 * retry)
+            fresh = _github_request("GET", url, timeout=15)
+            if fresh.status_code == 200:
+                fresh_sha = fresh.json().get("sha", "")
+            elif fresh.status_code == 404:
+                fresh_sha = ""
+            else:
+                break                      # no se pudo comprobar: falla ahora y se reintenta después
+            if fresh_sha != remote_sha:
+                remote_changed = True      # el archivo remoto cambió de verdad: conflicto real
+                break
+            put_resp = _github_request("PUT", url, json=payload, timeout=60)
         if put_resp.status_code in (200, 201):
             new_sha = ((put_resp.json() or {}).get("content") or {}).get("sha") or ""
             if not new_sha:
@@ -525,14 +651,14 @@ def _github_push(force: bool = False) -> bool:
             _set_sync_status(configured=True, ok=True, message="Ultima sincronizacion OK.", op="push")
             return True
 
-        if put_resp.status_code in (409, 422) and not force:
+        if put_resp.status_code in (409, 422) and not force and remote_changed:
             # Alguien publico entre nuestra lectura del SHA y el PUT.
             _set_sync_status(
                 configured=True, ok=False, message=_CONFLICT_MESSAGE, op="push", conflict=True
             )
             return False
 
-        msg = _describe_github_error(put_resp.status_code, put_resp.text)
+        msg = _describe_response(put_resp)
         logger.error(f"GitHub push fallo: HTTP {put_resp.status_code} - {put_resp.text[:500]}")
         _ui_warning(f"Error de sincronizacion con GitHub: {msg}")
         _set_sync_status(configured=True, ok=False, message=msg, op="push")
@@ -743,9 +869,7 @@ def _read_excel(*sheets: str) -> dict:
 def _serialize_to_disk(dfs: dict) -> None:
     """Serializa las hojas y reemplaza el archivo de forma atomica."""
     buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        for sheet, df in dfs.items():
-            df.to_excel(writer, sheet_name=sheet, index=False)
+    excel_safe.write_frames(buffer, dfs)   # sin fórmulas accidentales ni caracteres de control
     try:
         _atomic_write_bytes(EXCEL_PATH, buffer.getvalue())
     except Exception:
@@ -1077,6 +1201,14 @@ class LabStorage:
     def _ensure_excel_exists(self):
         _github_pull()
         if not os.path.exists(EXCEL_PATH):
+            status = get_sync_status()
+            if status["configured"] and status["ok"] is False and status["last_op"] == "pull":
+                # Sin copia local y sin poder leer GitHub (no es un 404): no se inventa una base vacía.
+                raise RemoteUnavailableError(
+                    "No se pudo descargar la base de datos desde GitHub y no hay una copia local. "
+                    f"Para no mostrar datos vacíos la app se detuvo. Motivo: {status['message']} "
+                    "Reintenta en un momento; si persiste, revisa GITHUB_TOKEN y GITHUB_REPO en los Secrets."
+                )
             logger.info(f"Creando archivo Excel nuevo: {EXCEL_PATH}")
             with _db_write():
                 dfs = {sheet: pd.DataFrame(columns=cols) for sheet, cols in SHEET_COLUMNS.items()}
@@ -1096,7 +1228,8 @@ class LabStorage:
                     with _excel_lock:
                         _write_excel(_read_excel())
             except Exception:
-                pass
+                # La app sigue con lo que haya, pero el motivo queda en el registro.
+                logger.exception("No se pudo revisar o migrar el libro local %s", EXCEL_PATH)
 
     def is_github_sync_active(self) -> bool:
         return _is_github_configured()
@@ -1166,27 +1299,43 @@ class LabStorage:
         flush_now()      # síncrono también en SYNC_MODE=deferred: la persona espera el resultado
         return get_sync_status()["ok"] is not False
 
-    def resolve_sync_conflict(self, keep: str):
+    def resolve_sync_conflict(self, keep: str, actor: dict = None):
         """Resuelve un conflicto de sincronizacion. Devuelve (ok, mensaje).
 
         keep="remote": descarta lo local y adopta la version de GitHub.
         keep="local":  publica la version local sobre la de GitHub (la remota
-                       anterior sigue disponible en el historial de commits)."""
+                       anterior sigue disponible en el historial de commits).
+
+        Con ``actor`` exige la capacidad ``resolve_sync`` y deja constancia en la
+        trazabilidad de quién eligió qué versión."""
+        if keep not in ("remote", "local"):
+            raise ValueError("keep debe ser 'remote' o 'local'.")
+        _authorize(actor, "resolve_sync", "Solo un administrador resuelve conflictos de sincronización.")
         if keep == "remote":
             with _excel_lock:
                 replaced = _github_pull()
-            if replaced:
-                return True, "Se cargo la version de GitHub. Los cambios locales sin publicar se descartaron."
-            return False, get_sync_status()["message"] or "No hay una version remota que descargar."
-        if keep == "local":
+            if not replaced:
+                return False, get_sync_status()["message"] or "No hay una version remota que descargar."
+            result = (True, "Se cargo la version de GitHub. Los cambios locales sin publicar se descartaron.")
+        else:
             with _push_lock:
                 published = _github_push(force=True)
                 if published:
                     _clear_dirty()
-            if published:
-                return True, "Se publico la version local en GitHub."
-            return False, get_sync_status()["message"]
-        raise ValueError("keep debe ser 'remote' o 'local'.")
+            if not published:
+                return False, get_sync_status()["message"]
+            result = (True, "Se publico la version local en GitHub.")
+        if actor is not None:
+            try:      # la constancia no debe deshacer una resolución que ya se hizo
+                self.add_trace_event({
+                    "event_type": "sync_conflict_resolved", "user_id": actor.get("id", ""),
+                    "actor_id": actor.get("id", ""), "actor_name": actor.get("full_name", ""),
+                    "actor_email": actor.get("institutional_email", ""), "actor_role": actor.get("role", ""),
+                    "details": json.dumps({"kept": keep}),
+                })
+            except Exception:
+                logger.exception("No se pudo registrar la resolución del conflicto de sincronización")
+        return result
 
     # ------------------------------------------------------------------
     # ITEMS (productos, contenedores maestros e items hijos)
@@ -1657,7 +1806,8 @@ class LabStorage:
         df = dfs["professors_whitelist"]
         return sorted(df["institutional_email"].tolist())
 
-    def add_to_whitelist(self, email: str):
+    def add_to_whitelist(self, email: str, actor: dict = None):
+        _authorize(actor, "manage_users", "Solo un administrador modifica la lista blanca.")
         with _db_write():
             dfs = _read_excel()
             df = dfs["professors_whitelist"]
@@ -1666,13 +1816,24 @@ class LabStorage:
                 dfs["professors_whitelist"] = pd.concat(
                     [df, pd.DataFrame([{"institutional_email": email}])], ignore_index=True
                 )
+                if actor is not None:
+                    dfs["trace_events"] = pd.concat([dfs["trace_events"], pd.DataFrame([
+                        _admin_audit_row(actor, "whitelist_changed", {"action": "added", "email": email})
+                    ])], ignore_index=True)
                 _write_and_sync(dfs)
 
-    def remove_from_whitelist(self, email: str):
+    def remove_from_whitelist(self, email: str, actor: dict = None):
+        _authorize(actor, "manage_users", "Solo un administrador modifica la lista blanca.")
         with _db_write():
             dfs = _read_excel()
             df = dfs["professors_whitelist"]
-            dfs["professors_whitelist"] = df[df["institutional_email"] != email.lower().strip()]
+            email = email.lower().strip()
+            present = email in set(df["institutional_email"])
+            dfs["professors_whitelist"] = df[df["institutional_email"] != email]
+            if present and actor is not None:
+                dfs["trace_events"] = pd.concat([dfs["trace_events"], pd.DataFrame([
+                    _admin_audit_row(actor, "whitelist_changed", {"action": "removed", "email": email})
+                ])], ignore_index=True)
             _write_and_sync(dfs)
 
     # ------------------------------------------------------------------
@@ -2087,6 +2248,74 @@ class LabStorage:
     REVOKED_SESSIONS_KEY = "revoked_sessions"
     REVOKED_SESSIONS_LIMIT = 1000
 
+    # Datos operativos que el administrador puede vaciar desde la app (Usuarios → Datos).
+    PURGE_NOISE_EVENTS = ("session_login", "session_logout", "session_expired", "nfc_tap")
+
+    def operational_data_counts(self) -> dict:
+        """Cuántas filas hay de cada tipo de dato operativo (vista previa del borrado)."""
+        dfs = _read_excel("service_requests", "reservations", "notification_log", "trace_events", "loans")
+        events = dfs["trace_events"]
+        loans = dfs["loans"]
+        return {
+            "solicitudes": len(dfs["service_requests"]),
+            "trazabilidad": int((events["request_id"] != "").sum()),
+            "reservas": len(dfs["reservations"]),
+            "correos": len(dfs["notification_log"]),
+            "sesiones_nfc": int(events["event_type"].isin(self.PURGE_NOISE_EVENTS).sum()),
+            "prestamos_cerrados": int((loans["status"] != "out").sum()),
+            "prestamos_abiertos": int((loans["status"] == "out").sum()),
+        }
+
+    def purge_operational_data(self, actor: dict, requests: bool = True, reservations: bool = True,
+                               mail_log: bool = True, session_noise: bool = True,
+                               closed_loans: bool = False) -> dict:
+        """Vacía datos operativos de una base **real**, solo a petición del administrador.
+
+        Nunca toca personas, productos, ubicaciones, fotos, ajustes, ni los préstamos abiertos (de ellos
+        depende la disponibilidad). Guarda antes ``<base>.bak`` y deja constancia en la trazabilidad.
+        Devuelve cuántas filas quitó de cada tipo."""
+        _authorize(actor, "purge_data", "Solo un administrador puede borrar datos operativos.")
+        removed = {}
+        with _db_write():
+            dfs = _read_excel()
+            _backup_local_copy()
+            if requests:
+                removed["solicitudes"] = len(dfs["service_requests"])
+                dfs["service_requests"] = dfs["service_requests"].iloc[0:0].copy()
+                events = dfs["trace_events"]
+                linked = events["request_id"] != ""
+                removed["trazabilidad"] = int(linked.sum())
+                dfs["trace_events"] = events[~linked].reset_index(drop=True)
+                loans = dfs["loans"].copy()          # un préstamo abierto ya no apunta a una solicitud borrada
+                loans["request_id"] = ""
+                dfs["loans"] = loans
+            if reservations:
+                removed["reservas"] = len(dfs["reservations"])
+                dfs["reservations"] = dfs["reservations"].iloc[0:0].copy()
+            if mail_log:
+                removed["correos"] = len(dfs["notification_log"])
+                dfs["notification_log"] = dfs["notification_log"].iloc[0:0].copy()
+            if session_noise:
+                events = dfs["trace_events"]
+                noise = events["event_type"].isin(self.PURGE_NOISE_EVENTS)
+                removed["sesiones_nfc"] = int(noise.sum())
+                dfs["trace_events"] = events[~noise].reset_index(drop=True)
+            if closed_loans:
+                loans = dfs["loans"]
+                done = loans["status"] != "out"
+                removed["prestamos_cerrados"] = int(done.sum())
+                dfs["loans"] = loans[~done].reset_index(drop=True)
+            if actor is not None:
+                audit = _admin_audit_row(actor, "data_purged", {"removed": removed})
+                dfs["trace_events"] = pd.concat([dfs["trace_events"], pd.DataFrame([audit])], ignore_index=True)
+            _write_and_sync(dfs)
+            _bump_data_version(reload=True)       # las listas de Despacho se recalculan desde cero
+        from core import dispatch, picking
+
+        dispatch.reset_orders_cache()
+        picking.reset()
+        return removed
+
     def reset_simulation(self) -> dict:
         """Vacía lo operativo (préstamos, solicitudes, eventos, reservas, correos y las
         salidas/reingresos del historial) de una base de SIMULACIÓN de la lúdica.
@@ -2442,6 +2671,17 @@ class LabStorage:
                 dfs["trace_events"] = pd.concat([dfs["trace_events"], pd.DataFrame([event_row])], ignore_index=True)
             _write_and_sync(dfs)
         return removed
+
+
+def _admin_audit_row(actor: dict, event_type: str, details: dict) -> dict:
+    """Fila de ``trace_events`` para una acción administrativa de ``actor`` (lista blanca,
+    conflicto de sincronización…): quién, qué y cuándo, sin solicitud asociada."""
+    return _trace_event_row({
+        "event_type": event_type, "user_id": actor.get("id", ""), "owner_id": actor.get("id", ""),
+        "actor_id": actor.get("id", ""), "actor_name": actor.get("full_name", ""),
+        "actor_email": actor.get("institutional_email", ""), "actor_role": actor.get("role", ""),
+        "details": json.dumps(details, ensure_ascii=False),
+    })
 
 
 def _trace_event_row(event: dict) -> dict:

@@ -41,9 +41,12 @@ def render():
         {"icon": "📦", "title": ROLE_LABELS["operario"],
          "text": "Toma los pedidos autorizados, recorre el laboratorio, hace el picking unidad por unidad "
                  "y lo entrega al supervisor. No aprueba ni ve inventario ni reportes."},
-        {"icon": "🧑‍🏫", "title": ROLE_LABELS["profesor"],
+        {"icon": "🧑‍💼", "title": ROLE_LABELS["encargado"],
          "text": "Aprueba solicitudes, autoriza operarios, recibe el picking, lo revisa y lo entrega al cliente. "
-                 "Si tiene permiso de inventario (profesor), también administra productos, ubicaciones y reportes."},
+                 "Ve la trazabilidad y los tiempos; no edita el inventario."},
+        {"icon": "🧑‍🏫", "title": ROLE_LABELS["profesor"],
+         "text": "Hace lo mismo que el encargado y además administra productos, ubicaciones, fotos, chips NFC, "
+                 "reservas, reportes y todos los préstamos."},
         {"icon": "🔐", "title": ROLE_LABELS["maestro"],
          "text": "Gestiona usuarios, roles y contraseñas, configura los correos y tiene visibilidad total del laboratorio."},
     ])

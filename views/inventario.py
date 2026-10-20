@@ -21,8 +21,8 @@ from core.labels import (
     ITEM_TYPE_BY_CHOICE, ITEM_TYPE_CHOICES, ITEM_TYPE_HELP, ITEM_TYPE_ICONS, ITEM_TYPE_LABELS, ITEM_TYPE_NAMES,
 )
 from core.ui import (
-    badge_html, centered_columns, empty_state, esc, guard_cap, icon_html, page_header, section_title, stat_cards,
-    timeline,
+    badge_html, centered_columns, empty_state, esc, guard_cap, icon_html, page_header, persistent_tabs, section_title,
+    stat_cards, timeline,
 )
 from views import label_settings, photo_panel, ubicaciones
 from views.code_input import render_code_input
@@ -598,7 +598,7 @@ def _render_catalog(storage, user: dict, spec) -> None:
 
 
 def _render_new_item(storage, user: dict) -> None:
-    st.caption("También puedes registrar un item nuevo directamente escaneando su código en la sección Escanear.")
+    st.caption("También puedes registrar un item nuevo directamente escaneando su código en la sección Buscar.")
     item_kind = st.radio("¿Qué quieres registrar?", ITEM_TYPE_CHOICES, horizontal=True, key="inv_new_kind")
     item_type = ITEM_TYPE_BY_CHOICE[item_kind]
     st.caption(ITEM_TYPE_HELP[item_type])
@@ -741,9 +741,9 @@ def render():
             _edit_item_form(storage, item, user)
         return
 
-    tab_catalogo, tab_nuevo, tab_import, tab_etiquetas, tab_ubicaciones = st.tabs(
+    tab_catalogo, tab_nuevo, tab_import, tab_etiquetas, tab_ubicaciones = persistent_tabs(
         [":material/list_alt: Catalogo", ":material/add: Nuevo item", ":material/upload_file: Importar CSV masivo",
-         ":material/print: Etiquetas", ":material/map: Ubicaciones"]
+         ":material/print: Etiquetas", ":material/map: Ubicaciones"], "inventario",
     )
     label_spec = labels.load_label_spec(storage)
 

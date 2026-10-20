@@ -282,3 +282,80 @@ def test_an_nfc_tap_of_another_product_is_a_failed_reading_not_a_reading(lab):
     assert dispatch.current_readings(operator, request_id) == []
     assert picking.failed(operator["id"], request_id)[0]["code"] == "LAB-OSC-01"
     assert _events(storage, request_id, traceability.EVENT_ORDER_SCAN_FAILED) == []   # aún sin escribir
+
+
+def test_two_orders_of_the_same_product_do_not_collide_on_widget_keys(lab):
+    """Regresión: dos pedidos del mismo producto en «Mis pedidos» repetían la clave del
+    popover «Foto de estado» (StreamlitDuplicateElementKey) y tumbaban Despacho."""
+    storage, people = lab
+    for _ in range(2):
+        row, _, _ = service_requests.submit_request(storage, people["estudiante"], "product", CODE, 1)
+        assert service_requests.review_request(storage, row["id"], "approved", people["encargado"])[0]
+        assert dispatch.claim_request(storage, row["id"], people["maestro"])[0]
+    at = _open_despacho(people["maestro"])           # el administrador puede tomar y adjuntar fotos
+    assert not at.exception
+    assert len([b for b in at.button if "Iniciar picking" in b.label]) == 2
+
+
+# --- confirmación manual con constancia (v1.17) -------------------------------------------------
+
+def test_manual_confirmation_needs_the_authorization_and_leaves_a_written_proof(lab):
+    storage, people = lab
+    request_id = _claimed_order(storage, people, quantity=3)
+    ok, message, _ = dispatch.confirm_manual_picking(storage, request_id, people["operario"], authorized=False)
+    assert not ok and "autorización" in message
+    assert storage.get_service_request(request_id) is not None
+    assert not _events(storage, request_id, traceability.EVENT_ORDER_PICKED)
+
+    ok, message, _ = dispatch.confirm_manual_picking(storage, request_id, people["operario"], True,
+                                                     note="la pistola no tenía batería")
+    assert ok, message
+    [picked] = _events(storage, request_id, traceability.EVENT_ORDER_PICKED)
+    details = traceability.event_details(picked)
+    assert details["methods"] == {"manual": 3} and details["method"] == "manual"
+    proof = details["manual_confirmation"]
+    assert proof["operator_name"] == people["operario"]["full_name"] and proof["operator_id"] == people["operario"]["id"]
+    assert "sin leer su código" in proof["message"] and proof["note"] == "la pistola no tenía batería"
+    loans = storage.get_all_loans(status="out")
+    assert len(loans) == 1 and loans[0]["quantity"] == 3 and loans[0]["operator_id"] == people["operario"]["id"]
+
+
+def test_manual_confirmation_is_only_for_the_assigned_operator_and_not_twice(lab):
+    storage, people = lab
+    request_id = _claimed_order(storage, people)
+    with pytest.raises(PermissionError):
+        dispatch.confirm_manual_picking(storage, request_id, people["estudiante"], True)
+    other = storage.create_user("Otro operario", "otro@uniminuto.edu.co", "x", "operario")
+    ok, message, _ = dispatch.confirm_manual_picking(storage, request_id, other, True)
+    assert not ok and "ya no está en tu picking" in message
+    assert dispatch.confirm_manual_picking(storage, request_id, people["operario"], True)[0]
+    ok, _, _ = dispatch.confirm_manual_picking(storage, request_id, people["operario"], True)
+    assert not ok and len(storage.get_all_loans(status="out")) == 1        # no se descuenta dos veces
+
+
+def test_manual_confirmation_panel_is_open_in_scenario_a_and_gated_by_the_checkbox(lab):
+    storage, people = lab
+    request_id = _claimed_order(storage, people)
+    assert dispatch.set_scenario(storage, people["maestro"], "A")[0]
+    assert dispatch.start_picking(storage, request_id, people["operario"])[0]
+    at = _open_despacho(people["operario"])
+    done = [b for b in at.button if b.label == "Confirmar y completar picking"][0]
+    assert done.disabled and "sin leer su código" in _text(at.caption)
+    at.checkbox[0].check().run()
+    done = [b for b in at.button if b.label == "Confirmar y completar picking"][0]
+    assert not done.disabled
+    done.click().run()
+    assert not at.exception
+    assert _events(storage, request_id, traceability.EVENT_ORDER_PICKED)
+
+
+def test_one_click_takes_the_order_and_opens_the_picking_panel(lab):
+    storage, people = lab
+    row, _, _ = service_requests.submit_request(storage, people["estudiante"], "product", CODE, 2)
+    assert service_requests.review_request(storage, row["id"], "approved", people["encargado"])[0]
+    at = _open_despacho(people["operario"])
+    [b for b in at.button if b.label == "Tomar y empezar picking"][0].click().run()
+    assert not at.exception
+    assert dispatch.assigned_picker(storage.get_trace_events(request_id=row["id"])) == people["operario"]["id"]
+    assert picking.active_request(people["operario"]["id"]) == row["id"]            # el panel queda abierto
+    assert "Picking · " in _text(at.markdown, at.caption, at.subheader) or any("Código leído" in t.label for t in at.text_input)

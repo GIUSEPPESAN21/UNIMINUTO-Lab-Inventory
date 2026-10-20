@@ -8,7 +8,7 @@ from core import dispatch, permissions
 from core import loans as loans_core
 from core.labels import ITEM_TYPE_NAMES
 from core.ui import (
-    ROLE_LABELS, alert_list, empty_state, greeting, hero, long_date_es, quick_actions,
+    ROLE_LABELS, ROLE_SHORT_LABELS, alert_list, empty_state, greeting, hero, long_date_es, quick_actions,
     section_title, stat_cards,
 )
 
@@ -23,11 +23,10 @@ _ROLE_ICON = {"estudiante": "🎓", "operario": "📦", "encargado": "🧑‍�
 
 # (clave en st.session_state["pages"], etiqueta, icono, descripcion)
 _ACTIONS = [
-    ("escanear", "Escanear código", "🛰️", "Lee un código y registra una salida o un reingreso."),
-    ("solicitudes", "Crear solicitud", "📝", "Pide un producto o un servicio al laboratorio."),
+    ("escanear", "Buscar", "🔎", "Escanea un código o escribe el nombre de un producto."),
+    ("solicitudes", "Solicitudes", "📝", "Pide un producto, un servicio o una reserva y sigue su avance."),
     ("despacho", "Despacho", "📦", "Toma pedidos, registra picking y confirma entregas."),
-    ("trazabilidad", "Trazabilidad", "🧭", "Sigue la ruta de un producto y tus solicitudes."),
-    ("reservas", "Reservar laboratorio", "🗓️", "Agenda una actividad o el laboratorio completo."),
+    ("trazabilidad", "Trazabilidad", "🧭", "Revisa el recorrido de los pedidos y de cada producto."),
     ("prestamos", "Ver préstamos", "📋", "Consulta qué está prestado y qué falta devolver."),
     ("inventario", "Ir a Inventario", "📦", "Registra, edita e imprime etiquetas de productos."),
     ("ubicaciones", "Estanterías y mesas", "🗄️", "Crea estanterías, pisos, mesas de trabajo y sus etiquetas."),
@@ -43,8 +42,8 @@ _ROLE_GUIDE = (
 
 def _quick_guide():
     roles = _ROLE_GUIDE.format(
-        cliente=ROLE_LABELS[permissions.ROLE_STUDENT], operario=ROLE_LABELS[permissions.ROLE_OPERATOR],
-        supervisor=ROLE_LABELS[permissions.ROLE_ATTENDANT], admin=ROLE_LABELS[permissions.ROLE_MASTER],
+        cliente=ROLE_SHORT_LABELS[permissions.ROLE_STUDENT], operario=ROLE_SHORT_LABELS[permissions.ROLE_OPERATOR],
+        supervisor=ROLE_SHORT_LABELS[permissions.ROLE_ATTENDANT], admin=ROLE_SHORT_LABELS[permissions.ROLE_MASTER],
     )
     with st.expander(":material/lightbulb: Guía rápida: ¿cómo funciona este sistema?", expanded=False):
         st.markdown(f"""
@@ -52,13 +51,13 @@ def _quick_guide():
         2. **{ITEM_TYPE_NAMES['child']}**: una subdivisión dentro de un Contenedor Principal
            para una característica concreta (ej. "Resistencias 220 Ω").
         3. **{ITEM_TYPE_NAMES['standalone']}**: un producto con su propio código, sin contenedor.
-        4. Ve a **:material/barcode_scanner: Escanear**, escribe o escanea el código con tu lector USB, y desde ahí puedes
-           **dar salida** (llevarte el producto prestado) o **reingresarlo** cuando lo devuelvas.
-        5. En **:material/edit_note: Solicitudes** pide un producto o servicio; los responsables reciben correo si SMTP está configurado.
-        6. En **:material/calendar_month: Reservas** solicita una actividad o el laboratorio completo y consulta su aprobación.
-        7. En **:material/assignment: Préstamos** puedes ver en todo momento qué tienes prestado (o, si eres administrador
+        4. En **:material/search: Buscar** escribe el nombre de un producto o escanea su código con tu lector USB; desde
+           ahí puedes pedirlo, **darle salida** (llevártelo prestado) o **reingresarlo** cuando lo devuelvas.
+        5. En **:material/edit_note: Solicitudes** pides un producto, un servicio o una reserva y ves en qué paso va
+           (enviada, aprobada, preparando, lista para reclamar). Los responsables reciben correo si SMTP está configurado.
+        6. En **:material/assignment: Préstamos** puedes ver en todo momento qué tienes prestado (o, si eres administrador
            o supervisor autorizado, quién tiene qué en todo el laboratorio).
-        8. **Roles:** {roles}
+        7. **Roles:** {roles}
         """)
 
 

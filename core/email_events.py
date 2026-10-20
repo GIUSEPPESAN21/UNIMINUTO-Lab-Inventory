@@ -31,7 +31,7 @@ from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 
 from core import notifications
-from core.ui import BRAND_BLUE, BRAND_GOLD, ROLE_LABELS
+from core.ui import BRAND_BLUE, BRAND_GOLD, ROLE_LABELS, ROLE_SHORT_LABELS
 
 logger = logging.getLogger(__name__)
 
@@ -273,8 +273,12 @@ def role_label(role) -> str:
     return ROLE_LABELS.get(role or "", str(role or "Usuario").capitalize())
 
 
+def role_short_label(role) -> str:
+    return ROLE_SHORT_LABELS.get(role or "", str(role or "Usuario").capitalize())
+
+
 def _person(user: dict) -> str:
-    return f"{_one_line(user.get('full_name')) or 'Sin nombre'} ({role_label(user.get('role'))})"
+    return f"{_one_line(user.get('full_name')) or 'Sin nombre'} ({role_short_label(user.get('role'))})"
 
 
 def _who_rows(user: dict) -> list:
@@ -450,8 +454,8 @@ def reservation_created_content(reservation: dict, requester: dict = None) -> Em
             ("Cuándo", [("Registrada", _when_text(reservation.get("created_at"))),
                         ("Referencia", _short_id(reservation.get("id")))]),
         ],
-        action="Revísala en la aplicación (Reservas → Gestionar) para aprobarla o rechazarla.",
-        page="reservas",
+        action="Revísala en la aplicación (Solicitudes → Gestionar) para aprobarla o rechazarla.",
+        page="solicitudes",
     )
 
 
@@ -533,7 +537,7 @@ def request_reviewed_content(request: dict, decision: str, reviewer: dict, notes
     if decision != _APPROVED:
         action = "Si aún lo necesitas, crea una nueva solicitud con los ajustes indicados."
     elif product:
-        action = ("Retira el producto en el laboratorio confirmando la salida en Escanear; en Trazabilidad "
+        action = ("Retira el producto en el laboratorio confirmando la salida en Buscar; en Trazabilidad "
                   "puedes seguir la ruta verificable hasta él.")
     else:
         action = "Sigue su avance (en curso → entregado) en Solicitudes o en Trazabilidad."
@@ -579,14 +583,14 @@ def reservation_reviewed_content(reservation: dict, decision: str, reviewer: dic
             ]),
         ],
         action=action,
-        page="reservas",
+        page="solicitudes",
     )
 
 
 def overdue_content(overdue: list, actor: dict = None) -> EmailContent:
     rows = [
         (f"{_one_line(loan.get('item_name') or loan.get('item_id'))} x{loan.get('quantity') or 1}",
-         f"{_one_line(loan.get('user_name')) or 'Sin nombre'} ({role_label(loan.get('user_role'))}) · "
+         f"{_one_line(loan.get('user_name')) or 'Sin nombre'} ({role_short_label(loan.get('user_role'))}) · "
          f"debía devolverse el {_format_deadline(loan.get('expected_return_at'))}")
         for loan in overdue
     ]
@@ -598,7 +602,7 @@ def overdue_content(overdue: list, actor: dict = None) -> EmailContent:
         "Préstamos vencidos",
         f"Hay {len(overdue)} préstamo(s) que debieron devolverse y siguen fuera del laboratorio.",
         [("Vencidos", rows), ("Cuándo", when)],
-        action="Contacta a cada persona y registra el reingreso en Escanear o en Préstamos.",
+        action="Contacta a cada persona y registra el reingreso en Buscar o en Préstamos.",
         page="prestamos",
     )
 

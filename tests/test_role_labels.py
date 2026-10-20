@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Etiquetas de rol de v1.15: Cliente, Operario, Supervisor y Administrador viven solo en
-ROLE_LABELS; las etiquetas anteriores ya no aparecen en la interfaz, los correos ni la documentación."""
+"""Etiquetas de rol (v1.17): cada una dice el cargo de la vida real entre paréntesis y vive solo en
+ROLE_LABELS; las etiquetas descartadas ya no aparecen en la interfaz, los correos ni la documentación."""
 
 import re
 from pathlib import Path
@@ -14,24 +14,29 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 from core import permissions  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-OLD = ("Encargado de despacho", "Encargado del laboratorio", "Perfil maestro")
+OLD = ("Encargado de despacho", "Perfil maestro")
 
 
 def test_labels_and_technical_ids():
     assert permissions.ROLES == ("estudiante", "operario", "encargado", "profesor", "maestro")
     assert permissions.ROLE_LABELS == {
-        "estudiante": "Cliente", "operario": "Operario", "encargado": "Supervisor",
-        "profesor": "Supervisor", "maestro": "Administrador",
+        "estudiante": "Estudiante (Cliente)", "operario": "Operario (Auxiliar de laboratorio)",
+        "encargado": "Supervisor (Encargado del laboratorio)", "profesor": "Supervisor (Profesor)",
+        "maestro": "Administrador",
     }
-    assert permissions.role_label({"role": "profesor"}) == permissions.role_label("encargado") == "Supervisor"
+    assert permissions.role_label({"role": "profesor"}) == "Supervisor (Profesor)"
     assert permissions.role_label("desconocido") == "desconocido" and permissions.role_label("") == "Sin rol"
 
 
-def test_users_page_tells_the_two_supervisors_apart():
-    assert permissions.role_detail_label("encargado") == "Supervisor (encargado)"
-    assert permissions.role_detail_label("profesor") == "Supervisor (profesor)"
-    assert permissions.role_detail_label("estudiante") == "Cliente"
-    assert len({permissions.role_detail_label(role) for role in permissions.ROLES}) == 5
+def test_short_labels_are_for_sentences_like_name_in_parentheses():
+    assert [permissions.role_short_label(role) for role in permissions.ROLES] == [
+        "Cliente", "Operario", "Supervisor", "Supervisor", "Administrador"]
+    assert permissions.role_short_label("desconocido") == "desconocido"
+
+
+def test_every_role_has_a_distinct_label_so_the_users_page_needs_no_extra_id():
+    labels = [permissions.role_detail_label(role) for role in permissions.ROLES]
+    assert len(set(labels)) == 5 and labels == [permissions.role_label(role) for role in permissions.ROLES]
 
 
 def _sources():
@@ -57,8 +62,8 @@ def test_old_labels_are_gone_from_the_interface_code():
 def test_readme_documents_the_four_roles_without_the_old_labels():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     roles = readme[readme.index("## Roles"):readme.index("**Seguridad del registro:**")]
-    for label in ("**Cliente**", "**Operario**", "**Supervisor**", "**Administrador**"):
-        assert label in roles
+    for label in permissions.ROLE_LABELS.values():
+        assert f"**{label}**" in roles
     for old in OLD:
         assert old not in readme
 
@@ -84,9 +89,9 @@ def _open(view, role="maestro"):
     return at
 
 
-def test_about_page_lists_the_four_roles():
+def test_about_page_lists_every_role_with_its_real_life_title():
     html = " ".join(str(e.value) for e in _open("acerca_de").markdown)
-    for label in ("Cliente", "Operario", "Supervisor", "Administrador"):
+    for label in permissions.ROLE_LABELS.values():
         assert label in html
     for old in OLD:
         assert old not in html

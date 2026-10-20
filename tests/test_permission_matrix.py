@@ -22,13 +22,14 @@ PASSWORD = "ClaveSegura123"
 ROLES = ("estudiante", "operario", "encargado", "profesor", "maestro")
 
 COMMON = {"inicio", "perfil", "acerca_de"}
-CLIENT = COMMON | {"escanear", "solicitudes", "reservas", "prestamos", "trazabilidad"}
+CLIENT = COMMON | {"escanear", "solicitudes", "prestamos"}          # «escanear» es la página Buscar
+STAFF = CLIENT | {"despacho", "trazabilidad"}                       # el cliente sigue su pedido en Solicitudes
 PAGES = {
     "estudiante": CLIENT,
     "operario": COMMON | {"despacho"},
-    "encargado": CLIENT | {"despacho"},
-    "profesor": CLIENT | {"despacho", "inventario", "ubicaciones", "reportes", "nfc"},
-    "maestro": CLIENT | {"despacho", "inventario", "ubicaciones", "reportes", "nfc", "usuarios"},
+    "encargado": STAFF,
+    "profesor": STAFF | {"inventario", "ubicaciones", "reportes", "nfc"},
+    "maestro": STAFF | {"inventario", "ubicaciones", "reportes", "nfc", "usuarios"},
 }
 ALL_PAGES = set().union(*PAGES.values())
 
@@ -91,28 +92,68 @@ def test_every_view_refuses_a_hand_typed_visit_without_the_capability(people, vi
 
 
 def test_the_page_table_covers_every_registered_page_and_nothing_else():
-    assert ALL_PAGES == {"inicio", "escanear", "solicitudes", "reservas", "prestamos", "trazabilidad", "despacho",
+    assert ALL_PAGES == {"inicio", "escanear", "solicitudes", "prestamos", "trazabilidad", "despacho",
                          "inventario", "ubicaciones", "reportes", "nfc", "usuarios", "perfil", "acerca_de"}
 
 
 # --- acciones de dominio por rol -------------------------------------------------------
 
+_CLIENT_AND_ABOVE = {"estudiante", "encargado", "profesor", "maestro"}
+_SUPERVISORS = {"encargado", "profesor", "maestro"}
+_SUPERVISOR_PROFESSOR = {"profesor", "maestro"}
+
+# Escrita a mano y completa: una capacidad nueva sin su fila hace fallar
+# test_the_table_lists_every_capability, así que cada una se decide a propósito.
 CAPABILITY_TABLE = {
-    permissions.CAP_REQUEST: {"estudiante", "encargado", "profesor", "maestro"},
-    permissions.CAP_CHECKOUT: {"estudiante", "encargado", "profesor", "maestro"},
-    permissions.CAP_APPROVE: {"encargado", "profesor", "maestro"},
-    permissions.CAP_AUTHORIZE_DISPATCH: {"encargado", "profesor", "maestro"},
-    permissions.CAP_RECEIVE_AND_DELIVER: {"encargado", "profesor", "maestro"},
+    # cliente
+    permissions.CAP_REQUEST: _CLIENT_AND_ABOVE,
+    permissions.CAP_VIEW_OWN_REQUESTS: _CLIENT_AND_ABOVE,
+    permissions.CAP_CANCEL_OWN_REQUEST: _CLIENT_AND_ABOVE,
+    permissions.CAP_CONFIRM_RECEIPT: _CLIENT_AND_ABOVE,
+    permissions.CAP_RESERVE: _CLIENT_AND_ABOVE,
+    permissions.CAP_CHECKOUT: _CLIENT_AND_ABOVE,
+    # operario (despacho)
+    permissions.CAP_VIEW_DISPATCH_QUEUE: {"operario", "maestro"},
     permissions.CAP_CLAIM: {"operario", "maestro"},
     permissions.CAP_PICK: {"operario", "maestro"},
-    permissions.CAP_VIEW_ALL_LOANS: {"profesor", "maestro"},
-    permissions.CAP_CHECKIN_ANY: {"profesor", "maestro"},
-    permissions.CAP_EDIT_INVENTORY: {"profesor", "maestro"},
-    permissions.CAP_REPORTS: {"profesor", "maestro"},
+    permissions.CAP_RELEASE: {"operario"} | _SUPERVISORS,
+    # supervisor
+    permissions.CAP_APPROVE: _SUPERVISORS,
+    permissions.CAP_AUTHORIZE_DISPATCH: _SUPERVISORS,
+    permissions.CAP_RECEIVE_AND_DELIVER: _SUPERVISORS,
+    permissions.CAP_REASSIGN: _SUPERVISORS,
+    permissions.CAP_VIEW_ALL_TRACES: _SUPERVISORS,
+    permissions.CAP_DISPATCH_REPORTS: _SUPERVISORS,
+    # supervisor con inventario (profesor)
+    permissions.CAP_EDIT_INVENTORY: _SUPERVISOR_PROFESSOR,
+    permissions.CAP_MANAGE_NFC: _SUPERVISOR_PROFESSOR,
+    permissions.CAP_MANAGE_LOCATIONS: _SUPERVISOR_PROFESSOR,
+    permissions.CAP_REPORTS: _SUPERVISOR_PROFESSOR,
+    permissions.CAP_MANAGE_RESERVATIONS: _SUPERVISOR_PROFESSOR,
+    permissions.CAP_VIEW_ALL_LOANS: _SUPERVISOR_PROFESSOR,
+    permissions.CAP_CHECKIN_ANY: _SUPERVISOR_PROFESSOR,
+    # administrador
     permissions.CAP_MANAGE_USERS: {"maestro"},
-    permissions.CAP_DISPATCH_SETTINGS: {"maestro"},
     permissions.CAP_MANAGE_EMAIL: {"maestro"},
+    permissions.CAP_ADJUST_COUNTS: {"maestro"},
+    permissions.CAP_DELETE_PHOTOS: {"maestro"},
+    permissions.CAP_DISPATCH_SETTINGS: {"maestro"},
+    permissions.CAP_RESOLVE_SYNC: {"maestro"},
+    permissions.CAP_PURGE_DATA: {"maestro"},
 }
+
+
+def test_the_table_lists_every_capability():
+    defined = {value for name, value in vars(permissions).items() if name.startswith("CAP_")}
+    assert defined == set(CAPABILITY_TABLE), (
+        f"sin fila: {sorted(defined - set(CAPABILITY_TABLE))}; sobrantes: {sorted(set(CAPABILITY_TABLE) - defined)}"
+    )
+
+
+def test_no_role_holds_a_capability_the_table_does_not_grant_it():
+    for role in ROLES:
+        granted = {cap for cap, holders in CAPABILITY_TABLE.items() if role in holders}
+        assert set(permissions.ROLE_CAPS[role]) == granted, role
 
 
 @pytest.mark.parametrize("capability", sorted(CAPABILITY_TABLE))

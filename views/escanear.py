@@ -8,10 +8,10 @@ from datetime import datetime, timedelta
 
 import streamlit as st
 
-from core import barcode, labels, loans as loans_core, notifications, permissions, traceability
+from core import barcode, labels, loans as loans_core, notifications, permissions, search, traceability
 from core.labels import ITEM_TYPE_BY_CHOICE, ITEM_TYPE_CHOICES, ITEM_TYPE_HELP, ITEM_TYPE_NAMES
-from core.ui import guard_cap, page_header
-from views import photo_panel
+from core.ui import empty_state, esc, guard_cap, page_header, section_title, show_flash
+from views import photo_panel, solicitudes
 from views.code_input import render_code_input
 from views import ubicaciones
 from views.location_guide import render_location_guide
@@ -81,12 +81,26 @@ def _render_item_actions(item: dict, parent: dict = None):
     if item.get("description"):
         st.caption(item["description"])
 
-    st.markdown("##### :material/outbox: Dar salida (checkout)")
+    if permissions.has_cap(user, permissions.CAP_REQUEST) and _requestable(item):
+        st.markdown("##### :material/send: Pedir este producto")
+        st.caption("El laboratorio lo prepara y te avisa cuando esté listo; sigue su avance en Solicitudes → Mis pedidos.")
+        solicitudes.request_product_form(storage, user, item, key_prefix=f"scan_{item['id']}", flash_key=_FLASH)
+
+    st.markdown("##### :material/outbox: Retirar yo mismo (salida directa)")
     pickups = traceability.pending_pickups(storage, user, item["id"])
     routes = {request["id"]: traceability.route_event_for(storage, request["id"]) for request in pickups}
     if pickups:
         _render_pickup_notice(pickups, routes)
-    if item["available"] <= 0:
+    mode = loans_core.self_checkout_mode(storage)
+    restricted = mode != loans_core.MODE_FREE and loans_core.is_self_checkout_restricted(user)
+    must_link = restricted and mode == loans_core.MODE_APPROVED_ONLY
+    if restricted and mode == loans_core.MODE_OFF:
+        st.info("El retiro por autoservicio está apagado. Pide el producto desde **Solicitudes** y el "
+                "laboratorio te lo entrega.", icon=":material/info:")
+    elif must_link and not pickups:
+        st.info("Para retirar este producto necesitas una solicitud aprobada a tu nombre. "
+                "Pídelo desde **Solicitudes**.", icon=":material/info:")
+    elif item["available"] <= 0:
         st.warning("No hay unidades disponibles para dar salida en este momento.")
     else:
         with st.form(f"checkout_form_{item['id']}"):
@@ -95,7 +109,7 @@ def _render_item_actions(item: dict, parent: dict = None):
             if pickups:
                 options = {request["id"]: request for request in pickups}
                 choice = st.selectbox(
-                    "Solicitud aprobada que retiras", [*options, ""],
+                    "Solicitud aprobada que retiras", [*options] if must_link else [*options, ""],
                     format_func=lambda rid: _pickup_label(options[rid], routes) if rid else "No vincular con una solicitud",
                     help="La salida queda enlazada a la solicitud en Trazabilidad (evento «retirado»).",
                 )
@@ -115,7 +129,10 @@ def _render_item_actions(item: dict, parent: dict = None):
                 if with_date:
                     expected_dt = loans_core.deadline_from_date(expected_date)
                 try:
-                    ok, msg, loan = loans_core.checkout(storage, item["id"], int(qty), user, expected_dt, notes)
+                    ok, msg, loan = loans_core.checkout(
+                        storage, item["id"], int(qty), user, expected_dt, notes,
+                        request_id=(linked_request or {}).get("id", ""),
+                    )
                 except PermissionError as exc:
                     ok, msg, loan = False, str(exc), None
                 if ok:
@@ -242,21 +259,91 @@ def _render_new_item_wizard(scanned_code: str):
                     st.error(f"Error al registrar: {e}")
 
 
+_FLASH = "buscar"
+_REQUESTABLE = {"standalone", "child"}
+_RESULTS_KEY = "search_results"
+
+
+def _requestable(item: dict) -> bool:
+    return item.get("item_type") in _REQUESTABLE and item.get("status") != "retired"
+
+
+def _run_search(storage, user: dict, query: str) -> None:
+    """Un solo cuadro: un código exacto abre el producto o la ubicación; si no, se busca por nombre y por pedido."""
+    query = query.strip()
+    st.session_state.pop(_RESULTS_KEY, None)
+    result = barcode.scan(storage, query)
+    if result["status"] in ("found_item", "found_master", "found_location") or result.get("retired"):
+        st.session_state.scan_result = result
+        return
+    staff = permissions.has_cap(user, permissions.CAP_EDIT_INVENTORY)
+    kinds = None if staff else _REQUESTABLE
+    items = search.search_items(storage.get_all_items(), query, kinds=kinds)
+    requests = []
+    if search.looks_like_request_id(query) or not items:
+        requests = traceability.search_requests(traceability.visible_requests(storage, user), query)[:search.MAX_RESULTS]
+    if len(items) == 1 and not requests:
+        st.session_state.scan_result = barcode.scan(storage, items[0]["id"])
+        return
+    if not items and not requests and staff and result["status"] == "not_found":
+        st.session_state.scan_result = result          # código nuevo: se ofrece registrarlo
+        return
+    st.session_state.scan_result = None
+    st.session_state[_RESULTS_KEY] = {"query": query, "items": [item["id"] for item in items],
+                                      "requests": [row["id"] for row in requests]}
+
+
+def _render_results(storage, user: dict) -> bool:
+    """Lista de coincidencias de la última búsqueda. Devuelve si había algo que mostrar."""
+    found = st.session_state.get(_RESULTS_KEY)
+    if not found:
+        return False
+    items = [item for item in (storage.get_item(code) for code in found["items"]) if item]
+    requests = [row for row in (storage.get_service_request(rid) for rid in found["requests"]) if row]
+    if not items and not requests:
+        empty_state("Sin resultados", f"No encontré nada para «{found['query']}». Prueba con otra palabra, "
+                    "con el código completo o con #pedido.", icon=":material/search:")
+        return True
+    if items:
+        section_title(f"Productos y ubicaciones ({len(items)})", icon=":material/inventory_2:")
+    for item in items:
+        with st.container(border=True):
+            c1, c2 = st.columns([3, 1], vertical_alignment="center")
+            kind = ITEM_TYPE_NAMES.get(item.get("item_type"), "")
+            available = storage.get_available_quantity(item["id"]) if _requestable(item) else None
+            stock = "" if available is None else f" · {available} disponible(s)"
+            c1.markdown(f"<b>{esc(item.get('name'))}</b><br><span class=\"lab-section__caption\">"
+                        f"{esc(item['id'])} · {esc(kind)}{esc(stock)} · {esc(item.get('location') or 'sin ubicación')}</span>",
+                        unsafe_allow_html=True)
+            if c2.button("Abrir", key=f"open_{item['id']}", type="primary", use_container_width=True):
+                st.session_state.scan_result = barcode.scan(storage, item["id"])
+                st.rerun()
+    if requests:
+        section_title(f"Pedidos ({len(requests)})", icon=":material/timeline:")
+        for row in requests:
+            solicitudes.render_request_status(storage, user, row, key_prefix="found")
+    return True
+
+
 def render():
     storage = st.session_state.storage
-    if not guard_cap(st.session_state.user, permissions.CAP_CHECKOUT, "Escanear"):
+    user = st.session_state.user
+    if not guard_cap(user, permissions.CAP_REQUEST, "Buscar"):
         return
 
-    page_header("Escanear", icon=":material/barcode_scanner:", subtitle="Conecta tu lector USB o escribe el código manualmente")
+    page_header("Buscar", icon=":material/search:",
+                subtitle="Escanea un código o escribe el nombre de un producto, una ubicación o un pedido")
+    show_flash(_FLASH)
 
     with st.form("scan_form", clear_on_submit=True):
-        code = st.text_input("Codigo de barras", placeholder="Escanea aqui...")
+        code = st.text_input("Buscar", placeholder="Escanea el código o escribe un nombre (ej. «microscopio»)")
+        submitted = st.form_submit_button(":material/search: Buscar", type="primary", use_container_width=True)
+        if submitted and code.strip():
+            _run_search(storage, user, code)
+        elif submitted:
+            st.warning("Escribe o escanea algo para buscar.")
+    with st.expander("Formatos de código aceptados"):
         st.caption(barcode.FORMAT_HELP)
-        submitted = st.form_submit_button("Buscar", use_container_width=True)
-        if submitted and code:
-            st.session_state.scan_result = barcode.scan(storage, code)
-        elif submitted and not code:
-            st.warning("Ingresa o escanea un codigo.")
 
     result = st.session_state.get("scan_result")
     st.markdown("---")
@@ -267,8 +354,12 @@ def render():
         (st.success if linked else st.warning)(f":material/explore: {message}")
 
     if not result:
-        st.caption("Esperando escaneo...")
+        if not _render_results(storage, user):
+            st.caption("Esperando búsqueda… Escanea con tu lector USB o escribe lo que buscas.")
         return
+    if st.session_state.get(_RESULTS_KEY) and st.button(":material/arrow_back: Volver a los resultados", key="back_results"):
+        st.session_state.scan_result = None
+        st.rerun()
 
     if result["status"] == "error":
         st.error(result["message"])

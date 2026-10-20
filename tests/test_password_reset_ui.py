@@ -80,7 +80,7 @@ def test_option_only_for_students_and_professors(lab):
     # Ni la propia tarjeta (se usa Mi perfil) ni la de otro maestro.
     assert not any(users["maestro"]["id"] in key or users["otro_maestro"]["id"] in key for key in starts)
     assert sum("Restablecer contraseña" in e.label for e in at.expander) == 2
-    assert not at.checkbox                                      # sin SMTP no se ofrece el correo
+    assert not [c for c in at.checkbox if str(c.key).startswith("pwreset_mail_")]   # sin SMTP no se ofrece el correo
 
 
 def test_generated_password_needs_confirmation_and_is_shown_once(lab):

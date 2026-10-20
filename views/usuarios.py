@@ -6,7 +6,7 @@ import streamlit as st
 from core import auth, permissions
 from core.ui import (
     ROLE_LABELS, badge_html, card, card_header_html, empty_state, guard_cap, initials, page_header,
-    section_title, stat_cards,
+    flash, persistent_tabs, section_title, show_flash, stat_cards,
 )
 
 ROLES = list(permissions.ROLES)
@@ -211,7 +211,10 @@ def render():
         "Usuarios", icon=":material/group:",
         subtitle="Corrección de datos, roles, estados y lista blanca de supervisores",
     )
-    tab_usuarios, tab_whitelist = st.tabs([":material/group: Usuarios", ":material/check_circle: Lista blanca de supervisores"])
+    show_flash("usuarios")
+    tab_usuarios, tab_whitelist, tab_data = persistent_tabs(
+        [":material/group: Usuarios", ":material/check_circle: Lista blanca de supervisores",
+         ":material/database: Datos"], "usuarios")
 
     with tab_usuarios:
         st.caption(
@@ -251,7 +254,7 @@ def render():
                 if not auth.is_institutional_email(email):
                     st.error("Ingresa un correo institucional válido (.edu o .edu.co).")
                 else:
-                    storage.add_to_whitelist(email)
+                    storage.add_to_whitelist(email, actor=current_user)
                     st.success(f"'{email}' agregado a la lista blanca.")
                     st.rerun()
 
@@ -264,5 +267,52 @@ def render():
                 c1, c2 = st.columns([4, 1], vertical_alignment="center")
                 c1.markdown(card_header_html(email, icon=":material/mail:"), unsafe_allow_html=True)
                 if c2.button("Quitar", key=f"remove_wl_{email}", use_container_width=True):
-                    storage.remove_from_whitelist(email)
+                    storage.remove_from_whitelist(email, actor=current_user)
                     st.rerun()
+
+    with tab_data:
+        _render_data_tab(storage, current_user)
+
+
+_CONFIRM_WORD = "BORRAR"
+
+
+def _render_data_tab(storage, user: dict) -> None:
+    """Dejar la base limpia para empezar (solicitudes, reservas, correos…) sin tocar personas ni productos."""
+    if not permissions.has_cap(user, permissions.CAP_PURGE_DATA):
+        st.info("Solo un administrador puede borrar datos operativos.")
+        return
+    section_title("Empezar de cero", icon=":material/cleaning_services:",
+                  caption="Borra lo operativo de prueba. No toca personas, productos, ubicaciones, fotos ni ajustes, "
+                          "y los préstamos abiertos se conservan porque de ellos depende la disponibilidad.")
+    counts = storage.operational_data_counts()
+    stat_cards([
+        {"label": "Solicitudes", "value": counts["solicitudes"], "icon": "📝", "tone": "neutral"},
+        {"label": "Reservas", "value": counts["reservas"], "icon": "🗓️", "tone": "neutral"},
+        {"label": "Eventos de pedidos", "value": counts["trazabilidad"], "icon": "🧭", "tone": "neutral"},
+        {"label": "Préstamos abiertos", "value": counts["prestamos_abiertos"], "icon": "🤝", "tone": "info"},
+    ])
+    with st.form("purge_form"):
+        requests = st.checkbox(f"Solicitudes y su trazabilidad ({counts['solicitudes']} solicitudes, "
+                               f"{counts['trazabilidad']} eventos)", value=True)
+        reservations = st.checkbox(f"Reservas ({counts['reservas']})", value=True)
+        mail_log = st.checkbox(f"Registro de correos enviados ({counts['correos']})", value=True)
+        noise = st.checkbox(f"Inicios de sesión y toques de chip NFC antiguos ({counts['sesiones_nfc']})", value=True,
+                            help="Son los eventos que más hacen crecer el Excel.")
+        closed = st.checkbox(f"Préstamos ya devueltos ({counts['prestamos_cerrados']})", value=False,
+                             help="Pierdes el historial de quién devolvió qué. Los préstamos abiertos nunca se borran.")
+        word = st.text_input(f"Para confirmar escribe {_CONFIRM_WORD}", placeholder=_CONFIRM_WORD)
+        st.caption("Antes de borrar se guarda una copia local (.bak) y GitHub conserva la versión anterior en su historial.")
+        if st.form_submit_button(":material/delete_sweep: Borrar datos seleccionados", type="primary",
+                                 use_container_width=True):
+            if word.strip() != _CONFIRM_WORD:
+                st.error(f"Escribe {_CONFIRM_WORD} para confirmar.")
+            elif not any((requests, reservations, mail_log, noise, closed)):
+                st.warning("Elige qué borrar.")
+            else:
+                removed = storage.purge_operational_data(
+                    user, requests=requests, reservations=reservations, mail_log=mail_log,
+                    session_noise=noise, closed_loans=closed)
+                summary = ", ".join(f"{label}: {count}" for label, count in removed.items()) or "nada que borrar"
+                flash(f"Listo. Filas borradas · {summary}.", key="usuarios")
+                st.rerun()

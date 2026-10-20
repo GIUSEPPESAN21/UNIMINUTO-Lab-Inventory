@@ -13,7 +13,7 @@ from core import loans as loans_core
 from core import permissions, reports
 from core.ui import (
     BRAND_BLUE, CHART_COLORS, badge_html, empty_state, esc, guard_cap, icon_html, material, page_header,
-    section_title, stat_cards,
+    persistent_tabs, section_title, stat_cards,
 )
 from views.correos import render_email_settings
 
@@ -59,7 +59,7 @@ def render():
     is_master = permissions.has_cap(st.session_state.user, permissions.CAP_MANAGE_EMAIL)
     if is_master:
         titles.append(":material/mail: Correos")
-    tabs = st.tabs(titles)
+    tabs = persistent_tabs(titles, "reportes")
     tab1, tab_health, tab2, tab3 = tabs[:4]
 
     with tab1:

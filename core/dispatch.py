@@ -36,7 +36,7 @@ METHOD_MANUAL = "manual"
 METHODS = (METHOD_BARCODE_GUN, METHOD_CAMERA, METHOD_NFC, METHOD_MANUAL)
 METHOD_LABELS = {
     METHOD_BARCODE_GUN: "Pistola de barras", METHOD_CAMERA: "Cámara del teléfono",
-    METHOD_NFC: "Chip NFC", METHOD_MANUAL: "Teclado",
+    METHOD_NFC: "Chip NFC", METHOD_MANUAL: "Manual",
 }
 _LEGACY_METHODS = {"barcode": METHOD_BARCODE_GUN, "teclado": METHOD_MANUAL}
 
@@ -563,7 +563,8 @@ def abandon_picking(actor: dict, request_id: str) -> None:
     picking.clear(actor.get("id"), request_id)
 
 
-def complete_picking(storage, request_id: str, actor: dict, readings: list = None, method: str = None):
+def complete_picking(storage, request_id: str, actor: dict, readings: list = None, method: str = None,
+                     extra_details: dict = None):
     """Completa el picking con una sola escritura.
 
     Sin ``readings`` usa las acumuladas en :mod:`core.picking`; las lecturas
@@ -582,6 +583,7 @@ def complete_picking(storage, request_id: str, actor: dict, readings: list = Non
         else:
             clean.append({"code": str(value or "").strip(), "method": default, "at": now})
     details = {"picker_id": actor.get("id", ""), "readings": clean}
+    details.update(extra_details or {})
     failed = picking.failed(actor.get("id"), request_id) if from_store else []
     if failed:
         details["failed_scans"] = failed
@@ -590,6 +592,41 @@ def complete_picking(storage, request_id: str, actor: dict, readings: list = Non
         picking.clear(actor.get("id"), request_id)
         if not traceability.event_details(result[2]).get("reused_loan"):
             _notify_dispatched_loan(storage, request_id)
+    return result
+
+
+def manual_confirmation_message(actor: dict, request: dict) -> str:
+    """Texto que queda como constancia de una confirmación sin lectura de código."""
+    return (f"{(actor or {}).get('full_name') or 'El operario'} confirma que tomó "
+            f"{int((request or {}).get('quantity') or 0)} unidad(es) de «{(request or {}).get('item_name') or (request or {}).get('item_id')}» "
+            "sin leer su código y autoriza este registro.")
+
+
+def confirm_manual_picking(storage, request_id: str, actor: dict, authorized: bool, note: str = ""):
+    """Completa el picking **sin leer cada unidad**: quien lo hace confirma por escrito y se
+    registra su nombre y el mensaje de autorización. Cada unidad queda con el método ``manual``.
+
+    Es la alternativa cuando no hay pistola ni chip a mano; el CSV y la trazabilidad la distinguen
+    de una lectura real. Devuelve lo mismo que ``complete_picking``."""
+    permissions.require_cap(actor, permissions.CAP_PICK)
+    if not authorized:
+        return False, "Marca la casilla de autorización para confirmar sin leer el código.", None
+    request = storage.get_service_request(request_id)
+    events = storage.get_trace_events(request_id=request_id) if request else []
+    if (not request or traceability.request_stage_key(request, events) != traceability.STAGE_CLAIMED
+            or assigned_picker(events) != actor.get("id")):
+        return False, "Este pedido ya no está en tu picking.", None
+    needed = int(request.get("quantity") or 0)
+    now = _stamp()
+    readings = [{"code": request.get("item_id"), "method": METHOD_MANUAL, "at": now} for _ in range(needed)]
+    proof = {"manual_confirmation": {
+        "operator_id": actor.get("id", ""), "operator_name": actor.get("full_name", ""),
+        "message": manual_confirmation_message(actor, request), "note": _clean(note), "at": now,
+    }}
+    result = complete_picking(storage, request_id, actor, readings=readings, method=METHOD_MANUAL,
+                              extra_details=proof)
+    if result[0]:
+        picking.clear(actor.get("id"), request_id)
     return result
 
 

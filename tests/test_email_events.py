@@ -292,7 +292,14 @@ def test_unexpected_errors_are_contained(lab, smtp, monkeypatch):
 
 
 def test_without_smtp_nothing_is_attempted_or_logged(lab):
-    lab.get_setting = lambda *args, **kwargs: pytest.fail("sin SMTP no se debe leer nada")
+    original = lab.get_setting
+
+    def only_the_checkout_mode(key, *args, **kwargs):
+        if key != loans.SETTING_SELF_CHECKOUT:       # el modo de autoservicio no tiene que ver con el correo
+            pytest.fail("sin SMTP no se debe leer nada")
+        return original(key, *args, **kwargs)
+
+    lab.get_setting = only_the_checkout_mode
     ok, _, loan = loans.checkout(lab, "LAB-MIC-01", 1, lab.student)
     assert ok and loans.checkin(lab, loan["id"], lab.student)[0]
     assert email_events.pending_count() == 0 and lab.log == []

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from core.storage import LabStorage
+from core.storage import LabStorage, RemoteUnavailableError
 from core import auth, live_data, permissions, session
 from core.ui import LOGO_PATH, SYMBOL_PATH, footer, sync_status_banner, user_chip_html
 
@@ -45,6 +45,11 @@ def get_storage():
 
 try:
     storage = get_storage()
+except RemoteUnavailableError as e:
+    # GitHub no respondió y no hay copia local: no se arranca con una base vacía.
+    st.error(f"**No se pudo cargar la base de datos.** {e}", icon=":material/cloud_off:")
+    st.button(":material/refresh: Reintentar", key="retry_storage_boot")   # el rerun vuelve a intentarlo
+    st.stop()
 except Exception as e:
     st.error(f"**Error critico de inicializacion de la base de datos:** {e}")
     st.stop()
@@ -143,7 +148,7 @@ if auth.must_change_password(user):
     perfil.render_forced_password_change()
     st.stop()
 
-from views import despacho, inicio, escanear, inventario, prestamos, reservas, solicitudes, trazabilidad, usuarios, reportes, acerca_de, perfil
+from views import despacho, inicio, escanear, inventario, prestamos, solicitudes, trazabilidad, usuarios, reportes, acerca_de, perfil
 from views import nfc as nfc_page
 from views import ubicaciones as ubicaciones_page
 
@@ -151,11 +156,12 @@ pages = {
     "inicio": st.Page(inicio.render, title="Inicio", icon=":material/home:", default=True, url_path="inicio"),
 }
 if permissions.has_cap(user, permissions.CAP_REQUEST):
-    pages["escanear"] = st.Page(escanear.render, title="Escanear", icon=":material/barcode_scanner:", url_path="escanear")
+    # «Buscar» conserva la clave y la ruta «escanear»: los chips NFC ya grabados apuntan ahí.
+    pages["escanear"] = st.Page(escanear.render, title="Buscar", icon=":material/search:", url_path="escanear")
     pages["solicitudes"] = st.Page(solicitudes.render, title="Solicitudes", icon=":material/edit_note:", url_path="solicitudes")
-    pages["reservas"] = st.Page(reservas.render, title="Reservas", icon=":material/calendar_month:", url_path="reservas")
     pages["prestamos"] = st.Page(prestamos.render, title="Préstamos", icon=":material/assignment:", url_path="prestamos")
-if permissions.has_cap(user, permissions.CAP_VIEW_OWN_REQUESTS) or permissions.has_cap(user, permissions.CAP_VIEW_ALL_TRACES):
+if permissions.has_cap(user, permissions.CAP_VIEW_ALL_TRACES):
+    # El cliente sigue su pedido en Solicitudes → Mis pedidos; la trazabilidad completa es del personal.
     pages["trazabilidad"] = st.Page(trazabilidad.render, title="Trazabilidad", icon=":material/explore:", url_path="trazabilidad")
 if permissions.has_cap(user, permissions.CAP_VIEW_DISPATCH_QUEUE) or permissions.has_cap(user, permissions.CAP_RECEIVE_AND_DELIVER):
     pages["despacho"] = st.Page(despacho.render, title="Despacho", icon=":material/local_shipping:", url_path="despacho")
@@ -177,7 +183,7 @@ pages["acerca_de"] = st.Page(acerca_de.render, title="Acerca de", icon=":materia
 st.session_state.pages = pages
 
 # Navegación agrupada por capacidades.
-principal_keys = ["inicio", "escanear", "solicitudes", "trazabilidad", "reservas", "prestamos"]
+principal_keys = ["inicio", "escanear", "solicitudes", "prestamos", "trazabilidad"]
 nav_sections = {"Principal": [pages[key] for key in principal_keys if key in pages]}
 if "despacho" in pages:
     nav_sections["Operación"] = [pages["despacho"]]

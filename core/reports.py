@@ -7,6 +7,8 @@ import io
 
 import pandas as pd
 
+from core import excel_safe
+
 
 def most_borrowed_items(loans: list, top_n: int = 10) -> pd.DataFrame:
     if not loans:
@@ -65,12 +67,8 @@ def export_full_database(items: list, users: list, loans: list) -> io.BytesIO:
     df_loans = pd.DataFrame(loans)
 
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        if not df_items.empty:
-            df_items.to_excel(writer, sheet_name="items", index=False)
-        if not df_users.empty:
-            df_users.to_excel(writer, sheet_name="users", index=False)
-        if not df_loans.empty:
-            df_loans.to_excel(writer, sheet_name="loans", index=False)
+    frames = {name: df for name, df in (("items", df_items), ("users", df_users), ("loans", df_loans))
+              if not df.empty}
+    excel_safe.write_frames(output, frames)   # un texto «=…» no se vuelve fórmula en el archivo descargado
     output.seek(0)
     return output

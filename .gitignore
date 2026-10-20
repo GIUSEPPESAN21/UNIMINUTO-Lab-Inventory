@@ -9,3 +9,4 @@ fotos/
 .streamlit/secrets.toml
 *.tmp
 .coverage
+UNIMINUTO_LAB_DB.xlsx.bak

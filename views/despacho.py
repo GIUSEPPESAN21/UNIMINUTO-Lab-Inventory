@@ -13,8 +13,8 @@ import json
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import dispatch, live_data, ludica, permissions, picking, traceability
-from core.ui import badge_html, empty_state, esc, guard_cap, page_header, section_title
+from core import dispatch, live_data, loans, ludica, permissions, picking, traceability
+from core.ui import badge_html, empty_state, esc, guard_cap, page_header, persistent_tabs, section_title
 from views import location_guide, photo_panel
 
 _DISPATCH_EVERY = live_data.run_every(live_data.dispatch_refresh_seconds())
@@ -40,7 +40,7 @@ def _order_context(storage, request: dict, key: str, photo: bool = True) -> None
     if reference:
         st.markdown(f":material/location_on: {esc(reference)}")
     if photo:
-        photo_panel.render_scan_photo(item, compact=True)
+        photo_panel.render_scan_photo(item, compact=True, key_suffix=key)
     location_guide.render_location_guide(item, parent, key_prefix=f"dispatch_guide_{key}")
 
 
@@ -86,9 +86,13 @@ def _queue_fragment(storage, user: dict) -> None:
         with st.container(border=True):
             _heading(request, events)
             _order_context(storage, request, f"queue_{request['id']}")
-            if st.button("Tomar pedido", key=f"claim_{request['id']}", type="primary",
-                         use_container_width=True):
+            if st.button("Tomar y empezar picking", key=f"claim_{request['id']}", type="primary",
+                         use_container_width=True,
+                         help="Lo tomas y se abre el panel de picking arriba, listo para leer el código."):
                 ok, message, _ = dispatch.claim_request(storage, request["id"], user)
+                if ok:
+                    ok, message = dispatch.start_picking(storage, request["id"], user)
+                    message = "Pedido tomado. Lee el código de cada unidad o confirma manualmente." if ok else message
                 _notice(ok, message)
                 st.rerun()
 
@@ -214,6 +218,24 @@ def _picking_panel(storage, user: dict) -> None:
                 storage, request_id, user, code, dispatch.typed_method(storage))
             _notice(ok, message)
             st.rerun()
+        _manual_confirmation(storage, user, request)
+
+
+def _manual_confirmation(storage, user: dict, request: dict) -> None:
+    """Alternativa a leer cada unidad: confirmar por escrito, con constancia del nombre y la autorización."""
+    request_id = request["id"]
+    manual_first = dispatch.scenario_key(storage) == "A"
+    with st.expander(":material/edit_note: ¿Sin lector? Confirmar manualmente", expanded=manual_first):
+        st.caption(dispatch.manual_confirmation_message(user, request))
+        authorized = st.checkbox("Autorizo esta confirmación manual", key=f"manual_auth_{request_id}",
+                                 help="Queda registrada con tu nombre y se distingue de una lectura real.")
+        note = st.text_input("Nota (opcional)", key=f"manual_note_{request_id}",
+                             placeholder="Por qué no se leyó el código")
+        if st.button("Confirmar y completar picking", key=f"manual_done_{request_id}", type="primary",
+                     disabled=not authorized, use_container_width=True):
+            ok, message, _ = dispatch.confirm_manual_picking(storage, request_id, user, authorized, note)
+            _notice(ok, message)
+            st.rerun()
 
 
 def _review_action_panel(storage, user: dict) -> None:
@@ -303,6 +325,21 @@ def _settings(storage, user: dict) -> None:
         _notice(ok, message)
         st.rerun()
 
+    section_title("Retiro por autoservicio", icon=":material/outbox:",
+                  caption="Qué pueden retirar los clientes desde Buscar sin pasar por Despacho. "
+                          "El personal que aprueba solicitudes no se ve limitado.")
+    modes = list(loans.SELF_CHECKOUT_MODES)
+    saved = loans.self_checkout_mode(storage)
+    mode = st.selectbox(
+        "Modo", modes, index=modes.index(saved), key="self_checkout_choice",
+        format_func=lambda key: loans.SELF_CHECKOUT_MODES[key][0],
+    )
+    st.caption(loans.SELF_CHECKOUT_MODES[mode][1])
+    if st.button("Guardar modo", key="self_checkout_save", type="primary", disabled=mode == saved):
+        ok, message = loans.set_self_checkout_mode(storage, user, mode)
+        _notice(ok, message)
+        st.rerun()
+
 
 def render() -> None:
     storage, user = st.session_state.storage, st.session_state.user
@@ -331,7 +368,7 @@ def render() -> None:
     if permissions.has_cap(user, permissions.CAP_DISPATCH_SETTINGS):
         titles.append("Ajustes")
         renderers.append(_settings)
-    tabs = st.tabs(titles)
+    tabs = persistent_tabs(titles, "despacho")
     for tab, renderer in zip(tabs, renderers):
         with tab:
             renderer(storage, user)

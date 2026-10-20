@@ -1362,6 +1362,17 @@ body, .stApp {
 .lab-step__detail { color: var(--lab-text-muted); font-size: 0.88rem; }
 .lab-step__time { color: var(--lab-text-muted); font-size: 0.78rem; margin-top: 0.1rem; font-variant-numeric: tabular-nums; }
 
+/* Avance en una línea (core/ui.stepper_html): el cliente ve de un vistazo en qué paso va su pedido. */
+.lab-stepper { display: flex; flex-wrap: wrap; gap: 0.3rem 0.9rem; margin: 0.45rem 0 0.2rem; padding: 0; list-style: none; }
+.lab-stepper__item { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.86rem; font-weight: 600; color: var(--lab-text-muted); }
+.lab-stepper__dot { flex: none; width: 0.8rem; height: 0.8rem; border-radius: 50%; background: var(--lab-surface); border: 2px solid var(--lab-border-strong); }
+.lab-stepper__item--done { color: var(--lab-text); }
+.lab-stepper__item--done .lab-stepper__dot { background: var(--lab-success); border-color: var(--lab-success); }
+.lab-stepper__item--current { color: var(--lab-primary-text); font-weight: 800; }
+.lab-stepper__item--current .lab-stepper__dot { background: var(--lab-brand-blue); border-color: var(--lab-brand-blue); box-shadow: 0 0 0 3px var(--lab-primary-ring); }
+.lab-stepper__item--blocked { color: var(--lab-danger); font-weight: 800; }
+.lab-stepper__item--blocked .lab-stepper__dot { background: var(--lab-danger); border-color: var(--lab-danger); }
+
 @keyframes lab-pulse {
     0%, 100% { box-shadow: 0 0 0 4px var(--lab-primary-ring); }
     50% { box-shadow: 0 0 0 8px transparent; }

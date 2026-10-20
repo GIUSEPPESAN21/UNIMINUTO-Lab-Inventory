@@ -79,9 +79,8 @@ def _scan(at: AppTest, request_id: str, code: str, button: str = ":material/chec
 
 def test_student_walks_the_route_scanning_each_label_and_gets_a_receipt(lab):
     rid = lab["request"]["id"]
-    at = _open("trazabilidad", lab["student"])
-    text = _text(at)
-    assert "Listas para retirar" in text and "Paso 1 de 5: Estantería 2" in text
+    at = _open("solicitudes", lab["student"])                  # la ruta vive en Solicitudes → Mis pedidos
+    assert "Paso 1 de 5: Estantería 2" in _text(at)
 
     _scan(at, rid, "2-1-02-00-000", ":material/label: Confirmar etiqueta")          # contenedor equivocado
     assert "Estás en el Contenedor 02; el tuyo es el 01" in _text(at)
@@ -101,7 +100,7 @@ def test_student_walks_the_route_scanning_each_label_and_gets_a_receipt(lab):
 
 def test_shelf_step_can_be_confirmed_on_arrival(lab):
     rid = lab["request"]["id"]
-    at = _open("trazabilidad", lab["student"])
+    at = _open("solicitudes", lab["student"])
     _button(at, ":material/location_on: Ya estoy aquí").click().run()
     assert "Llegaste a Estantería 2" in _text(at) and "Paso 2 de 5: Piso 1" in _text(at)
     _scan(at, rid, "2-1-01-01-001", ":material/label: Confirmar etiqueta")          # salta directo al producto
@@ -120,7 +119,7 @@ def test_students_never_see_requests_of_others(lab):
                                          "item_name": "Equipo Secreto", "quantity": 1}, lab["other"])
     db.add_trace_event({"event_type": "route_verified", "request_id": foreign["id"], "user_id": lab["other"]["id"],
                         "receipt": "ZZZZZZ", "details": "{}"})
-    text = _text(_open("trazabilidad", lab["student"]))
+    text = _text(_open("solicitudes", lab["student"]))
     assert "Equipo Secreto" not in text and "ZZZ" not in text and "Luis" not in text
     assert "Arduino UNO" in text
 
@@ -176,7 +175,7 @@ def test_professor_moves_a_service_forward(lab):
     assert stages == [traceability.EVENT_SERVICE_STARTED, traceability.EVENT_SERVICE_DELIVERED]
     assert db.get_service_request(service["id"])["status"] == "approved"
 
-    text = _text(_open("trazabilidad", lab["student"]))
+    text = _text(_open("solicitudes", lab["student"]))
     assert "Entregado" in text
 
 
@@ -205,11 +204,11 @@ def test_my_requests_tab_offers_the_route_and_escapes_user_text(lab):
                                          "item_name": "<img src=x onerror=alert(1)>", "quantity": 1}, lab["student"])
     db.update_service_request_status(hostile["id"], "approved", PROF_EMAIL)
     at = _open("solicitudes", lab["student"])
-    assert any(e.label == ":material/explore: Ruta y seguimiento" for e in at.expander)
+    assert any("ruta hasta el producto" in e.label for e in at.expander)
     html = " ".join(m.value for m in at.markdown)
     assert "<img src=x" not in html
     assert "&lt;img src=x onerror=alert(1)&gt;" in html
     assert "Aprobada · por retirar" in html
 
-    _scan(at, lab["request"]["id"], "2-1-01-00-000", ":material/label: Confirmar etiqueta", prefix="req_route")
+    _scan(at, lab["request"]["id"], "2-1-01-00-000", ":material/label: Confirmar etiqueta", prefix="trace_route")
     assert "Contenedor 01 verificado" in _text(at)
