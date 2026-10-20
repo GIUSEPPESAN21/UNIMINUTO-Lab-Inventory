@@ -35,6 +35,9 @@ SHEET_COLUMNS = {
         "id", "name", "category", "description", "item_type", "parent_id",
         "unit", "quantity", "location", "min_stock_alert", "status",
         "created_by", "updated_at",
+        # "1" si del producto (Lego, bloques, kits…) se retiran piezas sin inventario por pieza
+        # (core/pieces.py). Las bases antiguas completan esta columna al cargar.
+        "loose_pieces",
     ],
     "users": [
         "id", "full_name", "student_id", "institutional_email", "password_hash", "role",
@@ -1512,6 +1515,10 @@ class LabStorage:
                 "status": data.get("status", "active"),
                 "created_by": data.get("created_by", actor_email),
                 "updated_at": _now_str(),
+                # Quien edita sin tocar la casilla (otros formularios, importaciones) no la borra.
+                "loose_pieces": ("1" if str(data["loose_pieces"]).strip().lower() in ("1", "true", "si", "sí", "x")
+                                 else "") if "loose_pieces" in data
+                else (_clean_nan(existing.to_dict()).get("loose_pieces") or "" if existing is not None else ""),
             }
 
             if idx:
@@ -2009,9 +2016,12 @@ class LabStorage:
             _write_and_sync(dfs)
             return row
 
-    def return_loan(self, loan_id: str, actor_email: str = "", actor: dict = None):
-        """Reingresa un préstamo. Con ``actor``: quien tiene `checkin_any_loan`
-        reingresa cualquiera; los demás solo los suyos (con `checkout`)."""
+    def return_loan(self, loan_id: str, actor_email: str = "", actor: dict = None,
+                    quantity: int = None, note: str = ""):
+        """Reingresa un préstamo. Con ``actor`` solo quien tiene `checkin_any_loan` reingresa directo
+        (el cliente devuelve por el flujo de `core/returns.py`, que llama con ``actor=None`` tras su
+        propia verificación). ``quantity`` menor a la prestada es una devolución parcial: el préstamo
+        sigue abierto por lo que falta."""
         with _db_write():
             dfs = _read_excel()
             df = dfs["loans"]
@@ -2021,26 +2031,36 @@ class LabStorage:
             i = idx[0]
             if actor is not None:
                 from core import permissions
-                owner = bool(actor.get("id")) and str(df.at[i, "user_id"]) == str(actor.get("id"))
-                if not (permissions.has_cap(actor, permissions.CAP_CHECKIN_ANY)
-                        or (owner and permissions.has_cap(actor, permissions.CAP_CHECKOUT))):
-                    raise PermissionError("No puedes reingresar un préstamo de otra persona.")
+                if not permissions.has_cap(actor, permissions.CAP_CHECKIN_ANY):
+                    raise PermissionError("No puedes reingresar un préstamo directamente.")
             if str(df.at[i, "return_at"]).strip() not in ("", "nan", "None"):
                 return False, "Este prestamo ya fue devuelto."
 
-            df.at[i, "return_at"] = _now_str()
-            df.at[i, "status"] = "returned"
             item_id = df.at[i, "item_id"]
-            qty = int(float(df.at[i, "quantity"] or 0))
+            borrowed = int(float(df.at[i, "quantity"] or 0))
+            qty = borrowed if quantity is None else int(quantity)
+            if qty <= 0 or qty > borrowed:
+                return False, f"La cantidad devuelta debe estar entre 1 y {borrowed}."
+            partial = qty < borrowed
+            if partial:
+                df.at[i, "quantity"] = borrowed - qty
+            else:
+                df.at[i, "return_at"] = _now_str()
+                df.at[i, "status"] = "returned"
             dfs["loans"] = df
 
+            details = f"Reingreso de prestamo {loan_id}" + (f" ({qty} de {borrowed})" if partial else "")
+            if note:
+                details += f" · {note}"
             hist_row = {
                 "id": _new_id(), "item_id": item_id, "timestamp": _now_str(),
                 "type": "Reingreso", "quantity_change": qty,
-                "actor_user_id": actor_email, "details": f"Reingreso de prestamo {loan_id}",
+                "actor_user_id": actor_email, "details": details,
             }
             dfs["item_history"] = pd.concat([dfs["item_history"], pd.DataFrame([hist_row])], ignore_index=True)
             _write_and_sync(dfs)
+            if partial:
+                return True, f"Reingreso parcial: {qty} de {borrowed}. Quedan {borrowed - qty} por devolver."
             return True, "Reingreso registrado correctamente."
 
     @firestore_retry

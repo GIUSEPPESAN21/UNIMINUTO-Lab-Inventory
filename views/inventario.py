@@ -16,7 +16,7 @@ import streamlit as st
 from core import barcode
 from core import inventory_suggestions as suggestions
 from core import labels
-from core import permissions
+from core import permissions, pieces
 from core.labels import (
     ITEM_TYPE_BY_CHOICE, ITEM_TYPE_CHOICES, ITEM_TYPE_HELP, ITEM_TYPE_ICONS, ITEM_TYPE_LABELS, ITEM_TYPE_NAMES,
 )
@@ -86,9 +86,14 @@ def _edit_item_form(storage, item: dict, user: dict):
         location = st.text_input("Ubicacion", value=item.get("location", ""))
 
         quantity, min_alert = item.get("quantity", 0), item.get("min_stock_alert", 0)
+        loose_pieces = pieces.enabled(item)
         if item.get("item_type") not in ("master", "location"):
             quantity = st.number_input("Cantidad total", value=int(item.get("quantity", 0)), min_value=0, step=1)
             min_alert = st.number_input("Umbral de alerta", value=int(item.get("min_stock_alert", 0)), min_value=0, step=1)
+            loose_pieces = st.checkbox("Se retiran por piezas (Lego, bloques, kits…)", value=pieces.enabled(item), key=f"edit_pieces_{item['id']}",
+                                       help="Las personas dicen cuántas piezas se llevan y cuántas devuelven, sin dar de alta cada pieza ni tocar el stock.")
+            if not pieces.enabled(item) and pieces.looks_like_pieces(item):
+                st.caption(":material/lightbulb: Parece un producto que se usa por piezas: te conviene activar la casilla.")
 
         st.markdown("---")
         st.caption(_delete_warning(impact))
@@ -105,6 +110,7 @@ def _edit_item_form(storage, item: dict, user: dict):
                 data = {
                     **item, "name": name, "category": category, "description": description,
                     "location": location, "quantity": int(quantity), "min_stock_alert": int(min_alert),
+                    "loose_pieces": "1" if loose_pieces else "",
                 }
                 try:
                     storage.save_item(data, item["id"], is_new=False, actor_email=user["institutional_email"],
@@ -635,10 +641,12 @@ def _render_new_item(storage, user: dict) -> None:
             else:
                 st.warning("Todavía no hay Contenedores Principales creados.")
 
-        quantity, min_alert = 0, 0
+        quantity, min_alert, loose_pieces = 0, 0, False
         if item_kind != ITEM_TYPE_NAMES["master"]:
             quantity = st.number_input("Cantidad inicial", min_value=0, step=1, value=1, key="inv_new_qty")
             min_alert = st.number_input("Umbral de alerta", min_value=0, step=1, value=0, key="inv_new_alert")
+            loose_pieces = st.checkbox("Se retiran por piezas (Lego, bloques, kits…)", key="inv_new_pieces",
+                                       help="Las personas dicen cuántas piezas se llevan y cuántas devuelven, sin dar de alta cada pieza ni tocar el stock.")
 
         submitted = st.form_submit_button(":material/save: Registrar", type="primary", use_container_width=True)
 
@@ -665,7 +673,7 @@ def _render_new_item(storage, user: dict) -> None:
                     "item_type": item_type, "parent_id": parent_id, "unit": "unidad",
                     "quantity": int(quantity), "location": location,
                     "min_stock_alert": int(min_alert), "status": "active",
-                    "created_by": user["institutional_email"],
+                    "created_by": user["institutional_email"], "loose_pieces": "1" if loose_pieces else "",
                 }
                 try:
                     storage.save_item(data, new_id, is_new=True, actor_email=user["institutional_email"],

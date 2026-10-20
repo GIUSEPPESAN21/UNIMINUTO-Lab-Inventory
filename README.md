@@ -251,11 +251,23 @@ Buscar). Los servicios requieren nombre y descripción; la fecha es opcional. Si
 administradores reciben un correo; si falla, la solicitud permanece guardada y muestra la advertencia.
 Los avisos (pedido enviado, aprobado…) **sobreviven a la recarga** de la página.
 
+### Retirar piezas de un producto (Lego, bloques, kits…)
+
+En **Inventario → editar** (o al registrar el producto) se marca **«Se retiran por piezas»**. Entonces, en la ficha
+de Buscar aparece **Retirar piezas**: la persona escribe cuántas se lleva (y para qué) y, al volver, cuántas
+devuelve. **No hay inventario por pieza** ni cambia el stock del producto: el saldo de cada persona se calcula de la
+cadena de custodia (`pieces_taken` / `pieces_returned`), así se sabe quién tiene cuántas. Cada quien devuelve las
+suyas; el profesor o el administrador registran la devolución de otra persona desde «Quién tiene piezas». Si el
+nombre o la categoría dicen Lego, bloques, armable…, el formulario de edición sugiere activar la casilla. La
+columna nueva `loose_pieces` de `items` se completa sola en las bases antiguas.
+
 ### Despacho: tomar, hacer picking, recibir y entregar (🚚 Despacho)
 
 Un pedido de producto recorre: **solicitado → aprobado (y autorizado) → tomado → picking
-completo → recibido → entregado → confirmado por el cliente**. Quien aprueba (supervisor) elige,
-si quiere, qué operarios quedan autorizados; el **operario** lo toma, hace el picking leyendo
+completo → recibido → entregado → confirmado por el cliente**. Quien aprueba (supervisor) solo
+decide si se aprueba: **cualquier operario o supervisor** elige en **Por tomar** el pedido que va a
+despachar, sin que nadie le asigne cuáles puede tomar. La **nota del cliente** se ve en Solicitudes,
+en la cola de Despacho y en el panel de picking, para todo el personal. El operario hace el picking leyendo
 **una unidad a la vez** y, al completarlo, el sistema crea **un solo préstamo a nombre del
 cliente** (con «despachado por …»: columnas `operator_id`/`operator_name` de `loans`, el
 historial del producto, **Préstamos** y el correo de salida/reingreso). El **supervisor** recibe,
@@ -265,6 +277,16 @@ descuenta dos veces) o **devuelve al estante** (cierra el préstamo y repone la 
 frescos y bajo el bloqueo, en `LabStorage.transition_request`; un intento rechazado solo deja un
 evento de auditoría. Un supervisor **no aprueba su propia solicitud** (`ALLOW_SELF_APPROVAL`, apagado
 por omisión, lo permite en una demostración con una sola persona).
+
+**Devoluciones en tres pasos (Despacho → Devoluciones).** Cuando el cliente devuelve lo prestado, pulsa
+**Devolver** (en Préstamos o en Buscar) y el préstamo **sigue abierto**: 1) un **supervisor** verifica lo que
+llegó (estado: en buen estado / con daños / incompleto, y cuántas unidades); 2) un **operario** (o un supervisor)
+lo guarda en el estante y solo entonces se cierra el préstamo y la disponibilidad vuelve a subir. Si llegaron menos
+unidades que las prestadas, se cierra solo lo recibido y el préstamo queda abierto por lo que falta. Cada paso es un
+evento de la cadena de custodia (`return_requested`, `return_verified`, `return_stored`, con el nombre de quien lo
+hizo) y el estado queda en el historial del producto. El profesor y el administrador (`checkin_any_loan`) siguen
+pudiendo reingresar directo. Capacidades: `verify_return` (supervisores) y `store_return` (operarios y supervisores);
+el módulo es `core/returns.py`.
 
 **Menos pasos.** **Tomar y empezar picking** toma el pedido y abre el panel de picking de una vez.
 Si no hay pistola ni chip a mano, el operario puede **confirmar manualmente** (*¿Sin lector?*): marca la
@@ -603,6 +625,8 @@ core/
   data_quality.py         Auditoría de calidad del inventario y correcciones seguras
   barcode.py              Validación/lectura de codigos (GLIOPS V3) y resolución de escaneo
   loans.py                Checkout / checkin / vencidos (por capacidad)
+  returns.py              Devolución en tres pasos: solicitud → verificación del supervisor → almacenamiento
+  pieces.py               Retiro de piezas (Lego y similares) sin inventario por pieza
   dispatch.py             Despacho: transiciones, picking, escenarios, listas de pedidos abiertos
   picking.py              Lecturas del picking en la memoria del proceso (por usuario y pedido)
   session.py              Sesión persistente: token firmado, época y cierres de sesión
@@ -769,7 +793,7 @@ Todo lo que se pide en el software avisa por correo, en un hilo en segundo plano
 |---|---|
 | Nueva solicitud de producto o servicio | Administradores |
 | Nueva reserva (actividad o laboratorio completo) | Administradores |
-| Salida (checkout) y devolución (checkin) de un préstamo | Administradores |
+| Salida (checkout) y devolución guardada (checkin) de un préstamo | Administradores |
 | Solicitud o reserva aprobada / rechazada | Quien la pidió |
 | Resumen de préstamos vencidos (botón manual) | Administradores |
 

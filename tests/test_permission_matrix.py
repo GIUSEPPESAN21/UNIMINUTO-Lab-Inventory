@@ -113,15 +113,17 @@ CAPABILITY_TABLE = {
     permissions.CAP_RESERVE: _CLIENT_AND_ABOVE,
     permissions.CAP_CHECKOUT: _CLIENT_AND_ABOVE,
     # operario (despacho)
-    permissions.CAP_VIEW_DISPATCH_QUEUE: {"operario", "maestro"},
-    permissions.CAP_CLAIM: {"operario", "maestro"},
-    permissions.CAP_PICK: {"operario", "maestro"},
+    permissions.CAP_VIEW_DISPATCH_QUEUE: {"operario"} | _SUPERVISORS,      # los supervisores también hacen picking
+    permissions.CAP_CLAIM: {"operario"} | _SUPERVISORS,
+    permissions.CAP_PICK: {"operario"} | _SUPERVISORS,
     permissions.CAP_RELEASE: {"operario"} | _SUPERVISORS,
+    permissions.CAP_STORE_RETURN: {"operario"} | _SUPERVISORS,             # guardan lo que el cliente devolvió
     # supervisor
     permissions.CAP_APPROVE: _SUPERVISORS,
     permissions.CAP_AUTHORIZE_DISPATCH: _SUPERVISORS,
     permissions.CAP_RECEIVE_AND_DELIVER: _SUPERVISORS,
     permissions.CAP_REASSIGN: _SUPERVISORS,
+    permissions.CAP_VERIFY_RETURN: _SUPERVISORS,                           # verifican estado y cantidad devueltos
     permissions.CAP_VIEW_ALL_TRACES: _SUPERVISORS,
     permissions.CAP_DISPATCH_REPORTS: _SUPERVISORS,
     # supervisor con inventario (profesor)
@@ -179,8 +181,8 @@ def test_domain_actions_enforce_the_capability_even_without_a_view(people):
         ok, message = service_requests.review_request(storage, row["id"], "approved", people[role])
         assert not ok and "permiso" in message
     assert service_requests.review_request(storage, row["id"], "approved", people["encargado"])[0]
-    with pytest.raises(PermissionError):                                  # el supervisor no hace picking
-        dispatch.claim_request(storage, row["id"], people["encargado"])
+    with pytest.raises(PermissionError):                                  # el cliente no toma pedidos
+        dispatch.claim_request(storage, row["id"], people["estudiante"])
     with pytest.raises(PermissionError):                                  # el cliente no ve la cola
         dispatch.queue_for(storage, people["estudiante"])
     with pytest.raises(PermissionError):                                  # el operario no recibe ni entrega

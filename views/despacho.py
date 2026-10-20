@@ -13,7 +13,7 @@ import json
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import dispatch, live_data, loans, ludica, permissions, picking, traceability
+from core import dispatch, live_data, loans, ludica, permissions, picking, returns, traceability
 from core.ui import badge_html, empty_state, esc, guard_cap, page_header, persistent_tabs, section_title
 from views import location_guide, photo_panel
 
@@ -68,6 +68,9 @@ def _heading(request: dict, events: list) -> None:
         f"{esc(request.get('requester_name'))} · {int(request.get('quantity') or 0)} u.</span>",
         unsafe_allow_html=True,
     )
+    note = str(request.get("description") or "").strip()
+    if note:      # la nota que escribió el cliente la ve quien prepara, recibe o entrega el pedido
+        st.info(f"Nota del cliente: {note}", icon=":material/sticky_note_2:")
 
 
 @st.fragment(run_every=_DISPATCH_EVERY)
@@ -161,6 +164,74 @@ def _review_fragment(storage, user: dict) -> None:
                     st.rerun()
 
 
+def _return_heading(row: dict) -> None:
+    loan = row["loan"]
+    st.markdown(f"**{esc(loan.get('item_name'))}** ×{esc(loan.get('quantity'))} · devuelve "
+                f"{esc(loan.get('user_name'))} ({esc(loan.get('user_role'))})")
+    note = str(row["requested"].get("notes") or "").strip()
+    if note:
+        st.info(f"Nota del cliente: {note}", icon=":material/sticky_note_2:")
+
+
+@st.fragment(run_every=_DISPATCH_EVERY)
+def _returns_fragment(storage, user: dict) -> None:
+    """Devoluciones: el supervisor verifica lo que llega y un operario lo guarda (cierra el préstamo)."""
+    if permissions.has_cap(user, permissions.CAP_VERIFY_RETURN):
+        rows = returns.pending(storage, returns.STAGE_REQUESTED)
+        section_title(f"Por verificar ({len(rows)})", icon=":material/fact_check:",
+                      caption="Revisa el estado y cuenta lo que el cliente trae antes de que se guarde.")
+        if not rows:
+            empty_state("Sin devoluciones por verificar", "Aquí aparecen cuando un cliente pulsa «Devolver».",
+                        icon=":material/assignment_return:")
+        for row in rows:
+            loan = row["loan"]
+            with st.container(border=True):
+                _return_heading(row)
+                with st.form(f"verify_return_{loan['id']}"):
+                    c1, c2 = st.columns(2)
+                    condition = c1.selectbox("Estado", list(returns.CONDITIONS), format_func=returns.CONDITIONS.get,
+                                             key=f"ret_cond_{loan['id']}")
+                    received = c2.number_input("Unidades recibidas", min_value=1, max_value=int(loan["quantity"]),
+                                               value=int(loan["quantity"]), step=1, key=f"ret_qty_{loan['id']}")
+                    notes = st.text_input("Observación (opcional)", key=f"ret_note_{loan['id']}")
+                    send = st.form_submit_button("Verificar devolución", type="primary", use_container_width=True)
+                if send:
+                    try:
+                        ok, message = returns.verify_return(storage, loan["id"], user, condition, received, notes)
+                    except PermissionError as exc:
+                        ok, message = False, str(exc)
+                    _notice(ok, message)
+                    st.rerun()
+    if permissions.has_cap(user, permissions.CAP_STORE_RETURN):
+        rows = returns.pending(storage, returns.STAGE_VERIFIED)
+        section_title(f"Por guardar ({len(rows)})", icon=":material/move_to_inbox:",
+                      caption="Ya verificadas por un supervisor: llévalas a su lugar y confirma.")
+        if not rows:
+            empty_state("Nada por guardar", "Las devoluciones verificadas aparecerán aquí.",
+                        icon=":material/inventory_2:")
+        for row in rows:
+            loan, proof = row["loan"], row["verified"]
+            with st.container(border=True):
+                _return_heading(row)
+                condition = returns.CONDITIONS.get(str(proof.get("condition") or ""), "")
+                st.success(f"Verificado: {proof.get('received', '?')} de {loan['quantity']} unidad(es) · {condition}"
+                           + (f" · «{proof['notes']}»" if proof.get("notes") else ""))
+                try:
+                    item = storage.get_item(loan["item_id"]) or {}
+                except Exception:       # la ubicación es solo una ayuda
+                    item = {}
+                if item.get("location"):
+                    st.caption(f"Se guarda en: {item['location']}")
+                if st.button("Guardar en el estante", key=f"store_return_{loan['id']}", type="primary",
+                             use_container_width=True):
+                    try:
+                        ok, message = returns.store_return(storage, loan["id"], user)
+                    except PermissionError as exc:
+                        ok, message = False, str(exc)
+                    _notice(ok, message)
+                    st.rerun()
+
+
 @st.fragment(run_every=_DISPATCH_EVERY)
 def _picking_progress(storage, user: dict, request_id: str, needed: int) -> None:
     """Avance del picking leído del almacén del proceso: se actualiza solo, así
@@ -205,6 +276,8 @@ def _picking_panel(storage, user: dict) -> None:
     with st.container(border=True, key="dispatch_picking_panel"):
         section_title(f"Picking · {request.get('item_name')}", icon=":material/barcode_scanner:",
                       caption=f"Lee una unidad a la vez ({needed} en total). {dispatch.scenario_label(storage)}.")
+        if str(request.get("description") or "").strip():
+            st.info(f"Nota del cliente: {str(request['description']).strip()}", icon=":material/sticky_note_2:")
         _order_context(storage, request, f"pick_{request_id}")
         _picking_progress(storage, user, request_id, needed)
         scenario = dispatch.SCENARIOS[dispatch.scenario_key(storage)]
@@ -273,10 +346,10 @@ def _oversight(storage, user: dict) -> None:
         request_id = st.selectbox("Pedido", list(choices),
                                   format_func=lambda value: f"{choices[value].get('item_name')} · {traceability.short_id(value)}")
         operators = [row for row in storage.get_all_users()
-                     if row.get("status") == "active" and row.get("role") == permissions.ROLE_OPERATOR]
-        selected = st.selectbox("Nuevo operario", operators,
+                     if row.get("status") == "active" and row.get("role") in permissions.roles_with(permissions.CAP_PICK)]
+        selected = st.selectbox("Nuevo responsable del picking", operators,
                                 format_func=lambda row: row.get("full_name"), index=None,
-                                placeholder="Selecciona un operario")
+                                placeholder="Selecciona a quién")
         reason = st.text_input("Motivo de reasignación")
         c1, c2 = st.columns(2)
         if c1.button("Reasignar", disabled=selected is None, use_container_width=True):
@@ -351,7 +424,7 @@ def render() -> None:
         guard_cap(user, permissions.CAP_VIEW_DISPATCH_QUEUE, "Despacho")
         return
     page_header("Despacho", icon=":material/local_shipping:",
-                subtitle="Tomar pedido → picking por unidad → recepción → entrega")
+                subtitle="Tomar pedido → picking por unidad → recepción → entrega · devoluciones")
     notice = st.session_state.pop("dispatch_notice", None)
     if notice:
         (st.success if notice[0] else st.error)(notice[1])
@@ -365,6 +438,10 @@ def render() -> None:
     if permissions.has_cap(user, permissions.CAP_RECEIVE_AND_DELIVER):
         titles.append("Por revisar")
         renderers.append(_review_fragment)
+    if (permissions.has_cap(user, permissions.CAP_VERIFY_RETURN)
+            or permissions.has_cap(user, permissions.CAP_STORE_RETURN)):
+        titles.append("Devoluciones")
+        renderers.append(_returns_fragment)
     if permissions.has_cap(user, permissions.CAP_DISPATCH_REPORTS):
         titles.append("Tiempos")
         renderers.append(_reports)

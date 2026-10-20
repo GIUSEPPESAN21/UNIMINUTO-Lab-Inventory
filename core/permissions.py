@@ -44,6 +44,8 @@ CAP_CLAIM = "claim"
 CAP_RELEASE = "release"
 CAP_PICK = "pick"
 CAP_RECEIVE_AND_DELIVER = "receive_and_deliver"
+CAP_VERIFY_RETURN = "verify_return"
+CAP_STORE_RETURN = "store_return"
 CAP_REASSIGN = "reassign"
 CAP_VIEW_ALL_TRACES = "view_all_traces"
 CAP_EDIT_INVENTORY = "edit_inventory"
@@ -64,10 +66,15 @@ _CLIENT = {
     CAP_REQUEST, CAP_VIEW_OWN_REQUESTS, CAP_CANCEL_OWN_REQUEST,
     CAP_CONFIRM_RECEIPT, CAP_RESERVE, CAP_CHECKOUT,
 }
-_DISPATCH = {CAP_VIEW_DISPATCH_QUEUE, CAP_CLAIM, CAP_RELEASE, CAP_PICK}
+# Los operarios (auxiliares) guardan en el estante lo que el cliente devolvió y el supervisor verificó.
+_DISPATCH = {CAP_VIEW_DISPATCH_QUEUE, CAP_CLAIM, CAP_RELEASE, CAP_PICK, CAP_STORE_RETURN}
 _ATTEND = {
     CAP_APPROVE, CAP_AUTHORIZE_DISPATCH, CAP_RECEIVE_AND_DELIVER,
     CAP_REASSIGN, CAP_RELEASE, CAP_VIEW_ALL_TRACES, CAP_DISPATCH_REPORTS,
+    # Los supervisores también toman pedidos y hacen picking (como el auxiliar de laboratorio).
+    CAP_VIEW_DISPATCH_QUEUE, CAP_CLAIM, CAP_PICK, CAP_STORE_RETURN,
+    # El supervisor verifica lo que el cliente devuelve (estado y cantidad) antes de guardarlo.
+    CAP_VERIFY_RETURN,
 }
 _PROFESSOR = {
     CAP_EDIT_INVENTORY, CAP_MANAGE_NFC, CAP_MANAGE_LOCATIONS,
@@ -90,6 +97,11 @@ ROLE_CAPS = {
 # Compatibilidad para módulos externos; el código nuevo usa capacidades.
 MANAGER_ROLES = (ROLE_ATTENDANT, ROLE_PROFESSOR, ROLE_MASTER)
 ADMIN_ROLES = (ROLE_MASTER,)
+
+
+def roles_with(capability: str) -> tuple:
+    """Roles técnicos que tienen ``capability`` (p. ej. quién puede recibir un pedido reasignado)."""
+    return tuple(role for role in ROLES if capability in ROLE_CAPS.get(role, ()))
 
 
 def has_role(user: dict, roles) -> bool:
