@@ -336,16 +336,18 @@ def _toggle_generator(master_id: str) -> None:
 
 
 def _children_labels_button(slot, storage, master: dict, spec) -> None:
-    """Un PDF con las etiquetas de TODOS los productos del contenedor (no solo los que dejan ver los filtros)."""
-    count = len(labels.printable_items(storage.get_children(master["id"])))
-    if not count:
+    """Un PDF con la etiqueta del contenedor y la de TODOS sus productos (no solo los que dejan ver los filtros),
+    en seguidilla: igual que el PDF de una estantería con sus pisos en Ubicaciones."""
+    group = labels.container_label_set(master, storage.get_children(master["id"]))
+    if len(group) < 2:         # sin productos imprimibles basta el popover «Etiqueta» del propio contenedor
         return
     slot.download_button(
-        f":material/print: Etiquetas de los {count} productos",
+        f":material/print: Etiquetas del contenedor y sus {len(group) - 1} productos ({len(group)})",
         data=lambda: labels.generate_container_labels_pdf_bytes(master, storage.get_children(master["id"]), spec),
         file_name=f"etiquetas_{master['id']}.pdf", mime="application/pdf", key=f"inv_kids_pdf_{master['id']}",
         use_container_width=True,
-        help="Una página por producto, del tamaño real de la etiqueta y en orden de código: se imprime de corrido.",
+        help="Una página por etiqueta, del tamaño real configurado: primero el contenedor y luego sus productos "
+             "por código, para imprimirlas de corrido.",
     )
 
 
@@ -358,7 +360,7 @@ def _container_card(storage, user, master: dict, children: list, availability: d
         photo_panel.photo_popover(master)
         has_description = bool((master.get("description") or "").strip())
         is_open = st.session_state.get(GENERATOR_KEY) == master["id"]
-        edit_col, label_col, kids_col, gen_col = st.columns([1, 1, 2, 3])
+        edit_col, label_col, kids_col, gen_col = st.columns([1, 1, 3, 3])
         _edit_button(edit_col, master, ":material/edit: Editar")
         _label_popover(label_col, master, spec, ":material/label: Etiqueta")
         _children_labels_button(kids_col, storage, master, spec)
@@ -607,6 +609,16 @@ def _render_catalog(storage, user: dict, spec) -> None:
     if groups:
         section_title("Contenedores Principales", icon=ITEM_TYPE_ICONS["master"],
                       caption="Cada contenedor con los productos que guarda.")
+        everything = [(master, children_by_parent.get(master["id"], [])) for master, _kids, _hit in groups]
+        total = sum(len(labels.container_label_set(master, children)) for master, children in everything)
+        if total > 1:
+            st.download_button(
+                f":material/print: PDF con las {total} etiquetas de estos {len(groups)} contenedor(es) y sus productos",
+                data=lambda: labels.generate_catalog_labels_pdf_bytes(everything, spec),
+                file_name="etiquetas_contenedores.pdf", mime="application/pdf", key="inv_all_labels_pdf",
+                use_container_width=True,
+                help="Cada contenedor seguido de sus productos, una etiqueta por página. Respeta los filtros: "
+                     "los contenedores que ves arriba.")
     for master, kids, _hit in paginate(groups, "inv_groups", 15):
         filtered = len(kids) != len(children_by_parent.get(master["id"], []))
         _container_card(storage, user, master, kids, availability, spec, suggested.get(master["id"], 0))

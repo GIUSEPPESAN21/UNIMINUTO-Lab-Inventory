@@ -251,11 +251,15 @@ Buscar). Los servicios requieren nombre y descripción; la fecha es opcional. Si
 administradores reciben un correo; si falla, la solicitud permanece guardada y muestra la advertencia.
 Los avisos (pedido enviado, aprobado…) **sobreviven a la recarga** de la página.
 
-### Imprimir las etiquetas de todo un contenedor
+### Imprimir las etiquetas de un contenedor y de todos sus productos
 
-En **Inventario**, cada Contenedor Principal con productos muestra **«Etiquetas de los N productos»**: descarga un PDF
-con una página por producto, del tamaño real de la etiqueta configurada (Configuración de etiquetas) y en orden de código,
-para imprimirlo de una vez desde Edge o Chrome (Ctrl + P, papel USER) en lugar de bajar una etiqueta por producto.
+Funciona igual que el PDF de una estantería con sus pisos en **Ubicaciones**: en **Inventario**, cada Contenedor
+Principal con productos muestra **«Etiquetas del contenedor y sus N productos»**, un PDF con **una página por etiqueta
+en seguidilla** (primero la del contenedor y luego la de cada producto, en orden de código), del tamaño real de la
+etiqueta configurada (Configuración de etiquetas). Se imprime de una vez desde Edge o Chrome (Ctrl + P, papel USER).
+Incluye todos los productos del contenedor aunque los filtros muestren solo algunos. Arriba de la lista hay además
+**«PDF con las N etiquetas de estos contenedores y sus productos»**, con cada contenedor seguido de sus productos y que
+respeta los filtros. Los códigos no imprimibles se omiten.
 
 ### Retirar piezas de un producto (Lego, bloques, kits…)
 

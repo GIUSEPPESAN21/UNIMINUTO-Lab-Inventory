@@ -1467,12 +1467,26 @@ def printable_items(items: list) -> list:
     return [item for item in items or [] if _is_printable(_item_label_fields(item)["code"])]
 
 
-def generate_container_labels_pdf_bytes(container: dict, children: list, spec: LabelSpec = None):
-    """PDF con la etiqueta de cada producto de un contenedor, en orden de código, para imprimirlas de corrido.
-    ``None`` si el contenedor no tiene productos con código imprimible."""
+def container_label_set(container: dict, children: list) -> list:
+    """Etiquetas de un contenedor en el orden en que se pegan: la del contenedor y luego la de cada uno de sus
+    productos, por código. Solo las imprimibles."""
     ordered = sorted(printable_items(children), key=lambda item: _natural_key(item.get("id")))
+    return printable_items([container]) + ordered
+
+
+def generate_container_labels_pdf_bytes(container: dict, children: list, spec: LabelSpec = None):
+    """PDF con la etiqueta del contenedor y la de todos sus productos, una página cada una y en seguidilla, como el
+    PDF de las ubicaciones de una estantería. ``None`` si no hay ninguna imprimible."""
     return generate_labels_pdf_bytes(
-        ordered, spec, title=f"Etiquetas de {_clean_text((container or {}).get('name')) or 'contenedor'}")
+        container_label_set(container, children), spec,
+        title=f"Etiquetas de {_clean_text((container or {}).get('name')) or 'contenedor'}")
+
+
+def generate_catalog_labels_pdf_bytes(groups: list, spec: LabelSpec = None, title: str = "Etiquetas del inventario"):
+    """PDF con las etiquetas de varios contenedores: ``groups`` es ``[(contenedor, [productos])]``; cada contenedor
+    va seguido de sus productos."""
+    items = [item for container, children in groups or [] for item in container_label_set(container, children)]
+    return generate_labels_pdf_bytes(items, spec, title=title)
 
 
 def _natural_key(code) -> tuple:
