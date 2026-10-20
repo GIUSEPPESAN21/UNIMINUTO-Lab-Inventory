@@ -24,10 +24,10 @@ BOGOTA_TZ = ZoneInfo("America/Bogota")
 SETTING_SELF_CHECKOUT = "self_checkout_mode"
 MODE_FREE, MODE_APPROVED_ONLY, MODE_OFF = "libre", "solo_aprobado", "apagado"
 SELF_CHECKOUT_MODES = {
-    MODE_FREE: ("Libre", "Cualquier cliente retira lo que esté disponible desde Escanear, sin aprobación."),
+    MODE_FREE: ("Libre", "Cualquier cliente retira lo que esté disponible desde Buscar, sin aprobación."),
     MODE_APPROVED_ONLY: ("Solo con solicitud aprobada",
-                         "El cliente solo retira por Escanear lo que un supervisor ya aprobó, y hasta la cantidad aprobada."),
-    MODE_OFF: ("Apagado", "Nadie del lado cliente retira por Escanear: todo pasa por Solicitudes y Despacho."),
+                         "El cliente solo retira por Buscar lo que un supervisor ya aprobó, y hasta la cantidad aprobada."),
+    MODE_OFF: ("Apagado", "Nadie del lado cliente retira por Buscar: todo pasa por Solicitudes y Despacho."),
 }
 DEFAULT_SELF_CHECKOUT = MODE_FREE
 
@@ -126,7 +126,7 @@ def _self_checkout_blocked(storage, user: dict, item_id: str, quantity: int, req
     approved = {request["id"]: request for request in traceability.pending_pickups(storage, user, item_id)}
     request = approved.get(request_id)
     if request is None:
-        return ("Solo puedes retirar por Escanear un producto que ya tenga una solicitud aprobada a tu nombre. "
+        return ("Solo puedes retirar por Buscar un producto que ya tenga una solicitud aprobada a tu nombre. "
                 "Pídelo desde Solicitudes.")
     if quantity > int(request.get("quantity") or 0):
         return f"Tu solicitud aprobada es de {int(request.get('quantity') or 0)} unidad(es); no puedes retirar más."

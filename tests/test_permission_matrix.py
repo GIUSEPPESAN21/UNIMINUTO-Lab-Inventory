@@ -22,13 +22,14 @@ PASSWORD = "ClaveSegura123"
 ROLES = ("estudiante", "operario", "encargado", "profesor", "maestro")
 
 COMMON = {"inicio", "perfil", "acerca_de"}
-CLIENT = COMMON | {"escanear", "solicitudes", "reservas", "prestamos", "trazabilidad"}
+CLIENT = COMMON | {"escanear", "solicitudes", "prestamos"}          # «escanear» es la página Buscar
+STAFF = CLIENT | {"despacho", "trazabilidad"}                       # el cliente sigue su pedido en Solicitudes
 PAGES = {
     "estudiante": CLIENT,
     "operario": COMMON | {"despacho"},
-    "encargado": CLIENT | {"despacho"},
-    "profesor": CLIENT | {"despacho", "inventario", "ubicaciones", "reportes", "nfc"},
-    "maestro": CLIENT | {"despacho", "inventario", "ubicaciones", "reportes", "nfc", "usuarios"},
+    "encargado": STAFF,
+    "profesor": STAFF | {"inventario", "ubicaciones", "reportes", "nfc"},
+    "maestro": STAFF | {"inventario", "ubicaciones", "reportes", "nfc", "usuarios"},
 }
 ALL_PAGES = set().union(*PAGES.values())
 
@@ -91,7 +92,7 @@ def test_every_view_refuses_a_hand_typed_visit_without_the_capability(people, vi
 
 
 def test_the_page_table_covers_every_registered_page_and_nothing_else():
-    assert ALL_PAGES == {"inicio", "escanear", "solicitudes", "reservas", "prestamos", "trazabilidad", "despacho",
+    assert ALL_PAGES == {"inicio", "escanear", "solicitudes", "prestamos", "trazabilidad", "despacho",
                          "inventario", "ubicaciones", "reportes", "nfc", "usuarios", "perfil", "acerca_de"}
 
 

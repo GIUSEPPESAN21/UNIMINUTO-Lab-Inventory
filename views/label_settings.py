@@ -195,7 +195,7 @@ def render(storage, user: dict) -> None:
     saved = labels.load_label_spec(storage)
     st.caption(
         f"Configuración guardada: **{saved.describe()}**. Todas las etiquetas de la app "
-        "(Inventario, Escanear y registro de items) se generan con este tamaño."
+        "(Inventario, Buscar y registro de items) se generan con este tamaño."
     )
     spec, error = _spec_from_inputs(saved)
     if error:

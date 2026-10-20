@@ -567,6 +567,70 @@ def event_details(event: dict) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+ROLE_LABELS_SHORT = permissions.ROLE_SHORT_LABELS
+_PICK_METHODS = {"barcode_gun": "pistola de códigos", "camera": "cámara", "nfc": "chip NFC", "manual": "confirmación manual",
+                 "mixed": "varios métodos"}
+
+
+def describe_event(event: dict) -> str:
+    """Frase corta y legible de lo que pasó en un evento (sin JSON ni nombres técnicos)."""
+    kind = (event or {}).get("event_type")
+    details = event_details(event)
+    reason = str(details.get("reason") or details.get("notes") or "").strip()
+    note = f" · «{reason}»" if reason else ""
+    if kind == EVENT_ORDER_APPROVED:
+        return f"Aprobó la solicitud{note}"
+    if kind == EVENT_ORDER_REJECTED:
+        return f"Rechazó la solicitud{note}"
+    if kind == EVENT_ORDER_CANCELLED:
+        return f"Canceló la solicitud{note}"
+    if kind == EVENT_ORDER_AUTHORIZED:
+        allowed = details.get("authorized_pickers") or []
+        return (f"Autorizó el despacho a {len(allowed)} operario(s)" if allowed
+                else "Autorizó el despacho: lo puede tomar cualquier operario")
+    if kind == EVENT_ORDER_CLAIMED:
+        return f"Tomó el pedido ({details.get('picker_name')})" if details.get("picker_name") else "Tomó el pedido"
+    if kind == EVENT_ORDER_RELEASED:
+        return f"Devolvió el pedido a la cola{note}"
+    if kind == EVENT_ORDER_REASSIGNED:
+        return f"Pasó el pedido a otro operario{note}"
+    if kind == EVENT_ORDER_PICKED:
+        units = int(details.get("quantity") or len(details.get("readings") or []) or 0)
+        how = _PICK_METHODS.get(str(details.get("method") or ""), "")
+        text = f"Terminó el picking de {units} unidad(es)" + (f" con {how}" if how else "")
+        proof = details.get("manual_confirmation") or {}
+        if proof:
+            text += f". Confirmación manual de {proof.get('operator_name') or 'el operario'}: «{proof.get('message', '')}»"
+            if proof.get("note"):
+                text += f" Nota: {proof['note']}"
+        return text
+    if kind == EVENT_ORDER_RECEIVED:
+        return f"Recibió y revisó el picking{note}"
+    if kind == EVENT_ORDER_DELIVERED:
+        return f"Entregó el pedido al cliente{note}"
+    if kind == EVENT_ORDER_REWORK:
+        return f"Devolvió el pedido al picking{note}"
+    if kind == EVENT_ORDER_RETURNED_TO_SHELF:
+        return f"Devolvió las unidades al estante{note}"
+    if kind == EVENT_ORDER_CLIENT_CONFIRMED:
+        return "Confirmó que recibió el pedido"
+    if kind == EVENT_ORDER_ACTION_FAILED:
+        return f"Intento rechazado: {details.get('message') or details.get('reason') or 'acción no permitida'}"
+    if kind == EVENT_ORDER_SCAN_FAILED:
+        return f"Lecturas equivocadas en el picking: {int(details.get('count') or 1)}"
+    if kind == EVENT_ROLE_CHANGED:
+        before = ROLE_LABELS_SHORT.get(details.get("from_role"), details.get("from_role"))
+        after = ROLE_LABELS_SHORT.get(details.get("to_role"), details.get("to_role"))
+        return f"Cambió un rol: de {before} a {after}"
+    if kind == EVENT_WHITELIST_CHANGED:
+        return f"{'Agregó' if details.get('action') == 'added' else 'Quitó'} a {details.get('email')} de la lista blanca"
+    if kind == EVENT_SYNC_CONFLICT_RESOLVED:
+        return "Resolvió un conflicto de sincronización conservando la versión " + (
+            "de GitHub" if details.get("kept") == "remote" else "de esta app")
+    pairs = [f"{key}: {value}" for key, value in details.items() if value not in ("", None, [], {})]
+    return " · ".join(pairs[:6])
+
+
 def events_by_request(events: list) -> dict:
     index = {}
     for event in events or []:
@@ -932,13 +996,13 @@ def _dispatch_timeline(request: dict, events: list, now=None) -> list:
     steps = [{
         "title": "Solicitud creada", "state": "done",
         "time": fmt_local(request.get("created_at")),
-        "detail": request.get("requester_name") or permissions.role_label(permissions.ROLE_STUDENT),
+        "detail": request.get("requester_name") or permissions.role_short_label(permissions.ROLE_STUDENT),
     }]
     for event in lifecycle:
         if event.get("event_type") == EVENT_ORDER_REQUESTED:
             continue
         details = event_details(event)
-        actor = event.get("actor_name") or permissions.role_label(event.get("actor_role"))
+        actor = event.get("actor_name") or permissions.role_short_label(event.get("actor_role"))
         detail = actor
         if event.get("event_type") == EVENT_ORDER_AUTHORIZED:
             allowed = details.get("authorized_pickers") or []
@@ -1049,7 +1113,7 @@ def request_timeline(request: dict, events: list = None, loan: dict = None, name
 
     if pickup:
         qty = event_details(pickup).get("quantity")
-        detail = f"Salida de {qty} u. registrada en Escanear" if qty else "Salida registrada en Escanear"
+        detail = f"Salida de {qty} u. registrada en Buscar" if qty else "Salida registrada en Escanear"
         steps.append({"title": "Retirada", "state": "done", "time": fmt_local(pickup.get("created_at")),
                       "detail": f"{detail} · {pickup.get('actor_name') or ''}".rstrip(" ·")})
     elif closed:
@@ -1057,7 +1121,7 @@ def request_timeline(request: dict, events: list = None, loan: dict = None, name
     else:
         current = status == STATUS_APPROVED and bool(route)
         steps.append({"title": "Retirada", "state": "current" if current else "pending",
-                      "detail": "Confirma la salida en Escanear con tu usuario."})
+                      "detail": "Confirma la salida en Buscar con tu usuario."})
 
     if loan and loan.get("status") == "returned":
         steps.append({"title": "Devuelta", "state": "done", "time": fmt_local(loan.get("return_at")),

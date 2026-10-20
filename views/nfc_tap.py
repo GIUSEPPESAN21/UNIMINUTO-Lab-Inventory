@@ -110,7 +110,10 @@ def handle_pending(storage, user: dict, pages: dict, current_page=None) -> None:
                        "message": f"No se pudo registrar el toque del chip NFC ({exc}). Inténtalo de nuevo."}
     apply_outcome(storage, outcome)
     _clear_query()
-    target = pages.get(outcome.get("target")) or pages.get(nfc.TARGET_SCAN)
+    target = pages.get(outcome.get("target"))
+    if target is None and outcome.get("target") == nfc.TARGET_ROUTE:
+        target = pages.get("solicitudes")        # el cliente recorre su ruta desde Solicitudes → Mis pedidos
+    target = target or pages.get(nfc.TARGET_SCAN)
     current_path = getattr(current_page, "url_path", None)
     if target is not None and current_path != target.url_path:
         st.switch_page(target)

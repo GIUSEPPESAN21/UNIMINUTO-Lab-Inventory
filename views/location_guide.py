@@ -199,9 +199,9 @@ def render_route_record(event: dict, show_next_step: bool = False) -> None:
     st.caption(caption)
     timeline(traceability.checkpoint_steps(info.get("checkpoints") or []))
     if show_next_step:
-        st.info("Siguiente paso: en **Escanear**, escanea el producto y confirma la salida con tu usuario; "
+        st.info("Siguiente paso: en **Buscar**, escanea el producto y confirma la salida con tu usuario; "
                 "quedará enlazada a esta solicitud.")
-        _page_link("escanear", "Ir a Escanear", "🛰️")
+        _page_link("escanear", "Ir a Buscar", "🔎")
 
 
 def render_verifiable_route(storage, request: dict, user: dict, key_prefix: str = "route") -> None:

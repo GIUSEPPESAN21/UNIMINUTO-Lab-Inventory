@@ -165,7 +165,7 @@ def test_sidebar_shows_user_card_and_logout_still_works():
     at.text_input[1].input(PASSWORD)
     at.button[0].click().run()
     assert not at.exception
-    assert "trazabilidad" in at.session_state["pages"]
+    assert "solicitudes" in at.session_state["pages"] and "trazabilidad" not in at.session_state["pages"]
     sidebar = " ".join(m.value for m in at.sidebar.markdown)
     assert "user-chip" in sidebar and "role-estudiante" in sidebar
     logout = next(b for b in at.sidebar.button if "Cerrar sesión" in b.label)

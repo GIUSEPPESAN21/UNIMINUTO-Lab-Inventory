@@ -6,7 +6,7 @@ import streamlit as st
 from core import auth, permissions
 from core.ui import (
     ROLE_LABELS, badge_html, card, card_header_html, empty_state, guard_cap, initials, page_header,
-    section_title, stat_cards,
+    persistent_tabs, section_title, stat_cards,
 )
 
 ROLES = list(permissions.ROLES)
@@ -211,7 +211,8 @@ def render():
         "Usuarios", icon=":material/group:",
         subtitle="Corrección de datos, roles, estados y lista blanca de supervisores",
     )
-    tab_usuarios, tab_whitelist = st.tabs([":material/group: Usuarios", ":material/check_circle: Lista blanca de supervisores"])
+    tab_usuarios, tab_whitelist = persistent_tabs(
+        [":material/group: Usuarios", ":material/check_circle: Lista blanca de supervisores"], "usuarios")
 
     with tab_usuarios:
         st.caption(

@@ -14,15 +14,19 @@ ROLE_MASTER = "maestro"
 ROLES = (ROLE_STUDENT, ROLE_OPERATOR, ROLE_ATTENDANT, ROLE_PROFESSOR, ROLE_MASTER)
 
 # Única fuente de las etiquetas visibles; los ids técnicos de arriba no cambian.
-# Profesor y encargado comparten etiqueta («Supervisor»): se distinguen por sus
-# capacidades (el encargado no edita inventario) y, donde importa, por
-# role_detail_label().
+# Cada etiqueta dice el cargo en la vida real del laboratorio entre paréntesis, así
+# «Supervisor» no se confunde entre quien encarga el laboratorio y quien es profesor.
 ROLE_LABELS = {
-    ROLE_STUDENT: "Cliente",
-    ROLE_OPERATOR: "Operario",
-    ROLE_ATTENDANT: "Supervisor",
-    ROLE_PROFESSOR: "Supervisor",
+    ROLE_STUDENT: "Estudiante (Cliente)",
+    ROLE_OPERATOR: "Operario (Auxiliar de laboratorio)",
+    ROLE_ATTENDANT: "Supervisor (Encargado del laboratorio)",
+    ROLE_PROFESSOR: "Supervisor (Profesor)",
     ROLE_MASTER: "Administrador",
+}
+# Etiqueta corta para frases del tipo «Nombre (cargo)», donde un segundo paréntesis estorba.
+ROLE_SHORT_LABELS = {
+    ROLE_STUDENT: "Cliente", ROLE_OPERATOR: "Operario", ROLE_ATTENDANT: "Supervisor",
+    ROLE_PROFESSOR: "Supervisor", ROLE_MASTER: "Administrador",
 }
 
 CAP_REQUEST = "request"
@@ -103,13 +107,16 @@ def require_cap(user: dict, capability: str, message: str = "No tienes permiso p
 
 
 def role_detail_label(role_or_user) -> str:
-    """Etiqueta para quien asigna roles: si dos roles comparten etiqueta, agrega el id."""
-    role = role_or_user.get("role", "") if isinstance(role_or_user, dict) else str(role_or_user or "")
-    label = ROLE_LABELS.get(role, role or "Sin rol")
-    shared = sum(1 for value in ROLE_LABELS.values() if value == label) > 1
-    return f"{label} ({role})" if shared else label
+    """Etiqueta para quien asigna roles. Las etiquetas ya son únicas; se conserva por compatibilidad."""
+    return role_label(role_or_user)
 
 
 def role_label(role_or_user) -> str:
     role = role_or_user.get("role", "") if isinstance(role_or_user, dict) else str(role_or_user or "")
     return ROLE_LABELS.get(role, role or "Sin rol")
+
+
+def role_short_label(role_or_user) -> str:
+    """«Cliente», «Operario», «Supervisor» o «Administrador», para ir entre paréntesis."""
+    role = role_or_user.get("role", "") if isinstance(role_or_user, dict) else str(role_or_user or "")
+    return ROLE_SHORT_LABELS.get(role, role or "Sin rol")

@@ -6,7 +6,9 @@ capacidad `view_all_loans` (profesor y administrador)."""
 import streamlit as st
 
 from core import loans as loans_core, permissions
-from core.ui import card, card_header, empty_state, guard_cap, page_header, section_title, stat_cards
+from core.ui import (
+    card, card_header, empty_state, guard_cap, page_header, persistent_tabs, section_title, stat_cards,
+)
 
 
 def _when(value, fmt: str = "%d/%m/%Y %H:%M") -> str:
@@ -69,13 +71,14 @@ def render():
         ])
         section_title("Mis préstamos", icon=":material/assignment:")
         if not loans:
-            empty_state("No tienes préstamos activos.", "Cuando registres una salida desde Escanear aparecerá aquí.",
+            empty_state("No tienes préstamos activos.", "Cuando registres una salida desde Buscar aparecerá aquí.",
                         icon=":material/inbox:")
         for loan in loans:
             _loan_row(storage, loan, user, "mine")
         return
 
-    tab_activos, tab_historial = st.tabs([":material/assignment: Préstamos activos", ":material/history: Historial completo"])
+    tab_activos, tab_historial = persistent_tabs(
+        [":material/assignment: Préstamos activos", ":material/history: Historial completo"], "prestamos")
 
     with tab_activos:
         loans = storage.get_all_loans(status="out")

@@ -1,23 +1,30 @@
 # -*- coding: utf-8 -*-
-"""Solicitudes de productos y servicios del laboratorio."""
+"""Solicitudes: un solo lugar para pedir un producto, un servicio o una reserva y seguir su avance.
 
-from datetime import datetime, timedelta
+- **Nueva solicitud:** producto (se busca por nombre o código), servicio o reserva.
+- **Mis pedidos:** cada pedido con su avance en lenguaje sencillo (enviada → aprobada → preparando →
+  listo para reclamar → completado). El cliente no ve nada más que lo suyo.
+- **Gestionar** (quien aprueba): solicitudes pendientes y, con permiso de reservas, las reservas por revisar.
+"""
+
+from datetime import datetime, time
 
 import streamlit as st
 
-from core import dispatch, live_data, permissions, reservations, service_requests, traceability
-from core.ui import badge_html, esc, guard_cap, page_header, timeline
+from core import (
+    dispatch, live_data, permissions, reservations, search, service_requests, tracker, traceability,
+)
+from core.ui import (
+    badge_html, empty_state, esc, flash, guard_cap, page_header, persistent_tabs, section_title, show_flash,
+    stepper,
+)
+from views import reservas
 from views.location_guide import render_location_guide, render_verifiable_route
 
-_TYPE_LABELS = {
-    "Producto del inventario": service_requests.TYPE_PRODUCT,
-    "Servicio del laboratorio": service_requests.TYPE_SERVICE,
-}
-# Estado de la solicitud como pastilla: (texto, tono, icono).
-_STATUS_BADGES = {
-    "pending": ("Pendiente", "warning", "⏳"), "approved": ("Aprobada", "success", "✅"),
-    "rejected": ("Rechazada", "danger", "⛔"), "cancelled": ("Cancelada", "neutral", "⚪"),
-}
+_TYPES = {"Producto": service_requests.TYPE_PRODUCT, "Servicio": service_requests.TYPE_SERVICE, "Reserva": "reservation"}
+_FLASH = "solicitudes"
+_PRODUCT_KINDS = {"standalone", "child"}      # lo que se puede pedir (no contenedores ni ubicaciones)
+_TONE_BY_STATUS = {"pending": "warning", "approved": "success", "rejected": "danger", "cancelled": "neutral"}
 
 
 def _request_title(row: dict) -> str:
@@ -28,82 +35,269 @@ def _local(value) -> str:
     return reservations.as_bogota(value).strftime("%d/%m/%Y %I:%M %p") if value else "Sin fecha"
 
 
-def _render_tracking(storage, row: dict, user: dict, events: list, loan: dict) -> None:
-    """Seguimiento chequeable de la solicitud y, si ya está aprobada, su ruta."""
-    actionable = (
-        row.get("request_type") == service_requests.TYPE_PRODUCT
-        and row.get("status") == service_requests.STATUS_APPROVED
-        and row.get("requester_id") == user.get("id")
-        and not traceability.first_event(events, traceability.EVENT_PICKED_UP)
+def _needed_at(day):
+    """Fecha opcional «para cuándo»: si se elige, vence a las 6 p. m. de ese día (hora de Bogotá)."""
+    return datetime.combine(day, time(18, 0), tzinfo=reservations.BOGOTA_TZ) if day else None
+
+
+# ---------------------------------------------------------------------------
+# Pedir un producto (también lo usa Buscar)
+# ---------------------------------------------------------------------------
+
+def request_product_form(storage, user: dict, item: dict, key_prefix: str, flash_key: str = _FLASH) -> None:
+    """Formulario corto para pedir ``item``: cantidad, nota opcional y, si hace falta, para cuándo."""
+    if not permissions.has_cap(user, permissions.CAP_REQUEST):
+        return
+    available = storage.get_available_quantity(item["id"])
+    if available <= 0:
+        st.warning(f"«{item.get('name')}» no tiene unidades disponibles ahora.")
+        return
+    with st.form(f"request_form_{key_prefix}"):
+        quantity = st.number_input("Cantidad", min_value=1, max_value=int(available), value=1, step=1,
+                                   help=f"Hay {available} disponible(s).")
+        note = st.text_input("Nota (opcional)", placeholder="Para qué lo necesitas")
+        day = st.date_input("¿Para qué día? (opcional)", value=None, min_value=datetime.now(reservations.BOGOTA_TZ).date())
+        if st.form_submit_button(":material/send: Pedir este producto", type="primary", use_container_width=True):
+            try:
+                row, notified, message = service_requests.submit_request(
+                    storage, user, service_requests.TYPE_PRODUCT, item["id"], quantity,
+                    description=note, needed_at=_needed_at(day),
+                )
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                flash(f"Pedido {traceability.short_id(row['id'])} enviado: «{item.get('name')}» × {int(quantity)}. "
+                      "Sigue su avance en Solicitudes → Mis pedidos." + ("" if notified else f" ({message})"),
+                      key=flash_key)
+                st.rerun()
+
+
+def _pick_product(storage, key: str):
+    """Buscador de productos: nombre, código o lectura de pistola. Devuelve el ítem elegido o ``None``."""
+    items = [item for item in storage.get_all_items() if item.get("item_type") in _PRODUCT_KINDS]
+    if not items:
+        st.warning("No hay productos activos disponibles para solicitar.")
+        return None
+    query = st.text_input(":material/search: Buscar producto", key=f"{key}_query",
+                          placeholder="Escribe el nombre o escanea el código")
+    matches = search.search_items(items, query, kinds=_PRODUCT_KINDS) if query.strip() else items[:search.MAX_RESULTS]
+    if query.strip() and not matches:
+        empty_state("Sin resultados", "Prueba con otra palabra o con el código del producto.", icon=":material/search:")
+        return None
+    if not query.strip():
+        st.caption("Escribe arriba para filtrar; mientras tanto se muestran los primeros productos.")
+    options = {item["id"]: item for item in matches}
+    choice = st.selectbox(
+        "Producto", list(options), key=f"{key}_choice",
+        format_func=lambda code: f"{options[code]['name']} · {code}",
     )
-    with st.expander(":material/explore: Ruta y seguimiento" if actionable else ":material/location_on: Seguimiento", expanded=actionable):
-        timeline(traceability.request_timeline(row, events, loan))
-        if actionable:
-            st.markdown("**Ruta verificable hasta el producto**")
-            st.caption("Escanea (o escribe) el código de cada etiqueta en el camino; al llegar obtienes "
-                       "un comprobante que el supervisor puede validar.")
-            render_verifiable_route(storage, row, user, key_prefix="req_route")
+    return options.get(choice)
 
 
-def _request_card(storage, row: dict, user: dict, allow_cancel=True, events: list = None,
-                  loan: dict = None, show_tracking: bool = False) -> None:
+def _render_new(storage, user: dict) -> None:
+    kind = st.radio("¿Qué necesitas?", list(_TYPES), horizontal=True, key="request_kind")
+    request_type = _TYPES[kind]
+    if request_type == "reservation":
+        reservas.render_new(storage, user)
+        return
+    if request_type == service_requests.TYPE_PRODUCT:
+        item = _pick_product(storage, "request_product")
+        if item is None:
+            return
+        parent = storage.get_item(item.get("parent_id")) if item.get("parent_id") else None
+        c1, c2 = st.columns([1, 2], vertical_alignment="center")
+        c1.metric("Disponibles ahora", storage.get_available_quantity(item["id"]))
+        c2.caption(f"Ubicación: {item.get('location') or (parent or {}).get('location') or 'sin dato'}")
+        with st.expander(":material/pin_drop: ¿Dónde está?", expanded=False):
+            render_location_guide(item, parent, key_prefix=f"request_guide_{item['id']}")
+        request_product_form(storage, user, item, key_prefix=f"new_{item['id']}")
+        return
+
+    with st.form("service_request_form"):
+        service_name = st.text_input("Servicio requerido", placeholder="Ej: impresión 3D, corte láser o asesoría")
+        description = st.text_area("¿Qué necesitas?", placeholder="Explica el uso, curso, materiales o resultado esperado")
+        day = st.date_input("¿Para qué día? (opcional)", value=None, min_value=datetime.now(reservations.BOGOTA_TZ).date())
+        if st.form_submit_button(":material/send: Pedir servicio", type="primary", use_container_width=True):
+            try:
+                row, notified, message = service_requests.submit_request(
+                    storage, user, service_requests.TYPE_SERVICE, service_name=service_name,
+                    description=description, needed_at=_needed_at(day),
+                )
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                flash(f"Solicitud {traceability.short_id(row['id'])} enviada. Sigue su avance en Mis pedidos."
+                      + ("" if notified else f" ({message})"), key=_FLASH)
+                st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Mis pedidos
+# ---------------------------------------------------------------------------
+
+def _is_closed(progress: dict) -> bool:
+    return all(step["state"] in ("done", "blocked") for step in progress["steps"])
+
+
+def _status_header(title: str, meta: str, progress: dict) -> None:
+    st.markdown(
+        f"<div><b>{esc(title)}</b> {badge_html(progress['headline'], progress['tone'])}</div>"
+        f"<div class=\"lab-section__caption\">{esc(meta)}</div>",
+        unsafe_allow_html=True,
+    )
+    stepper(progress["steps"])
+    if progress.get("hint"):
+        st.caption(progress["hint"])
+
+
+def render_request_status(storage, user: dict, row: dict, events: list = None, loan: dict = None,
+                          key_prefix: str = "mine") -> None:
+    """Tarjeta de seguimiento de un pedido de producto o servicio (la ve su dueño y el personal)."""
+    events = events if events is not None else storage.get_trace_events(request_id=row["id"])
+    progress = tracker.client_tracker(row, events, loan)
+    product = row.get("request_type") == service_requests.TYPE_PRODUCT
+    quantity = f" × {row.get('quantity')}" if product else ""
+    own = row.get("requester_id") == user.get("id")
     with st.container(border=True):
-        c1, c2 = st.columns([3, 1])
-        title = _request_title(row) or "Solicitud"
-        quantity = f" · {row.get('quantity')} unidad(es)" if row.get("request_type") == "product" else ""
-        # HTML escapado (y no markdown): un nombre de producto no puede inyectar enlaces ni imágenes.
-        c1.markdown(
-            f"<b>{esc(title)}</b>{esc(quantity)} "
-            f"{badge_html(*_STATUS_BADGES.get(row.get('status'), (row.get('status'), 'neutral', None)))}",
-            unsafe_allow_html=True,
-        )
-        if show_tracking:
-            stage, tone = traceability.request_stage(row, events, loan)
-            c1.markdown(
-                f"{badge_html(stage, tone)} <span class=\"lab-section__caption\">"
-                f"{esc(traceability.short_id(row.get('id')))}</span>",
-                unsafe_allow_html=True,
-            )
-        c1.caption(
-            f"Solicitante: {row.get('requester_name')} · Requerido: {_local(row.get('needed_at'))}"
-        )
+        _status_header(f"{_request_title(row) or 'Solicitud'}{quantity}",
+                       f"{traceability.short_id(row.get('id'))} · pedido {_local(row.get('created_at'))}"
+                       + ("" if own else f" · {row.get('requester_name')}"), progress)
         if row.get("description"):
-            c1.write(row["description"])
+            st.caption(f"Nota: {row['description']}")
         if row.get("review_notes"):
-            c1.caption(f"Respuesta: {row['review_notes']}")
-        if row.get("email_notified"):
-            c1.caption(":material/mail: Administradores notificados")
-        elif row.get("email_error"):
-            c1.caption(f":material/warning: {row['email_error']}")
-        # Una solicitud ya retirada sigue su curso por el préstamo: no se ofrece cancelarla.
-        picked_up = bool(traceability.first_event(events, traceability.EVENT_PICKED_UP))
-        if allow_cancel and row.get("status") in ("pending", "approved") and not picked_up:
-            if c2.button("Cancelar", key=f"cancel_req_{row['id']}", use_container_width=True):
-                ok, message = service_requests.cancel_request(storage, row["id"], user)
-                (st.success if ok else st.error)(message)
-                if ok:
-                    st.rerun()
-        if (row.get("requester_id") == user.get("id")
-                and permissions.has_cap(user, permissions.CAP_CONFIRM_RECEIPT)
-                and traceability.request_stage_key(row, events or []) == traceability.STAGE_DELIVERED):
-            if c2.button("Recibí mi pedido", key=f"confirm_req_{row['id']}",
-                         type="primary", use_container_width=True):
+            st.caption(f"Respuesta del supervisor: {row['review_notes']}")
+        c1, c2 = st.columns(2)
+        if own and progress["can_confirm"] and permissions.has_cap(user, permissions.CAP_CONFIRM_RECEIPT):
+            if c1.button("Recibí mi pedido", key=f"{key_prefix}_confirm_{row['id']}", type="primary",
+                         use_container_width=True):
                 ok, message, _ = dispatch.confirm_client_receipt(storage, row["id"], user)
-                (st.success if ok else st.error)(message)
-                if ok:
-                    st.rerun()
-        if show_tracking:
-            _render_tracking(storage, row, user, events or [], loan)
+                flash(message, "success" if ok else "error", key=_FLASH)
+                st.rerun()
+        picked_up = bool(traceability.first_event(events, traceability.EVENT_PICKED_UP))
+        started = traceability.dispatch_started(events)
+        if (own and row.get("status") in ("pending", "approved") and not picked_up and not started
+                and permissions.has_cap(user, permissions.CAP_CANCEL_OWN_REQUEST)):
+            if c2.button("Cancelar pedido", key=f"{key_prefix}_cancel_{row['id']}", use_container_width=True):
+                ok, message = service_requests.cancel_request(storage, row["id"], user)
+                flash(message, "success" if ok else "error", key=_FLASH)
+                st.rerun()
+        # Retiro por cuenta propia (sin despacho): la ruta verificable sigue disponible.
+        if (own and product and row.get("status") == service_requests.STATUS_APPROVED and not picked_up
+                and not started and permissions.has_cap(user, permissions.CAP_CHECKOUT)):
+            focused = st.session_state.get("trace_focus_request") == row["id"]    # lo abre un toque de chip NFC
+            with st.expander(":material/explore: Retirarlo yo mismo: ruta hasta el producto", expanded=focused):
+                st.caption("Escanea (o escribe) el código de cada etiqueta en el camino; al llegar obtienes un "
+                           "comprobante que el supervisor puede validar. Si prefieres, espera a que un operario lo prepare.")
+                render_verifiable_route(storage, row, user, key_prefix="trace_route")
+
+
+def _reservation_status(storage, row: dict, user: dict) -> None:
+    progress = tracker.reservation_tracker(row)
+    with st.container(border=True):
+        _status_header(f"Reserva · {row.get('activity') or 'Laboratorio completo'}",
+                       f"{_local(row.get('start_at'))} → {_local(row.get('end_at'))} · "
+                       f"{row.get('attendees')} asistente(s)", progress)
+        if row.get("review_notes"):
+            st.caption(f"Respuesta del supervisor: {row['review_notes']}")
+        if row.get("status") in ("pending", "approved") and row.get("requester_id") == user.get("id"):
+            if st.button("Cancelar reserva", key=f"mine_cancel_res_{row['id']}", use_container_width=True):
+                ok, message = reservations.cancel_reservation(storage, row["id"], user)
+                flash(message, "success" if ok else "error", key=_FLASH)
+                st.rerun()
 
 
 @st.fragment(run_every=live_data.run_every(live_data.list_refresh_seconds()))
-def _live_status(storage, user: dict) -> None:
-    rows = storage.get_service_requests(user_id=user.get("id"))
-    events = traceability.events_by_request(storage.get_trace_events(user_id=user.get("id")))
-    if rows:
-        latest = rows[0]
-        stage = traceability.request_stage(latest, events.get(latest["id"], []))[0]
-        st.caption(f"{len(rows)} solicitud(es) · la más reciente está: {stage}")
+def _render_mine(storage, user: dict) -> None:
+    requests = storage.get_service_requests(user_id=user["id"])
+    mine_reservations = storage.get_reservations(user_id=user["id"])
+    if not requests and not mine_reservations:
+        empty_state("Todavía no tienes pedidos", "Cuando pidas un producto, un servicio o una reserva, aquí verás en qué paso va.",
+                    icon=":material/history:")
+        return
+    index = traceability.events_by_request(storage.get_trace_events(user_id=user["id"]))
+    loans = {loan["id"]: loan for loan in storage.get_all_loans() if loan.get("user_id") == user["id"]}
+
+    entries = []
+    for row in requests:
+        events = index.get(row["id"], [])
+        pickup = traceability.first_event(events, traceability.EVENT_PICKED_UP)
+        loan = loans.get(pickup.get("loan_id")) if pickup else None
+        entries.append((row.get("created_at") or "", "request", row, events, loan,
+                        _is_closed(tracker.client_tracker(row, events, loan))))
+    for row in mine_reservations:
+        entries.append((row.get("created_at") or "", "reservation", row, [], None,
+                        _is_closed(tracker.reservation_tracker(row))))
+    entries.sort(key=lambda entry: str(entry[0]), reverse=True)
+
+    def draw(entry):
+        _, kind, row, events, loan, _ = entry
+        if kind == "request":
+            render_request_status(storage, user, row, events, loan)
+        else:
+            _reservation_status(storage, row, user)
+
+    active = [entry for entry in entries if not entry[5]]
+    closed = [entry for entry in entries if entry[5]]
+    section_title(f"En curso ({len(active)})", icon=":material/pending_actions:")
+    if not active:
+        st.caption("No tienes pedidos en curso.")
+    for entry in active:
+        draw(entry)
+    if closed:
+        with st.expander(f"Historial ({len(closed)})"):
+            for entry in closed:
+                draw(entry)
+
+
+# ---------------------------------------------------------------------------
+# Gestionar (quien aprueba)
+# ---------------------------------------------------------------------------
+
+def _render_manage(storage, user: dict) -> None:
+    pending = storage.get_service_requests(status=service_requests.STATUS_PENDING)
+    operators = [row for row in storage.get_all_users()
+                 if row.get("status") == "active" and row.get("role") == permissions.ROLE_OPERATOR]
+    operator_names = {row["id"]: row.get("full_name") or row["id"] for row in operators}
+    section_title(f"Solicitudes por revisar ({len(pending)})", icon=":material/fact_check:")
+    if not pending:
+        st.success("No hay solicitudes pendientes.")
+    for row in pending:
+        with st.expander(
+            f"{_request_title(row)} · {row.get('requester_name')} · {_local(row.get('needed_at'))}", expanded=False,
+        ):
+            quantity = f" × {row.get('quantity')}" if row.get("request_type") == "product" else ""
+            st.markdown(f"**{esc(_request_title(row) or 'Solicitud')}**{esc(quantity)} · "
+                        f"{esc(row.get('requester_name'))} · {esc(traceability.short_id(row.get('id')))}")
+            if row.get("description"):
+                st.write(row["description"])
+            with st.form(f"review_request_{row['id']}"):
+                authorized = []
+                if row.get("request_type") == service_requests.TYPE_PRODUCT:
+                    authorized = st.multiselect(
+                        "Operarios autorizados", list(operator_names), format_func=operator_names.get,
+                        help="Déjalo vacío para permitir a todos los operarios activos.",
+                    )
+                notes = st.text_input("Respuesta para el solicitante (opcional)")
+                own = row.get("requester_id") == user["id"] and not dispatch.allow_self_approval()
+                if own:
+                    st.caption("Es tu propia solicitud: la aprueba otra persona.")
+                c1, c2 = st.columns(2)
+                approve = c1.form_submit_button("Aprobar", type="primary", use_container_width=True, disabled=own)
+                reject = c2.form_submit_button("Rechazar", use_container_width=True)
+                if approve or reject:
+                    decision = service_requests.STATUS_APPROVED if approve else service_requests.STATUS_REJECTED
+                    ok, message = service_requests.review_request(
+                        storage, row["id"], decision, user, notes, authorized_pickers=authorized,
+                    )
+                    flash(message, "success" if ok else "error", key=_FLASH)
+                    st.rerun()
+    st.caption("Al aprobar un producto queda autorizado para la cola de Despacho. El préstamo y el descuento de "
+               "disponibilidad se crean al completar el picking.")
+
+    if permissions.has_cap(user, permissions.CAP_MANAGE_RESERVATIONS):
+        st.divider()
+        section_title("Reservas", icon=":material/calendar_month:")
+        reservas.render_manage(storage, user)
 
 
 def render():
@@ -111,145 +305,21 @@ def render():
     user = st.session_state.user
     if not guard_cap(user, permissions.CAP_REQUEST, "Solicitudes"):
         return
-    reviewer = permissions.has_cap(user, permissions.CAP_APPROVE)
+    reviewer = permissions.has_cap(user, permissions.CAP_APPROVE) or permissions.has_cap(
+        user, permissions.CAP_MANAGE_RESERVATIONS)
 
-    page_header(
-        "Solicitudes", icon=":material/edit_note:",
-        subtitle="Solicita productos o servicios; el responsable recibe una notificación automática",
-    )
-    titles = [":material/add: Nueva solicitud", ":material/history: Mis solicitudes"]
+    page_header("Solicitudes", icon=":material/edit_note:",
+                subtitle="Pide un producto, un servicio o una reserva y sigue su avance")
+    show_flash(_FLASH)
+    titles = [":material/add: Nueva solicitud", ":material/timeline: Mis pedidos"]
     if reviewer:
         titles.append(":material/fact_check: Gestionar")
-    tabs = st.tabs(titles)
-
+    tabs = persistent_tabs(titles, "solicitudes")
     with tabs[0]:
-        type_label = st.radio("Tipo de solicitud", list(_TYPE_LABELS), horizontal=True, key="request_type")
-        request_type = _TYPE_LABELS[type_label]
-        selected_item = None
-        item_id = ""
-
-        if request_type == service_requests.TYPE_PRODUCT:
-            items = [
-                item for item in storage.get_all_items()
-                if item.get("status") != "retired" and item.get("item_type") not in ("master", "location")
-            ]
-            options = {f"{item['name']} ({item['id']})": item for item in items}
-            if not options:
-                st.warning("No hay productos activos disponibles para solicitar.")
-            else:
-                choice = st.selectbox("Producto", list(options), key="request_product")
-                selected_item = options[choice]
-                item_id = selected_item["id"]
-                available = storage.get_available_quantity(item_id)
-                st.metric("Disponibles ahora", available)
-                parent = storage.get_item(selected_item.get("parent_id")) if selected_item.get("parent_id") else None
-                render_location_guide(selected_item, parent, key_prefix=f"request_guide_{item_id}")
-
-        tomorrow = datetime.now(reservations.BOGOTA_TZ) + timedelta(days=1)
-        with st.form("service_request_form", clear_on_submit=False):
-            service_name = ""
-            quantity = 1
-            if request_type == service_requests.TYPE_PRODUCT:
-                max_value = max(1, storage.get_available_quantity(item_id)) if item_id else 1
-                quantity = st.number_input("Cantidad", min_value=1, max_value=max_value, value=1, step=1)
-            else:
-                service_name = st.text_input(
-                    "Servicio requerido", placeholder="Ej: Impresión 3D, corte láser o asesoría"
-                )
-            description = st.text_area(
-                "Descripción", placeholder="Explica el uso, curso, materiales o resultado esperado"
-            )
-            c1, c2 = st.columns(2)
-            needed_date = c1.date_input("Fecha requerida", value=tomorrow.date())
-            needed_time = c2.time_input("Hora requerida", value=tomorrow.time().replace(tzinfo=None))
-            submitted = st.form_submit_button("Enviar solicitud", type="primary", use_container_width=True)
-
-            if submitted:
-                needed_at = datetime.combine(
-                    needed_date, needed_time, tzinfo=reservations.BOGOTA_TZ
-                )
-                try:
-                    row, notified, message = service_requests.submit_request(
-                        storage, user, request_type, item_id, quantity,
-                        service_name, description, needed_at,
-                    )
-                    st.success(f"Solicitud #{row['id']} registrada y pendiente de aprobación.")
-                    if notified:
-                        st.info(message)
-                    else:
-                        st.warning(message)
-                    if request_type == service_requests.TYPE_PRODUCT:
-                        st.caption(":material/explore: Cuando la aprueben, abre **Mis solicitudes** o **Trazabilidad** para "
-                                   "recorrer la ruta verificable hasta el producto.")
-                    else:
-                        st.caption(":material/location_on: Sigue su avance (aprobada → en curso → entregado) en **Mis solicitudes** "
-                                   "o en **Trazabilidad**.")
-                except ValueError as exc:
-                    st.error(str(exc))
-
+        _render_new(storage, user)
     with tabs[1]:
-        _live_status(storage, user)
-        mine = storage.get_service_requests(user_id=user["id"])
-        if not mine:
-            st.info("Todavía no tienes solicitudes.")
-        # Eventos y préstamos propios: cada tarjeta muestra su línea de tiempo.
-        index = traceability.events_by_request(storage.get_trace_events(user_id=user["id"]))
-        loans = {loan["id"]: loan for loan in storage.get_all_loans() if loan.get("user_id") == user["id"]}
-        for row in mine:
-            events = index.get(row["id"], [])
-            pickup = traceability.first_event(events, traceability.EVENT_PICKED_UP)
-            loan = loans.get(pickup.get("loan_id")) if pickup else None
-            _request_card(storage, row, user, events=events, loan=loan, show_tracking=True)
-
+        _render_mine(storage, user)
     if reviewer:
         with tabs[2]:
-            pending = storage.get_service_requests(status=service_requests.STATUS_PENDING)
-            operators = [row for row in storage.get_all_users()
-                         if row.get("status") == "active"
-                         and row.get("role") == permissions.ROLE_OPERATOR]
-            operator_names = {row["id"]: row.get("full_name") or row["id"] for row in operators}
-            st.metric("Pendientes", len(pending))
-            if not pending:
-                st.success("No hay solicitudes pendientes.")
-            for row in pending:
-                with st.expander(
-                    f"{_request_title(row)} · {row.get('requester_name')} · {_local(row.get('needed_at'))}",
-                    expanded=False,
-                ):
-                    _request_card(storage, row, user, allow_cancel=False)
-                    with st.form(f"review_request_{row['id']}"):
-                        authorized = []
-                        if row.get("request_type") == service_requests.TYPE_PRODUCT:
-                            authorized = st.multiselect(
-                                "Operarios autorizados",
-                                list(operator_names), format_func=operator_names.get,
-                                help="Déjalo vacío para permitir a todos los operarios activos.",
-                            )
-                        notes = st.text_input("Observación para el solicitante")
-                        own = row.get("requester_id") == user["id"] and not dispatch.allow_self_approval()
-                        if own:
-                            st.caption("Es tu propia solicitud: la aprueba otra persona.")
-                        c1, c2 = st.columns(2)
-                        approve = c1.form_submit_button("Aprobar", type="primary", use_container_width=True,
-                                                        disabled=own)
-                        reject = c2.form_submit_button("Rechazar", use_container_width=True)
-                        if approve or reject:
-                            decision = (
-                                service_requests.STATUS_APPROVED if approve
-                                else service_requests.STATUS_REJECTED
-                            )
-                            ok, message = service_requests.review_request(
-                                storage, row["id"], decision, user, notes,
-                                authorized_pickers=authorized,
-                            )
-                            (st.success if ok else st.error)(message)
-                            if ok:
-                                st.rerun()
-            st.caption(
-                "Al aprobar un producto queda autorizado para la cola Despacho. El préstamo y el "
-                "descuento de disponibilidad se crean al completar el picking."
-            )
-            st.caption(
-                ":material/explore: En **Trazabilidad** validas el comprobante de ruta del estudiante, ves la cadena de "
-                "custodia de cada producto y marcas los servicios como en curso o entregados."
-            )
+            _render_manage(storage, user)
+

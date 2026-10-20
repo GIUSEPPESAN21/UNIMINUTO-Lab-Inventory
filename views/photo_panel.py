@@ -206,10 +206,11 @@ def render_gallery(storage, user: dict, item: dict) -> None:
 # Escanear
 # ---------------------------------------------------------------------------
 
-def render_scan_photo(item: dict, compact: bool = False) -> None:
+def render_scan_photo(item: dict, compact: bool = False, key_suffix: str = "") -> None:
     """Ultima foto del objeto escaneado (todos los roles) y, para profesor y
     maestro, «Foto de estado (opcional)». `compact`: miniatura (productos de un
-    contenedor escaneado)."""
+    contenedor escaneado). `key_suffix` distingue varias tarjetas del mismo objeto en una
+    pantalla (dos pedidos del mismo producto en Despacho)."""
     storage, user = st.session_state.storage, st.session_state.user
     records = _photos_of(storage, item["id"])
     if records:
@@ -221,7 +222,7 @@ def render_scan_photo(item: dict, compact: bool = False) -> None:
             _show(photos.photo_bytes(latest), caption, SCAN_WIDTH)
     if not photos.can_add(user):
         return
-    key = f"scan_photo_{item['id']}"
+    key = f"scan_photo_{item['id']}{'_' + key_suffix if key_suffix else ''}"
     popover = st.popover("Foto de estado (opcional)", icon=":material/add_a_photo:", type="tertiary",
                          key=key, on_change="rerun",
                          help="Documenta cómo está el objeto al dar salida o al reingresarlo.")
