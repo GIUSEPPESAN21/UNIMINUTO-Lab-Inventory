@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import streamlit as st
 
 from core import dispatch, live_data, permissions, reservations, service_requests, traceability
-from core.ui import badge_html, esc, page_header, timeline
+from core.ui import badge_html, esc, guard_cap, page_header, timeline
 from views.location_guide import render_location_guide, render_verifiable_route
 
 _TYPE_LABELS = {
@@ -41,7 +41,7 @@ def _render_tracking(storage, row: dict, user: dict, events: list, loan: dict) -
         if actionable:
             st.markdown("**Ruta verificable hasta el producto**")
             st.caption("Escanea (o escribe) el código de cada etiqueta en el camino; al llegar obtienes "
-                       "un comprobante que el profesor puede validar.")
+                       "un comprobante que el supervisor puede validar.")
             render_verifiable_route(storage, row, user, key_prefix="req_route")
 
 
@@ -109,6 +109,8 @@ def _live_status(storage, user: dict) -> None:
 def render():
     storage = st.session_state.storage
     user = st.session_state.user
+    if not guard_cap(user, permissions.CAP_REQUEST, "Solicitudes"):
+        return
     reviewer = permissions.has_cap(user, permissions.CAP_APPROVE)
 
     page_header(
@@ -219,13 +221,17 @@ def render():
                         authorized = []
                         if row.get("request_type") == service_requests.TYPE_PRODUCT:
                             authorized = st.multiselect(
-                                "Despachadores autorizados",
+                                "Operarios autorizados",
                                 list(operator_names), format_func=operator_names.get,
                                 help="Déjalo vacío para permitir a todos los operarios activos.",
                             )
                         notes = st.text_input("Observación para el solicitante")
+                        own = row.get("requester_id") == user["id"] and not dispatch.allow_self_approval()
+                        if own:
+                            st.caption("Es tu propia solicitud: la aprueba otra persona.")
                         c1, c2 = st.columns(2)
-                        approve = c1.form_submit_button("Aprobar", type="primary", use_container_width=True)
+                        approve = c1.form_submit_button("Aprobar", type="primary", use_container_width=True,
+                                                        disabled=own)
                         reject = c2.form_submit_button("Rechazar", use_container_width=True)
                         if approve or reject:
                             decision = (

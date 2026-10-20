@@ -149,7 +149,7 @@ def test_external_remote_change_blocks_the_push_and_flags_conflict(github):
     assert github.content == b"EDITADO A MANO FUERA DE LA APP"   # ...pero NO pisa lo remoto
     status = sm.get_sync_status()
     assert status["ok"] is False and status["conflict"] is True
-    assert "maestro" in status["message"].lower()
+    assert "administrador" in status["message"].lower()
 
 
 def test_resolve_conflict_keeping_local_overwrites_remote(github):

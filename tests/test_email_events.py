@@ -142,8 +142,8 @@ def test_request_email_says_who_requested_what_and_when(lab, monkeypatch):
         "requester_name": "Ana Prueba", "requester_email": "ana@uniminuto.edu.co",
     }
     content = email_events.request_created_content(request, lab.student)
-    assert content.subject == "[Laboratorio] Nueva solicitud: Microscopio — Ana Prueba (Estudiante)"
-    for expected in ("Ana Prueba", "Estudiante", "ana@uniminuto.edu.co", "ID-123", "Microscopio (LAB-MIC-01)",
+    assert content.subject == "[Laboratorio] Nueva solicitud: Microscopio — Ana Prueba (Cliente)"
+    for expected in ("Ana Prueba", "Cliente", "ana@uniminuto.edu.co", "ID-123", "Microscopio (LAB-MIC-01)",
                      "2 unidad(es)", "12/10/2026 10:30 a. m.", "10/10/2026 8:05 a. m. (hora de Bogotá)",
                      "#abcdef", "https://lab.streamlit.app/solicitudes"):
         assert expected in content.text, expected
@@ -156,13 +156,13 @@ def test_service_request_and_reservation_subjects_name_the_service_and_activity(
         {"request_type": "service", "service_name": "Impresión 3D", "description": "Pieza"},
         {"full_name": "Pablo Profe", "role": "profesor", "institutional_email": "profe@uniminuto.edu.co"},
     )
-    assert service.subject == "[Laboratorio] Nueva solicitud: Impresión 3D — Pablo Profe (Profesor)"
+    assert service.subject == "[Laboratorio] Nueva solicitud: Impresión 3D — Pablo Profe (Supervisor)"
     assert "Servicio del laboratorio" in service.text and "Abrir la aplicación" not in service.text
     reservation = email_events.reservation_created_content(
         {"id": "r1", "scope_type": "activity", "activity": "Robótica", "purpose": "Semillero", "attendees": 12,
          "start_at": "2026-10-20T19:00:00+00:00", "end_at": "2026-10-20T21:00:00+00:00"}, lab.student,
     )
-    assert reservation.subject == "[Laboratorio] Nueva reserva: Robótica — Ana Prueba (Estudiante)"
+    assert reservation.subject == "[Laboratorio] Nueva reserva: Robótica — Ana Prueba (Cliente)"
     assert "20/10/2026 2:00 p. m." in reservation.text and "Asistentes: 12" in reservation.text
 
 
@@ -171,8 +171,8 @@ def test_checkin_email_flags_a_late_return(lab):
             "checkout_at": _future(-5), "expected_return_at": _future(-2), "return_at": _future(0)}
     content = email_events.loan_checkin_content(loan, lab.student, {"id": "otro", "full_name": "Pablo Profe",
                                                                       "role": "profesor"})
-    assert content.subject == "[Laboratorio] Devolución: Microscopio x1 — Ana Prueba (Estudiante)"
-    assert "Devuelto con retraso" in content.text and "Registró la devolución: Pablo Profe (Profesor)" in content.text
+    assert content.subject == "[Laboratorio] Devolución: Microscopio x1 — Ana Prueba (Cliente)"
+    assert "Devuelto con retraso" in content.text and "Registró la devolución: Pablo Profe (Supervisor)" in content.text
 
 
 def test_message_is_multipart_with_plain_text_and_html(lab, smtp):
@@ -199,7 +199,7 @@ def test_new_request_is_emailed_to_masters_in_background_and_recorded(lab, smtp)
     assert email_events.wait_for_pending(5)
     sent = smtp.sent[-1]
     assert sent["To"] == "maestra@uniminuto.edu.co, otro.maestro@uniminuto.edu.co"
-    assert sent["Subject"] == "[Laboratorio] Nueva solicitud: Microscopio — Ana Prueba (Estudiante)"
+    assert sent["Subject"] == "[Laboratorio] Nueva solicitud: Microscopio — Ana Prueba (Cliente)"
     stored = lab.get_service_request(row["id"])
     assert stored["email_notified"] is True and stored["email_error"] == ""
     assert lab.log[-1]["reference"] == row["id"] and lab.log[-1]["recipient_count"] == 2
@@ -227,7 +227,7 @@ def test_checkin_and_reviews_reach_the_right_people(lab, smtp):
     assert service_requests.review_request(lab, request["id"], "rejected", reviewer, "Falta el archivo")[0]
     assert email_events.wait_for_pending(5)
     subjects = {message["Subject"]: message for message in smtp.sent}
-    assert "[Laboratorio] Devolución: Microscopio x1 — Ana Prueba (Estudiante)" in subjects
+    assert "[Laboratorio] Devolución: Microscopio x1 — Ana Prueba (Cliente)" in subjects
     review = subjects["[Laboratorio] Tu solicitud fue rechazada: Corte láser"]
     assert review["To"] == "ana@uniminuto.edu.co"                     # solo al solicitante
     assert "Falta el archivo" in _body(review, "plain")
@@ -245,7 +245,7 @@ def test_reservation_created_and_approved_are_emailed(lab, smtp):
     assert reservations.review_reservation(lab, row["id"], "approved", reviewer)[0]
     assert email_events.wait_for_pending(5)
     subjects = [message["Subject"] for message in smtp.sent]
-    assert "[Laboratorio] Nueva reserva: Laboratorio completo — Ana Prueba (Estudiante)" in subjects
+    assert "[Laboratorio] Nueva reserva: Laboratorio completo — Ana Prueba (Cliente)" in subjects
     assert "[Laboratorio] Tu reserva fue aprobada: Laboratorio completo" in subjects
     assert lab.get_reservation(row["id"])["email_notified"] is True
 

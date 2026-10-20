@@ -20,6 +20,7 @@ from core import auth  # noqa: E402
 APP_PATH = str(Path(__file__).resolve().parent.parent / "app.py")
 
 PASSWORD = "ClaveSegura123"
+ADMIN = {"id": "admin-test", "role": "maestro", "institutional_email": "admin@uniminuto.edu.co"}
 
 
 def _start():
@@ -68,21 +69,24 @@ def test_disabled_account_is_logged_out_on_the_next_interaction():
     _login(at, "ana@uniminuto.edu.co")
     assert at.session_state["user"] is not None
 
-    storage.update_user(user["id"], {"status": "disabled"})
+    storage.update_user(user["id"], {"status": "disabled"}, actor=ADMIN)
     at.run()
     assert not at.exception
     assert at.session_state["user"] is None
     assert any("deshabilitada" in w.value.lower() for w in at.warning)
 
 
-def test_role_change_applies_without_logging_in_again():
+def test_role_change_by_an_admin_closes_the_session_and_applies_on_the_next_login():
     at, storage = _start()
     user = _make_user(storage, "ana@uniminuto.edu.co")
     _login(at, "ana@uniminuto.edu.co")
     assert "inventario" not in at.session_state["pages"]
 
-    storage.update_user(user["id"], {"role": "profesor"})
+    storage.update_user(user["id"], {"role": "profesor"}, actor=ADMIN)
     at.run()
+    assert at.session_state["user"] is None
+    assert any("revocada" in w.value.lower() for w in at.warning)
+    _login(at, "ana@uniminuto.edu.co")
     assert at.session_state["user"]["role"] == "profesor"
     assert "inventario" in at.session_state["pages"]
 
@@ -119,7 +123,7 @@ def test_whitelisted_email_without_smtp_is_created_as_student_with_guidance():
     _register(at, "Profesor Gomez", "DOC-1", "prof@uniminuto.edu.co")
 
     assert storage.get_user_by_email("prof@uniminuto.edu.co")["role"] == "estudiante"
-    assert any("lista de profesores" in i.value for i in at.info)
+    assert any("lista de supervisores" in i.value for i in at.info)
 
 
 @pytest.fixture

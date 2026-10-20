@@ -6,8 +6,8 @@
 Sistema de gestión de inventario y préstamos (salida/reingreso) para el
 **laboratorio de ingeniería de UNIMINUTO**, con códigos de barras jerárquicos
 (Contenedor Principal + Contenedores de Característica) y control de acceso
-por roles usando el correo institucional (estudiante / profesor / perfil
-maestro).
+por roles usando el correo institucional (cliente / operario / supervisor /
+administrador).
 
 Este repositorio es **público**; la base de datos (Excel con inventario,
 préstamos y usuarios) vive en un repositorio **privado** aparte:
@@ -137,7 +137,7 @@ etiquetas más altas crecen hasta el 36 % del alto.
 
 ### Ubicaciones con código (estanterías, pisos, mesas)
 
-En el menú lateral **Gestión → Ubicaciones** (y también en **Inventario → 🗺️ Ubicaciones**; solo profesor y maestro) cada estantería, piso, mesa de trabajo o zona tiene
+En el menú lateral **Gestión → Ubicaciones** (y también en **Inventario → 🗺️ Ubicaciones**; solo supervisor (profesor) y administrador) cada estantería, piso, mesa de trabajo o zona tiene
 su propia etiqueta con código de barras, para pegarla en el lugar y escanearla. Son ítems
 de tipo `location` en la misma hoja `items` (no cambia el esquema del Excel).
 
@@ -220,7 +220,7 @@ Todo usuario autenticado puede solicitar una actividad o el laboratorio
 completo. Las fechas se interpretan en `America/Bogota` y se guardan en UTC.
 Una reserva completa entra en conflicto con cualquier reserva aprobada que se
 solape; dos actividades distintas pueden coexistir, pero dos reservas de la
-misma actividad no. Profesor y maestro aprueban/rechazan; el solicitante puede
+misma actividad no. Supervisor (profesor) y administrador aprueban/rechazan; el solicitante puede
 cancelar. No se imponen horarios de apertura porque la documentación no los
 define.
 
@@ -232,26 +232,61 @@ Escanear para conservar la cadena de custodia. Los servicios requieren nombre,
 descripción y fecha. Si SMTP está configurado, los administradores reciben un
 correo; si falla, la solicitud permanece guardada y muestra la advertencia.
 
+### Despacho: tomar, hacer picking, recibir y entregar (🚚 Despacho)
+
+Un pedido de producto recorre: **solicitado → aprobado (y autorizado) → tomado → picking
+completo → recibido → entregado → confirmado por el cliente**. Quien aprueba (supervisor) elige,
+si quiere, qué operarios quedan autorizados; el **operario** lo toma, hace el picking leyendo
+**una unidad a la vez** y, al completarlo, el sistema crea **un solo préstamo a nombre del
+cliente** (con «despachado por …»: columnas `operator_id`/`operator_name` de `loans`, el
+historial del producto, **Préstamos** y el correo de salida/reingreso). El **supervisor** recibe,
+revisa y entrega; si algo no cuadra, **vuelve al picking** (reutiliza el mismo préstamo: no se
+descuenta dos veces) o **devuelve al estante** (cierra el préstamo y repone la disponibilidad:
+`disponible = total − préstamos abiertos`). Cada transición se valida de nuevo, con datos
+frescos y bajo el bloqueo, en `LabStorage.transition_request`; un intento rechazado solo deja un
+evento de auditoría. Un supervisor **no aprueba su propia solicitud** (`ALLOW_SELF_APPROVAL`, apagado
+por omisión, lo permite en una demostración con una sola persona).
+
+**En el teléfono.** Cada pedido muestra su **ruta** (la misma de la etiqueta: E2 › P1 › C01 …), la
+referencia de ubicación y la **foto** del producto; el panel de **picking va arriba**, antes de las
+listas, y el campo del código recibe el foco para la pistola. Las listas se actualizan solas
+(`DISPATCH_REFRESH_SECONDS`).
+
+**Método real de cada lectura** (`barcode_gun`, `camera`, `nfc`, `manual`): el chip NFC siempre se
+registra como `nfc`; lo escrito en el formulario lo fija el **escenario de la lúdica** que el
+administrador elige en **Despacho → Ajustes** (A «Manual» → `manual`, B «Programa + pistola» →
+`barcode_gun`, C «Programa + chip NFC» → `manual` como respaldo del teclado). Quien hace el picking no
+puede cambiarlo, y un método inválido hace fallar la transición. `camera` es un valor reconocido pero
+todavía no hay lectura de código de barras por cámara (ver *Límites*).
+
+**NFC y pestaña nueva.** Un toque de chip abre la app en una pestaña nueva (otra sesión de Streamlit), así
+que las lecturas del picking **no viven en `st.session_state`**: están en `core/picking.py`, en la memoria
+del proceso, por `(user_id, request_id)`. El toque suma a ese picking y lleva de vuelta a Despacho; la
+pestaña original se actualiza sola. Un toque rechazado (firma inválida, chip desconocido o de otro
+producto) nunca suma. Las lecturas **fallidas se acumulan y se guardan en UN solo evento** junto con el
+picking completo (antes cada error escribía en el Excel y en GitHub). Si la app se reinicia a mitad de un
+picking, las lecturas pendientes se pierden (el pedido sigue «tomado» y se retoma).
+
 ### Ruta verificable y trazabilidad (🧭 Trazabilidad)
 
 Cada producto muestra su ruta derivada del código V3 (estantería › piso ›
 contenedor › caja › ítem) con la etiqueta que se encontrará en cada punto. Mesa y
 Lego tienen rutas especiales; códigos libres/heredados usan `location`.
 
-- **Estudiante:** con una solicitud aprobada, recorre la ruta paso a paso y
+- **Cliente:** con una solicitud aprobada, recorre la ruta paso a paso y
   confirma cada punto **escaneando su etiqueta** (o escribiendo el código). Si
   escanea una equivocada, la app le dice dónde está y hacia dónde ir. Estantería y
   piso se confirman al llegar o quedan probados al escanear el contenedor; si tienen
   etiqueta registrada en **Inventario → Ubicaciones**, se confirman escaneándola. Al terminar recibe un **comprobante** corto y ve su solicitud en
   una línea de tiempo (creada → revisada → ruta verificada → retirada → devuelta).
   Los servicios muestran creada → aprobada → en curso → entregado.
-- **Profesor/maestro:** busca por solicitud, producto, estudiante o comprobante;
+- **Supervisor/administrador:** busca por solicitud, producto, estudiante o comprobante;
   ve quién hizo qué y cuándo, valida el comprobante con el producto en la mano,
   consulta la **cadena de custodia** de un producto y marca el avance de los
   servicios.
 - Recorrer la ruta no escribe en la base: se guarda **un solo evento** al
   completarla (hoja `trace_events`). Registrar la salida en Escanear enlaza el
-  préstamo con la solicitud aprobada. Un estudiante solo ve sus propios registros.
+  préstamo con la solicitud aprobada. Un cliente solo ve sus propios registros.
 
 ### Fotos de los objetos (📷)
 
@@ -263,8 +298,8 @@ celular, para reconocerlo y dejar constancia de su estado en la cadena de custod
   otra); en **✏️ Editar** hay una **galería** (la más reciente primero, con fecha,
   autor, tipo y nota; el **maestro** puede eliminar). En **Escanear**, al encontrar
   un objeto se muestra su última foto a cualquier rol (ayuda a reconocerlo) y
-  profesor/maestro pueden agregar una **foto de estado** al dar salida o reingresar
-  (opcional). Agregan fotos profesor y maestro; el estudiante solo las ve.
+  supervisor/administrador pueden agregar una **foto de estado** al dar salida o reingresar
+  (opcional). Agregan fotos el supervisor con permiso de inventario (profesor) y el administrador; el cliente solo las ve.
 - **Tipos:** `registro` (al dar de alta), `estado` (salida/reingreso) e
   `inventario` (conteo). Se puede escribir una nota.
 - **Cámara:** `st.camera_input` (interruptor «Usar la cámara aquí») o subir un
@@ -313,11 +348,11 @@ en el navegador, sin instalar nada (Android; iPhone XS o posterior; no se usa We
   grabar los chips: si lo cambias, hay que regrabarlos. Sin `NFC_SECRET` las URL van sin firma.
   `APP_URL` fija la dirección pública que se graba (por omisión, la dirección con la que se abrió
   la app).
-- **Inventario con el teléfono** (profesor/maestro, página *Chips NFC*). Se abre un conteo (todo,
+- **Inventario con el teléfono** (supervisor/administrador, página *Chips NFC*). Se abre un conteo (todo,
   una estantería o un contenedor); cada chip tocado, o código escrito/escaneado, marca el producto
   como verificado, con la cantidad contada opcional. Se ve el avance, lo que falta y las
   diferencias respecto a lo que debería haber en el estante (total − en préstamo). Al cerrar se
-  guarda un resumen (`count_closed`). **Contar no cambia cantidades**: solo el maestro puede
+  guarda un resumen (`count_closed`). **Contar no cambia cantidades**: solo el administrador puede
   aplicar ajustes, uno por uno y con confirmación explícita, y quedan en el historial del producto.
 - **Grabar un chip con NFC Tools** (gratuita, Android e iPhone): en *Chips NFC → Grabar etiquetas*
   elige el producto y copia su URL; en NFC Tools ve a **Escribir → Agregar un registro →
@@ -370,13 +405,13 @@ se respeta tal cual.
 
 ### Corrección de usuarios
 
-El maestro puede corregir nombre, ID, correo institucional y programa. El
+El administrador puede corregir nombre, ID, correo institucional y programa. El
 sistema valida campos obligatorios, dominio institucional y unicidad del correo;
 rol, estado y contraseña conservan sus controles independientes.
 
 ### Restablecer contraseñas
 
-Cuando un estudiante o profesor olvida su contraseña, el maestro la restablece en
+Cuando un cliente o supervisor olvida su contraseña, el administrador la restablece en
 **Usuarios → tarjeta del usuario → 🔑 Restablecer contraseña**:
 
 1. Elige **Generar una contraseña temporal** (12 caracteres aleatorios en tres
@@ -395,10 +430,10 @@ tanto su tarjeta muestra la pastilla **Clave temporal**. Si estaba bloqueado por
 intentos fallidos, el restablecimiento lo desbloquea. Las demás cuentas inician
 sesión como siempre.
 
-**Política:** solo un maestro activo puede restablecer, y solo a estudiantes y
+**Política:** solo un administrador activo puede restablecer, y solo a estudiantes y
 profesores. Cada maestro cambia su propia contraseña en **Mi perfil** (pide la
-actual) y la de otro maestro no se restablece desde aquí, para que nadie tome en
-silencio la cuenta de otro maestro; si un maestro pierde el acceso, otro maestro
+actual) y la de otro administrador no se restablece desde aquí, para que nadie tome en
+silencio la cuenta de otro administrador; si un administrador pierde el acceso, otro administrador
 puede pasarlo a profesor, restablecerla y devolverle el rol (un paso deliberado y
 visible). Cada restablecimiento queda auditado en la hoja `trace_events` (evento
 `password_reset`: quién, a quién, cuándo, modo y si se envió correo) **sin la
@@ -407,14 +442,38 @@ contraseña**. La hoja `users` suma las columnas `must_change_password` y
 
 ## Roles
 
-| Rol | Puede |
-|---|---|
-| Estudiante | Escanear, solicitar productos/servicios, reservar y gestionar sus préstamos/solicitudes |
-| Profesor | Todo lo anterior + alta/edición/baja de ítems, agregar fotos de los objetos, aprobar solicitudes/reservas, ver préstamos y reportes |
-| Maestro | Todo lo anterior + eliminar fotos, corregir usuarios, roles/estados, restablecer contraseñas, lista blanca y exportación |
+Hay cuatro etiquetas visibles y cinco **ids técnicos** estables (no cambian aunque se
+renombre una etiqueta: `ROLE_LABELS` en `core/permissions.py` es el único lugar donde viven
+los nombres).
+
+| Etiqueta | Id técnico | Puede |
+|---|---|---|
+| **Cliente** | `estudiante` | Solicita productos y servicios, reserva, escanea y devuelve lo suyo, **confirma la recepción** de su pedido. Ve solo lo suyo |
+| **Operario** | `operario` | Toma un pedido autorizado, recorre el laboratorio, hace el **picking** unidad por unidad y lo entrega al supervisor. **No aprueba, no recibe, no ve inventario ni reportes** |
+| **Supervisor** | `encargado` | **Aprueba** solicitudes, **autoriza operarios**, **recibe** el picking del operario, lo revisa y lo **entrega al cliente**; ve las trazas y los tiempos. **No edita el inventario ni ve los préstamos de otras personas** |
+| **Supervisor** | `profesor` | Todo lo del encargado + alta/edición/baja de ítems, ubicaciones, fotos, chips NFC, conteos, reportes, reservas y **todos los préstamos** |
+| **Administrador** | `maestro` | Todo lo anterior + usuarios, roles y contraseñas, correos automáticos, el escenario de despacho, eliminar fotos y ajustar cantidades tras un conteo |
+
+*Supervisor* es una sola etiqueta para `encargado` y `profesor`: en **Usuarios** el administrador
+los distingue como «Supervisor (encargado)» y «Supervisor (profesor)».
+
+**Seguridad por capacidad (no por nombre de rol).** Cada rol concede un conjunto de
+capacidades (`request`, `approve`, `claim`, `pick`, `receive_and_deliver`, `view_all_loans`,
+`checkin_any_loan`, `edit_inventory`, `manage_users`…) y el código pregunta por la capacidad,
+nunca por `role == "estudiante"` (una prueba recorre el código para impedirlo). Se comprueba
+en tres capas, porque ocultar un botón no es autorizar:
+
+1. **Menú y vistas:** cada página se registra solo si la persona tiene la capacidad y, si
+   alguien llegara «a mano», la vista vuelve a pedirla.
+2. **Dominio** (`core/loans.py`, `core/dispatch.py`, `core/service_requests.py`): `require_cap`
+   antes de actuar.
+3. **Capa de datos** (`LabStorage`): `save_item`, `save_items_bulk`, `bulk_upsert_items`,
+   `retire_item`, `delete_item` y `return_loan` reciben el `actor` y vuelven a verificar dentro
+   del bloqueo; `update_user` **exige** un actor con `manage_users` para cambiar `role` o
+   `status`. Un llamador interno de confianza (arranque, migraciones, scripts) usa `actor=None`.
 
 **Seguridad del registro:** nadie elige su rol al registrarse. Toda cuenta nace
-`estudiante`; solo nace `profesor` si su correo está en la lista blanca
+`estudiante` (Cliente); solo nace `profesor` (Supervisor) si su correo está en la lista blanca
 (gestionada por un `maestro`) **y** el solicitante demuestra ser dueño del correo
 con un código de 6 dígitos enviado a esa dirección (vence en 15 minutos, 5
 intentos). Sin esa prueba cualquiera podría registrarse con el correo de un
@@ -436,12 +495,31 @@ contraseña — todos obligatorios.
 - La sesión se **revalida contra la base en cada recarga**: un cambio de rol o una
   cuenta deshabilitada surten efecto de inmediato, y la sesión expira a las 12 h
   (`SESSION_TIMEOUT_MINUTES`). La sesión nunca guarda el hash de la contraseña.
-- Si el maestro restablece la contraseña de una cuenta, las sesiones de esa cuenta
+- Si el administrador restablece la contraseña de una cuenta, las sesiones de esa cuenta
   abiertas antes del cambio se cierran (`password_changed_at`), y al volver a entrar
   debe elegir una contraseña propia (ver *Restablecer contraseñas*).
 - Las vistas de Inventario, Reportes y Usuarios vuelven a comprobar el rol (ocultar
   una página no es autorizar) y el texto escrito por usuarios se escapa antes de
   mostrarse como HTML.
+
+## Sesión y actualización
+
+- **Recordar `SESSION_SECRET`.** Sin este secreto **F5 cierra la sesión** (queda el comportamiento
+  anterior) y los cierres de sesión no sobreviven a un reinicio. Debe ser una frase larga y
+  **distinta de `NFC_SECRET`** (si son iguales se ignora). La app avisa al administrador mientras falte.
+- **Token firmado.** La cookie guarda solo identificadores y tiempos, firmados con HMAC-SHA256
+  (`core/session.py`): un token manipulado, vencido (`SESSION_MAX_HOURS`, 12 h), inactivo
+  (`SESSION_IDLE_MINUTES`, 30 min) o de una época anterior (`session_epoch`, que sube al cambiar rol,
+  estado o contraseña) se rechaza, y la cuenta se **revalida contra la base en cada recarga**. La renovación
+  deslizante no alarga el tope absoluto y nunca cuenta una actualización automática como actividad.
+- **Cerrar sesión es definitivo.** El identificador de la sesión cerrada se guarda en la base
+  (`settings` → `revoked_sessions`, con su vencimiento, acotado a 1000) y se rechaza hasta que el token habría
+  vencido, **aunque la app se reinicie**. Límite que se mantiene: la cookie la escribe JavaScript y no
+  puede ser `HttpOnly`; el registro bloquea una copia del token, pero el navegador no la borra por sí solo.
+- **Datos al día sin cerrar sesión.** Las listas de Despacho se refrescan solas
+  (`DISPATCH_REFRESH_SECONDS`, 5 s; `LIST_REFRESH_SECONDS`, 15 s) y la app consulta si GitHub cambió cada
+  `DATA_POLL_SECONDS` (60 s); el botón **Actualizar** fuerza la consulta. Una actualización nunca cuenta
+  como actividad ni borra un formulario a medias.
 
 ## Arquitectura
 
@@ -478,7 +556,12 @@ core/
   inventory_suggestions.py Productos propuestos a partir de la descripción de un contenedor
   data_quality.py         Auditoría de calidad del inventario y correcciones seguras
   barcode.py              Validación/lectura de codigos (GLIOPS V3) y resolución de escaneo
-  loans.py                Checkout / checkin / vencidos
+  loans.py                Checkout / checkin / vencidos (por capacidad)
+  dispatch.py             Despacho: transiciones, picking, escenarios, listas de pedidos abiertos
+  picking.py              Lecturas del picking en la memoria del proceso (por usuario y pedido)
+  session.py              Sesión persistente: token firmado, época y cierres de sesión
+  live_data.py            Actualización compartida de datos (sondeo y refrescos)
+  ludica.py               CSV de eventos sin datos personales y protección de la base real
   reservations.py         Validación, conflictos y aprobación de reservas
   service_requests.py     Solicitudes de productos/servicios y revisión
   location.py             Rutas de ubicación derivadas del código GLIOPS (con etiquetas de estantería, piso y mesa)
@@ -489,7 +572,7 @@ core/
 views/
   login.py, inicio.py, escanear.py, inventario.py, solicitudes.py, trazabilidad.py,
   reservas.py, location_guide.py, label_settings.py, photo_panel.py, perfil.py, prestamos.py, usuarios.py,
-  reportes.py, correos.py (pestaña de Reportes), ubicaciones.py, acerca_de.py, nfc.py (página Chips NFC),
+  reportes.py, correos.py (pestaña de Reportes), despacho.py, ubicaciones.py, acerca_de.py, nfc.py (página Chips NFC),
   nfc_tap.py (toque con ?nfc=)
 tests/                  Pruebas unitarias de core/* (pytest, sin tocar Excel/GitHub)
 .github/workflows/ci.yml Integración continua: sintaxis + pruebas en cada push/PR
@@ -511,11 +594,22 @@ Cómo se protege la base (Excel + GitHub):
 - **Nunca se pisa lo que la app no conoce:** la app recuerda la versión (SHA) que
   descargó/subió por última vez. Si GitHub tiene otra (alguien editó el archivo, hay
   otra instancia escribiendo, o no se pudo descargar al arrancar) el push se
-  **rechaza** y aparece un *conflicto*: el perfil maestro elige entre
+  **rechaza** y aparece un *conflicto*: el administrador elige entre
   **⬇️ conservar la versión de GitHub** o **⬆️ conservar la de la app**. La versión
   que se reemplace sigue en el historial de commits del repositorio de datos.
   Esto evita, por ejemplo, que un arranque sin red publique una base vacía sobre la
   real.
+- **Rendimiento con varias personas (`SYNC_MODE`).** Por omisión cada escritura serializa el libro
+  y lo publica antes de devolver el control. Con una lúdica de **8 operarios y 4 supervisores y
+  1–2 s por llamada a GitHub** (`scripts/bench_concurrency.py`, base temporal) eso da escrituras con
+  **p50 = 8.5 s y p95 = 23.4 s**. Con `SYNC_MODE = "deferred"` (apagado por omisión) la escritura solo
+  cambia la caché en memoria, de donde leen todas las sesiones, y un hilo de fondo escribe el archivo y
+  publica **una vez por ráfaga** (`SYNC_DEFER_SECONDS`, 1 s; reintento cada `SYNC_RETRY_SECONDS`, 15 s;
+  los conflictos esperan al administrador): **p50 = 0.12 s, p95 = 0.37 s** y 3 publicaciones en vez de 122.
+  Riesgo asumido: si el proceso muere antes del siguiente vaciado se pierden los cambios de ese
+  intervalo (un `atexit` intenta vaciar al cerrar). `get_sync_status()["pending"]` indica cambios sin
+  publicar y **Reintentar sincronización** vacía de forma síncrona. Las listas de Despacho, además, se
+  calculan **una vez por versión de datos** y solo con pedidos abiertos (lo entregado no se vuelve a leer).
 - **Stock y reservas bajo concurrencia:** la disponibilidad y los cruces de horario
   se **re-verifican dentro del lock** de la base; dos personas no pueden sacar la
   misma última unidad ni aprobar dos reservas que se cruzan.
@@ -584,11 +678,11 @@ Todo lo que se pide en el software avisa por correo, en un hilo en segundo plano
 
 | Evento | Quién recibe |
 |---|---|
-| Nueva solicitud de producto o servicio | Perfiles maestro |
-| Nueva reserva (actividad o laboratorio completo) | Perfiles maestro |
-| Salida (checkout) y devolución (checkin) de un préstamo | Perfiles maestro |
+| Nueva solicitud de producto o servicio | Administradores |
+| Nueva reserva (actividad o laboratorio completo) | Administradores |
+| Salida (checkout) y devolución (checkin) de un préstamo | Administradores |
 | Solicitud o reserva aprobada / rechazada | Quien la pidió |
-| Resumen de préstamos vencidos (botón manual) | Perfiles maestro |
+| Resumen de préstamos vencidos (botón manual) | Administradores |
 
 Asunto de ejemplo: `[Laboratorio] Nueva solicitud: Microscopio — Ana Prueba
 (Estudiante)`. El cuerpo (texto plano + HTML) dice quién (nombre, rol, correo, ID),
@@ -610,9 +704,9 @@ APP_URL = "https://tu-app.streamlit.app"   # opcional: enlace dentro de cada cor
 ADMIN_NOTIFICATION_EMAILS = ["coordinacion@uniminuto.edu.co"]  # opcional: destinatarios extra
 ```
 
-Destinatarios = perfiles maestro **activos** + `ADMIN_NOTIFICATION_EMAILS`
-(+ profesores activos si el maestro lo activa), sin duplicados y sin correos
-inválidos o anónimos. En **Reportes → Correos** (solo maestro) se ve si el SMTP está
+Destinatarios = administradores **activos** + `ADMIN_NOTIFICATION_EMAILS`
+(+ supervisores activos si el administrador lo activa), sin duplicados y sin correos
+inválidos o anónimos. En **Reportes → Correos** (solo administrador) se ve si el SMTP está
 configurado (nunca se muestran los valores), se activa o apaga cada tipo de aviso
 (todos activos por defecto, guardado en la hoja `settings`), se envía un **correo de
 prueba** y se consultan los últimos envíos y sus errores (hoja `notification_log`,
@@ -625,6 +719,37 @@ chips; opcional pero recomendado). Ver *Chips NFC*.
 
 Opcionales de seguridad (valores por defecto entre paréntesis):
 `LOGIN_MAX_ATTEMPTS` (5), `LOGIN_LOCKOUT_MINUTES` (5) y `SESSION_TIMEOUT_MINUTES` (720).
+**Recuerda configurar `SESSION_SECRET`** (ver *Sesión y actualización*): sin él, F5 cierra la sesión.
+Despacho y rendimiento (todos opcionales): `ALLOW_SELF_APPROVAL` (false), `AUTO_APPROVE_PRODUCT_REQUESTS`
+(false), `DISPATCH_REFRESH_SECONDS` (5), `LIST_REFRESH_SECONDS` (15), `DATA_POLL_SECONDS` (60),
+`STUCK_MINUTES` (30), `SYNC_MODE` (`sync`; `deferred` para varias personas escribiendo a la vez),
+`SYNC_DEFER_SECONDS` (1) y `SYNC_RETRY_SECONDS` (15).
+
+## Límites conocidos
+
+- **Lectura por cámara:** el método `camera` existe en el registro de lecturas, pero la app aún no decodifica
+  códigos de barras con la cámara (haría falta una librería de decodificación o la API `BarcodeDetector`
+  del navegador); hoy se usa pistola, chip NFC o teclado.
+- **Un solo proceso:** el almacén de lecturas del picking (`core/picking.py`), la caché de pedidos abiertos y los
+  latidos de sesión viven en la memoria del proceso. Streamlit Community Cloud corre uno solo; con varias
+  réplicas habría que moverlos a la base.
+- **`SYNC_MODE=deferred`** acepta una ventana de pérdida (ver *Integridad de datos*) y sigue siendo opcional.
+- **Manage app** (botón de Streamlit Community Cloud) no se puede ocultar desde el código.
+- No se probaron en dispositivos reales ni la cámara en vivo ni chips NFC físicos con el flujo de despacho.
+
+## Material para la lúdica
+
+- **CSV de eventos** (Despacho → Tiempos): columnas exactas `sesion_id, timestamp, estacion, tipo_evento,
+  item_codigo, transaccion_id, usuario_sim, resultado_sistema`. **Sin datos personales:** la estación es el
+  puesto (cliente, operario, supervisor, administrador), el pedido y la persona salen como seudónimos con
+  sal, y `resultado_sistema` es solo `ok` o `rechazado` (los mensajes del sistema pueden nombrar personas y no se incluyen).
+- **Siembra y reinicio:** `scripts/seed_ludica.py --db simulacion.xlsx` crea una base de simulación (personas
+  ficticias `@ludica.invalid`, productos y pedidos) y `scripts/reset_ludica.py --db simulacion.xlsx --yes` borra
+  pedidos, préstamos y eventos dejando personas y productos. **Se niegan a correr sobre la base real:** rechazan
+  el nombre de la base real, no corren si hay `GITHUB_TOKEN`/`GITHUB_REPO` (no publican nada), y solo tocan un
+  archivo marcado como simulación; `LabStorage.reset_simulation()` vuelve a exigir esa marca.
+- `scripts/ludica_dispatch.py` genera pedidos reproducibles para comparar los escenarios A/B/C y
+  `scripts/bench_concurrency.py` mide la concurrencia del despacho (siempre sobre una base temporal).
 
 ## Ejecutar en local
 

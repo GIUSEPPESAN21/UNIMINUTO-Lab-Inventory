@@ -4,6 +4,7 @@ core/storage.py - Capa de base de datos: Excel local + sincronizacion automatica
 Cache en memoria RAM, escritura atomica y publicacion sincrona y serializada en GitHub.
 """
 
+import atexit
 import base64
 import io
 import json
@@ -13,7 +14,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from threading import Lock
+from threading import Event, Lock, Thread
 
 import pandas as pd
 import requests
@@ -49,6 +50,8 @@ SHEET_COLUMNS = {
         "id", "item_id", "item_name", "parent_id", "quantity", "user_id",
         "user_name", "user_role", "checkout_at", "expected_return_at",
         "return_at", "status", "notes", "request_id",
+        # Quién hizo el picking (despacho); vacío en salidas directas por Escanear.
+        "operator_id", "operator_name",
     ],
     "reservations": [
         "id", "scope_type", "activity", "purpose", "attendees", "start_at", "end_at",
@@ -98,12 +101,17 @@ _cached_dfs = None
 _trace_request_index = {}
 _excel_lock = Lock()
 _data_state_lock = Lock()
-_data_state = {"version": 0, "last_read_at": None, "last_poll_at": 0.0}
+# `generation` sube solo cuando la base se (re)carga desde el archivo (inicio o descarga de
+# GitHub); `version` sube además con cada escritura. Las cachés derivadas (core.dispatch)
+# se invalidan por `version` y descartan lo aprendido al cambiar `generation`.
+_data_state = {"version": 0, "generation": 0, "last_read_at": None, "last_poll_at": 0.0}
 
 
-def _bump_data_version(read: bool = False) -> int:
+def _bump_data_version(read: bool = False, reload: bool = False) -> int:
     with _data_state_lock:
         _data_state["version"] += 1
+        if reload:
+            _data_state["generation"] += 1
         if read:
             _data_state["last_read_at"] = datetime.now(timezone.utc)
         return _data_state["version"]
@@ -141,9 +149,12 @@ def _trace_positions(df: pd.DataFrame, request_id: str) -> list:
 def _normalize_legacy_columns(dfs: dict) -> None:
     users = dfs.get("users")
     if users is not None and "session_epoch" in users:
+        # astype(object): con pandas 3, apply sobre texto devuelve dtype `str`
+        # estricto y luego rechaza el entero con el que se sube la época
+        # (revocar sesiones fallaba con TypeError tras reiniciar la app).
         users["session_epoch"] = users["session_epoch"].apply(
             lambda value: 0 if str(value or "").strip() in {"", "nan", "None"} else value
-        )
+        ).astype(object)
     events = dfs.get("trace_events")
     if events is None or events.empty:
         return
@@ -203,7 +214,9 @@ _sync_status = {
 
 _push_lock = Lock()
 _sync_state_lock = Lock()
-_sync_state = {"dirty": False, "remote_sha": None}
+# dirty: hay cambios sin publicar en GitHub. file_dirty (solo SYNC_MODE=deferred): la
+# caché en memoria tiene cambios que aún no se escribieron en el archivo Excel local.
+_sync_state = {"dirty": False, "remote_sha": None, "file_dirty": False}
 
 _TRANSIENT_STATUS = (429, 500, 502, 503, 504)
 
@@ -216,7 +229,8 @@ def _reset_sync_state() -> None:
             repo="", db_path="", conflict=False,
         )
     with _sync_state_lock:
-        _sync_state.update(dirty=False, remote_sha=None)
+        _sync_state.update(dirty=False, remote_sha=None, file_dirty=False)
+    _stop_flusher()
 
 
 def _set_sync_status(configured: bool, ok, message: str, op: str = None,
@@ -234,7 +248,11 @@ def _set_sync_status(configured: bool, ok, message: str, op: str = None,
 
 def get_sync_status() -> dict:
     with _sync_status_lock:
-        return dict(_sync_status)
+        status = dict(_sync_status)
+    with _sync_state_lock:
+        pending = bool(_sync_state["dirty"] or _sync_state["file_dirty"])
+    status.update(mode=sync_mode(), pending=pending)
+    return status
 
 
 def _mark_dirty() -> None:
@@ -415,6 +433,8 @@ def _github_pull() -> bool:
         _cached_dfs = None
         _set_remote_sha(data.get("sha"))
         _clear_dirty()
+        with _sync_state_lock:
+            _sync_state["file_dirty"] = False   # el archivo recién descargado manda
         logger.info(f"{EXCEL_PATH} descargado desde GitHub ({len(file_bytes) / 1024:.1f} KB).")
         _set_sync_status(
             configured=True, ok=True,
@@ -450,7 +470,7 @@ _CONFLICT_MESSAGE = (
     "La base de datos en GitHub es distinta de la que esta app descargo (alguien la edito "
     "fuera de la app, hay otra instancia escribiendo, o aun no se logro descargarla). "
     "Para no pisar esos datos, los cambios recientes quedaron SOLO en este contenedor. "
-    "El perfil maestro debe elegir que version conservar."
+    "El administrador debe elegir que version conservar."
 )
 
 
@@ -463,6 +483,7 @@ def _github_push(force: bool = False) -> bool:
         return False
     try:
         url = _github_api_url()
+        _persist_file_if_dirty()   # SYNC_MODE=deferred: el archivo debe estar al día antes de subirlo
 
         with open(EXCEL_PATH, "rb") as f:
             raw_bytes = f.read()
@@ -531,7 +552,7 @@ def _github_push(force: bool = False) -> bool:
         return False
 
 
-def _flush_pending_push() -> None:
+def _publish_pending() -> None:
     """Publica la ultima version local si hay cambios sin publicar. Nunca lanza.
 
     Es seguro llamarla desde varios hilos: se serializa y, si otro hilo ya
@@ -544,6 +565,121 @@ def _flush_pending_push() -> None:
             return
         if not _github_push():
             _mark_dirty()
+
+
+def _flush_pending_push() -> None:
+    """Fin de cada escritura: publica ya (modo normal) o deja el trabajo al hilo
+    de fondo (``SYNC_MODE=deferred``)."""
+    if sync_mode() == "deferred":
+        _schedule_flush()
+        return
+    _publish_pending()
+
+
+# ---------------------------------------------------------------------------
+# SYNC_MODE=deferred (opcional, apagado por defecto)
+# ---------------------------------------------------------------------------
+# En el modo normal cada escritura serializa TODO el libro y sube el archivo a
+# GitHub antes de devolver el control (con varias personas escribiendo, cada una
+# espera su turno de ambas cosas). En el modo diferido la escritura solo cambia la
+# caché en memoria (que es de donde leen todas las sesiones) y un hilo de fondo
+# escribe el archivo y publica UNA vez por ráfaga. Riesgo asumido: si el proceso
+# muere antes del siguiente vaciado se pierden los cambios de ese intervalo
+# (SYNC_DEFER_SECONDS, 1 s por omisión, más lo que tarde GitHub); un `atexit`
+# intenta vaciar al cerrar normalmente. Los fallos y conflictos se ven en el mismo
+# aviso de sincronización; `get_sync_status()["pending"]` indica cambios sin publicar.
+
+DEFAULT_DEFER_SECONDS = 1.0
+DEFAULT_RETRY_SECONDS = 15.0
+
+_flusher_lock = Lock()
+_flusher = {"thread": None, "stop": None, "atexit": False}
+_flush_event = Event()
+
+
+def sync_mode() -> str:
+    """``deferred`` solo si SYNC_MODE lo pide; cualquier otro valor es el modo normal."""
+    return "deferred" if str(safe_secret("SYNC_MODE", "") or "").strip().lower() == "deferred" else "sync"
+
+
+def _seconds_secret(name: str, default: float) -> float:
+    try:
+        return max(0.0, float(safe_secret(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _persist_file_if_dirty() -> None:
+    """Escribe en el archivo lo que la caché tiene y el archivo aún no (modo diferido)."""
+    with _sync_state_lock:
+        needed = _sync_state["file_dirty"]
+        _sync_state["file_dirty"] = False
+    if not needed:
+        return
+    snapshot = _cached_dfs   # los escritores reemplazan el diccionario completo: la referencia es estable
+    if snapshot is None:
+        return
+    try:
+        _serialize_to_disk(snapshot)
+    except Exception:
+        with _sync_state_lock:
+            _sync_state["file_dirty"] = True
+        raise
+
+
+def flush_now() -> bool:
+    """Escribe el archivo y publica en GitHub ahora, de forma síncrona (cierre, pruebas).
+    Devuelve True si no quedó nada pendiente."""
+    try:
+        _persist_file_if_dirty()
+    except Exception as exc:
+        logger.error(f"No se pudo escribir el archivo local: {exc}")
+        return False
+    _publish_pending()
+    with _sync_state_lock:
+        return not (_sync_state["dirty"] or _sync_state["file_dirty"])
+
+
+def _flusher_loop(stop: Event) -> None:
+    while not stop.is_set():
+        _flush_event.wait()
+        if stop.is_set():
+            return
+        time.sleep(_seconds_secret("SYNC_DEFER_SECONDS", DEFAULT_DEFER_SECONDS))  # junta la ráfaga
+        _flush_event.clear()
+        try:
+            clean = flush_now()
+        except Exception as exc:  # el hilo de fondo nunca debe morir
+            logger.error(f"Vaciado diferido fallido: {exc}")
+            clean = False
+        if not clean and not get_sync_status().get("conflict"):
+            if stop.wait(_seconds_secret("SYNC_RETRY_SECONDS", DEFAULT_RETRY_SECONDS)):
+                return
+            _flush_event.set()      # reintenta (un conflicto espera a la persona que administra)
+
+
+def _schedule_flush() -> None:
+    with _flusher_lock:
+        thread = _flusher["thread"]
+        if thread is None or not thread.is_alive():
+            stop = Event()
+            thread = Thread(target=_flusher_loop, args=(stop,), name="lab-db-flusher", daemon=True)
+            _flusher.update(thread=thread, stop=stop)
+            thread.start()
+        if not _flusher["atexit"]:
+            atexit.register(flush_now)
+            _flusher["atexit"] = True
+    _flush_event.set()
+
+
+def _stop_flusher() -> None:
+    """Detiene el hilo de fondo (pruebas y reinicios del estado)."""
+    with _flusher_lock:
+        stop, _flusher["thread"], _flusher["stop"] = _flusher["stop"], None, None
+    if stop is not None:
+        stop.set()
+        _flush_event.set()
+    _flush_event.clear()
 
 
 @contextmanager
@@ -592,7 +728,7 @@ def _load_cache() -> dict:
         _normalize_legacy_columns(dfs)
         _cached_dfs = dfs
         _rebuild_trace_index(dfs["trace_events"])
-        _bump_data_version(read=True)
+        _bump_data_version(read=True, reload=True)
     return _cached_dfs
 
 
@@ -604,10 +740,8 @@ def _read_excel(*sheets: str) -> dict:
     return {name: cache[name].copy() for name in names}
 
 
-def _write_excel(dfs: dict) -> None:
-    """Escribe el Excel de forma atomica: o queda la version anterior completa
-    o la nueva completa, nunca un archivo a medias."""
-    global _cached_dfs
+def _serialize_to_disk(dfs: dict) -> None:
+    """Serializa las hojas y reemplaza el archivo de forma atomica."""
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         for sheet, df in dfs.items():
@@ -620,8 +754,25 @@ def _write_excel(dfs: dict) -> None:
         except OSError:
             pass
         raise
+
+
+def _write_excel(dfs: dict) -> None:
+    """Escribe el Excel de forma atomica: o queda la version anterior completa
+    o la nueva completa, nunca un archivo a medias.
+
+    Con ``SYNC_MODE=deferred`` (apagado por defecto) la escritura al archivo se
+    difiere: solo se actualiza la caché en memoria, que es la que leen todas las
+    sesiones, y el archivo se escribe junto con la publicación en GitHub
+    (``flush_now``). Si el archivo todavía no existe se escribe en el acto."""
+    global _cached_dfs
+    deferred = sync_mode() == "deferred" and os.path.exists(EXCEL_PATH)
+    if not deferred:
+        _serialize_to_disk(dfs)
     _cached_dfs = {k: v.copy() for k, v in dfs.items()}
     _rebuild_trace_index(_cached_dfs["trace_events"])
+    if deferred:
+        with _sync_state_lock:
+            _sync_state["file_dirty"] = True
 
 
 def _write_and_sync(dfs: dict) -> None:
@@ -795,7 +946,20 @@ def _validate_item_data(data: dict, df_items: pd.DataFrame, custom_id: str, is_n
 
 # Errores que reintentar no puede arreglar: datos invalidos (ValueError) o
 # fallos de programacion. Se propagan de inmediato con su mensaje real.
-_NON_RETRYABLE = (ValueError, KeyError, TypeError, AttributeError)
+_NON_RETRYABLE = (ValueError, KeyError, TypeError, AttributeError, PermissionError)
+
+
+def _authorize(actor, capability: str, message: str = "No tienes permiso para esta acción.") -> None:
+    """Autorización de la capa de datos: con ``actor`` exige la capacidad.
+
+    ``actor=None`` identifica a un llamador interno de confianza (arranque,
+    migraciones, scripts); las vistas y la lógica de dominio siempre pasan el
+    actor, y un test recorre el código para comprobarlo.
+    """
+    if actor is None:
+        return
+    from core import permissions
+    permissions.require_cap(actor, capability, message)
 
 
 def with_retry(func):
@@ -991,11 +1155,15 @@ class LabStorage:
             _load_cache()
         return True
 
+    def flush_pending(self) -> bool:
+        """Vacía ya lo diferido (SYNC_MODE=deferred): archivo local y GitHub."""
+        return flush_now()
+
     def retry_sync(self) -> bool:
         """Reintenta publicar ahora la version local (sin forzar). Devuelve si
         la ultima sincronizacion quedo sin errores."""
         _mark_dirty()
-        _flush_pending_push()
+        flush_now()      # síncrono también en SYNC_MODE=deferred: la persona espera el resultado
         return get_sync_status()["ok"] is not False
 
     def resolve_sync_conflict(self, keep: str):
@@ -1025,7 +1193,9 @@ class LabStorage:
     # ------------------------------------------------------------------
 
     @firestore_retry
-    def save_item(self, data: dict, custom_id: str, is_new: bool = False, actor_email: str = "", details: str = None):
+    def save_item(self, data: dict, custom_id: str, is_new: bool = False, actor_email: str = "",
+                  details: str = None, actor: dict = None):
+        _authorize(actor, "edit_inventory", "No tienes permiso para crear o editar ítems.")
         with _db_write():
             dfs = _read_excel()
             df_items = dfs["items"]
@@ -1099,9 +1269,10 @@ class LabStorage:
             _write_and_sync(dfs)
             logger.info(f"Item guardado/actualizado: {custom_id}")
 
-    def bulk_upsert_items(self, rows: list, actor_email: str = "") -> dict:
+    def bulk_upsert_items(self, rows: list, actor_email: str = "", actor: dict = None) -> dict:
         """Crea/actualiza muchos items en UNA sola lectura+escritura+sync
         (evita decenas de commits a GitHub en una importacion masiva)."""
+        _authorize(actor, "edit_inventory", "No tienes permiso para importar ítems.")
         created, updated, errors = [], [], []
         with _db_write():
             dfs = _read_excel()
@@ -1173,7 +1344,8 @@ class LabStorage:
 
         return {"created": created, "updated": updated, "errors": errors}
 
-    def retire_item(self, item_id: str, actor_email: str = ""):
+    def retire_item(self, item_id: str, actor_email: str = "", actor: dict = None):
+        _authorize(actor, "edit_inventory", "No tienes permiso para dar de baja ítems.")
         with _db_write():
             dfs = _read_excel()
             df_items = dfs["items"]
@@ -1213,7 +1385,7 @@ class LabStorage:
             _write_and_sync(dfs)
             return True, "Item dado de baja correctamente."
 
-    def delete_item(self, item_id: str, actor_email: str = ""):
+    def delete_item(self, item_id: str, actor_email: str = "", actor: dict = None):
         """Elimina DEFINITIVAMENTE un item de la base de datos. Devuelve (ok, mensaje).
 
         A diferencia de `retire_item` (baja logica que conserva la fila), aqui
@@ -1221,6 +1393,7 @@ class LabStorage:
         Contenedor Principal tambien se eliminan los items que contiene. Las
         solicitudes pendientes o aprobadas del producto se cancelan. Se bloquea si
         hay prestamos abiertos. El codigo queda libre para volver a usarse."""
+        _authorize(actor, "edit_inventory", "No tienes permiso para eliminar ítems.")
         item_id = (item_id or "").strip()
         with _db_write():
             dfs = _read_excel()
@@ -1391,14 +1564,25 @@ class LabStorage:
                 return None
             changes = dict(changes)
             old_role = str(df.at[idx[0], "role"] or "")
-            if actor is not None and {"role", "status"} & set(changes):
+            if {"role", "status"} & set(changes):
+                # Cambiar rol o estado exige un actor con `manage_users`: sin actor
+                # no hay a quién atribuir ni qué autorizar (por eso el parámetro
+                # es obligatorio para estas dos claves).
                 from core import permissions
+                if actor is None:
+                    raise PermissionError("Cambiar roles o estados requiere un actor autorizado.")
                 permissions.require_cap(
                     actor, permissions.CAP_MANAGE_USERS,
-                    "Solo el perfil maestro puede cambiar roles o estados.",
+                    "Solo el administrador puede cambiar roles o estados.",
                 )
                 if actor.get("id") == user_id:
                     raise PermissionError("No puedes cambiar tu propio rol ni deshabilitarte.")
+            elif actor is not None and actor.get("id") != user_id:
+                from core import permissions
+                permissions.require_cap(
+                    actor, permissions.CAP_MANAGE_USERS,
+                    "Solo el administrador puede editar a otra persona.",
+                )
             if "institutional_email" in changes:
                 email = str(changes["institutional_email"] or "").lower().strip()
                 duplicate = df[(df["institutional_email"].str.lower().str.strip() == email) & (df["id"] != user_id)]
@@ -1496,7 +1680,7 @@ class LabStorage:
     # ------------------------------------------------------------------
 
     def create_loan(self, item: dict, quantity: int, user: dict, expected_return_at=None,
-                    notes: str = "", request_id: str = "") -> dict:
+                    notes: str = "", request_id: str = "", operator: dict = None) -> dict:
         with _db_write():
             dfs = _read_excel()
             # La disponibilidad se re-verifica DENTRO del lock: la comprobacion previa
@@ -1520,20 +1704,25 @@ class LabStorage:
                 "status": "out",
                 "notes": notes,
                 "request_id": request_id,
+                "operator_id": (operator or {}).get("id", ""),
+                "operator_name": (operator or {}).get("full_name", ""),
             }
             dfs["loans"] = pd.concat([dfs["loans"], pd.DataFrame([row])], ignore_index=True)
 
+            dispatched = f" · despachado por {operator.get('full_name')}" if operator and operator.get("full_name") else ""
             hist_row = {
                 "id": _new_id(), "item_id": item["id"], "timestamp": _now_str(),
                 "type": "Salida", "quantity_change": -quantity,
                 "actor_user_id": user.get("institutional_email", ""),
-                "details": f"Prestado a {user.get('full_name', '')} ({row['id']})",
+                "details": f"Prestado a {user.get('full_name', '')} ({row['id']}){dispatched}",
             }
             dfs["item_history"] = pd.concat([dfs["item_history"], pd.DataFrame([hist_row])], ignore_index=True)
             _write_and_sync(dfs)
             return row
 
-    def return_loan(self, loan_id: str, actor_email: str = ""):
+    def return_loan(self, loan_id: str, actor_email: str = "", actor: dict = None):
+        """Reingresa un préstamo. Con ``actor``: quien tiene `checkin_any_loan`
+        reingresa cualquiera; los demás solo los suyos (con `checkout`)."""
         with _db_write():
             dfs = _read_excel()
             df = dfs["loans"]
@@ -1541,6 +1730,12 @@ class LabStorage:
             if not idx:
                 return False, "El prestamo no existe."
             i = idx[0]
+            if actor is not None:
+                from core import permissions
+                owner = bool(actor.get("id")) and str(df.at[i, "user_id"]) == str(actor.get("id"))
+                if not (permissions.has_cap(actor, permissions.CAP_CHECKIN_ANY)
+                        or (owner and permissions.has_cap(actor, permissions.CAP_CHECKOUT))):
+                    raise PermissionError("No puedes reingresar un préstamo de otra persona.")
             if str(df.at[i, "return_at"]).strip() not in ("", "nan", "None"):
                 return False, "Este prestamo ya fue devuelto."
 
@@ -1713,12 +1908,14 @@ class LabStorage:
         return None if rows.empty else _row_to_service_request(rows.iloc[0])
 
     @firestore_retry
-    def get_service_requests(self, status: str = None, user_id: str = None) -> list:
+    def get_service_requests(self, status: str = None, user_id: str = None, exclude_ids=None) -> list:
         df = _read_excel("service_requests")["service_requests"]
         if status:
             df = df[df["status"] == status]
         if user_id:
             df = df[df["requester_id"] == user_id]
+        if exclude_ids:
+            df = df[~df["id"].isin(set(exclude_ids))]   # vectorizado: no se arman dicts de lo descartado
         rows = [_row_to_service_request(row) for _, row in df.iterrows()]
         aware_min = datetime.min.replace(tzinfo=timezone.utc)
         return sorted(rows, key=lambda row: row.get("created_at") or aware_min, reverse=True)
@@ -1836,6 +2033,7 @@ class LabStorage:
                     "checkout_at": now, "expected_return_at": "", "return_at": "",
                     "status": "out", "notes": f"Picking de la solicitud {request_id}",
                     "request_id": request_id,
+                    "operator_id": actor.get("id", ""), "operator_name": actor.get("full_name", ""),
                 }
                 dfs["loans"] = pd.concat([dfs["loans"], pd.DataFrame([loan])], ignore_index=True)
                 history = {
@@ -1843,11 +2041,18 @@ class LabStorage:
                     "type": "Salida", "quantity_change": -quantity,
                     "actor_user_id": actor.get("institutional_email", ""),
                     "details": f"Picking de la solicitud {request_id} a nombre de "
-                               f"{request.get('requester_name', '')} ({loan_id})",
+                               f"{request.get('requester_name', '')} ({loan_id}) · "
+                               f"despachado por {actor.get('full_name', '') or 'un operario'}",
                 }
                 dfs["item_history"] = pd.concat(
                     [dfs["item_history"], pd.DataFrame([history])], ignore_index=True
                 )
+            elif plan["loan_action"] == "reuse":
+                # Re-picking tras «volver al picking»: las unidades ya salieron; el
+                # préstamo conserva su salida y pasa a nombre del operario que lo rehízo.
+                loan_index = dfs["loans"].index[dfs["loans"]["id"] == loan_id].tolist()[0]
+                dfs["loans"].at[loan_index, "operator_id"] = actor.get("id", "")
+                dfs["loans"].at[loan_index, "operator_name"] = actor.get("full_name", "")
             elif plan["loan_action"] == "close":
                 loan_index = dfs["loans"].index[dfs["loans"]["id"] == loan_id].tolist()[0]
                 returned = _int(dfs["loans"].at[loan_index, "quantity"])
@@ -1878,6 +2083,70 @@ class LabStorage:
             )
             _write_and_sync(dfs)
             return True, plan["message"], dict(row)
+
+    REVOKED_SESSIONS_KEY = "revoked_sessions"
+    REVOKED_SESSIONS_LIMIT = 1000
+
+    def reset_simulation(self) -> dict:
+        """Vacía lo operativo (préstamos, solicitudes, eventos, reservas, correos y las
+        salidas/reingresos del historial) de una base de SIMULACIÓN de la lúdica.
+
+        Se niega con ``PermissionError`` si la base no lleva la marca de simulación
+        (la que escribe ``core.ludica.seed_simulation``): nunca vacía una base real.
+        Conserva personas, productos y ajustes. Devuelve cuántas filas quitó por hoja."""
+        if str(self.get_setting("ludica_sandbox", "") or "").strip() != "1":
+            raise PermissionError("Esta base no está marcada como simulación de la lúdica: no se reinicia.")
+        removed = {}
+        with _db_write():
+            dfs = _read_excel()
+            for sheet in ("loans", "service_requests", "trace_events", "reservations", "notification_log"):
+                removed[sheet] = len(dfs[sheet])
+                dfs[sheet] = dfs[sheet].iloc[0:0].copy()
+            history = dfs["item_history"]
+            kept = history[history["type"] == "Alta"].reset_index(drop=True)
+            removed["item_history"] = len(history) - len(kept)
+            dfs["item_history"] = kept
+            settings = dfs["settings"]
+            dfs["settings"] = settings[settings["key"] != self.REVOKED_SESSIONS_KEY].reset_index(drop=True)
+            _write_and_sync(dfs)
+        return removed
+
+    def get_revoked_sessions(self, now: int = None) -> dict:
+        """``{sid: vencimiento}`` de las sesiones cerradas que aún no vencen."""
+        moment = int(now if now is not None else time.time())
+        try:
+            data = json.loads(self.get_setting(self.REVOKED_SESSIONS_KEY, "") or "{}")
+        except (TypeError, ValueError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return {str(sid): int(exp) for sid, exp in data.items()
+                if isinstance(exp, (int, float)) and int(exp) > moment}
+
+    def add_revoked_session(self, sid: str, exp: int, now: int = None) -> None:
+        """Recuerda un cierre de sesión hasta que el token habría vencido, aunque la app
+        se reinicie. Todo el ciclo leer-modificar-escribir va bajo el bloqueo de datos."""
+        sid = str(sid or "").strip()
+        if not sid:
+            return
+        with _db_write():
+            current = self.get_revoked_sessions(now)
+            current[sid] = int(exp)
+            if len(current) > self.REVOKED_SESSIONS_LIMIT:      # conserva las que vencen más tarde
+                keep = sorted(current, key=current.get, reverse=True)[:self.REVOKED_SESSIONS_LIMIT]
+                current = {key: current[key] for key in keep}
+            dfs = _read_excel()
+            df = dfs["settings"]
+            row = {"key": self.REVOKED_SESSIONS_KEY, "value": json.dumps(current, separators=(",", ":")),
+                   "updated_by": "session", "updated_at": _now_str()}
+            idx = df.index[df["key"] == self.REVOKED_SESSIONS_KEY].tolist()
+            if idx:
+                for column, cell in row.items():
+                    df.at[idx[0], column] = cell
+            else:
+                df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+            dfs["settings"] = df
+            _write_and_sync(dfs)
 
     def revoke_user_sessions(self, user_id: str, actor: dict) -> dict:
         """Incrementa el epoch propio o de otro usuario si el actor administra usuarios."""
@@ -2000,7 +2269,8 @@ class LabStorage:
     # ------------------------------------------------------------------
 
     @firestore_retry
-    def save_items_bulk(self, items: list, actor_email: str = "", details: str = None) -> list:
+    def save_items_bulk(self, items: list, actor_email: str = "", details: str = None,
+                        actor: dict = None) -> list:
         """Crea varios items NUEVOS con UNA sola lectura + escritura + sincronizacion
         (un solo commit en GitHub en vez de uno por producto).
 
@@ -2014,6 +2284,10 @@ class LabStorage:
         historial ("Alta", con el `details` de la fila o el general). Devuelve los
         codigos creados, en orden."""
         items = list(items or [])
+        only_locations = bool(items) and all(row.get("item_type") == LOCATION_TYPE for row in items)
+        _authorize(actor, "manage_locations" if only_locations else "edit_inventory",
+                   "No tienes permiso para crear ubicaciones." if only_locations
+                   else "No tienes permiso para crear ítems.")
         if not items:
             return []
 

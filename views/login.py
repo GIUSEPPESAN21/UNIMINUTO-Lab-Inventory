@@ -33,9 +33,9 @@ def _start_professor_verification(storage, prepared: dict) -> None:
         return
     _show_created_account(user)
     st.info(
-        "Tu correo esta en la lista de profesores, pero no pudimos enviarte el codigo de "
-        "verificacion. Tu cuenta se creo como **estudiante**: pide al perfil maestro que "
-        "active tu rol de profesor."
+        "Tu correo esta en la lista de supervisores, pero no pudimos enviarte el codigo de "
+        "verificacion. Tu cuenta se creo como **cliente**: pide a un administrador que "
+        "active tu rol de supervisor."
     )
 
 
@@ -44,7 +44,7 @@ def _render_verification_step(storage) -> None:
     prepared = pending["prepared"]
     st.info(
         f"Enviamos un codigo de 6 digitos a **{prepared['email']}**. Escribelo para verificar "
-        "tu correo y activar el rol de profesor. Vence en 15 minutos."
+        "tu correo y activar el rol de supervisor. Vence en 15 minutos."
     )
     with st.form("verify_registration_form"):
         code = st.text_input("Código de verificación", max_chars=6, placeholder="123456")

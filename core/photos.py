@@ -359,7 +359,7 @@ def add_photo(storage, item: dict, image_bytes: bytes, actor: dict, kind: str = 
     Con GitHub configurado, si la subida falla no se registra nada (se puede
     reintentar con la misma foto). Sin GitHub, la foto queda en el disco local."""
     if not can_add(actor):
-        return False, "Solo profesor o maestro pueden agregar fotos.", None
+        return False, "Solo un supervisor autorizado o un administrador pueden agregar fotos.", None
     if not item or not item.get("id"):
         return False, "El objeto no existe.", None
     if kind not in KINDS:
@@ -417,7 +417,7 @@ def delete_photo(storage, photo_id: str, actor: dict, now=None, session=None):
     """Elimina una foto (repositorio, indice y copia local). Devuelve (ok, mensaje).
     El borrado queda en la cadena de custodia (evento `photo_deleted`)."""
     if not can_delete(actor):
-        return False, "Solo el perfil maestro puede eliminar fotos."
+        return False, "Solo un administrador puede eliminar fotos."
     record = storage.get_item_photo(photo_id)
     if not record:
         return False, "La foto ya no existe."

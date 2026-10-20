@@ -491,7 +491,7 @@ def send_temporary_password_email(email: str, password: str, full_name: str = ""
     greeting = f"Hola {full_name}," if full_name else "Hola,"
     body = (
         f"{greeting}\n\n"
-        "El perfil maestro del Laboratorio UNIMINUTO restableció la contraseña de tu cuenta.\n\n"
+        "Un administrador del Laboratorio UNIMINUTO restableció la contraseña de tu cuenta.\n\n"
         f"Contraseña temporal: {password}\n\n"
         "Al ingresar, la app te pedirá elegir una contraseña nueva que solo tú conozcas. "
         "Si no pediste este cambio, avisa al laboratorio."
@@ -529,15 +529,15 @@ def admin_reset_password(storage, actor: dict, target_user_id: str, new_password
     fresh_actor = storage.get_user_by_id(actor_id) if actor_id else None
     if (not fresh_actor or fresh_actor.get("status") != "active"
             or not permissions.has_cap(fresh_actor, permissions.CAP_MANAGE_USERS)):
-        return None, "Solo el perfil maestro puede restablecer contraseñas."
+        return None, "Solo un administrador puede restablecer contraseñas."
     target = storage.get_user_by_id(target_user_id) if target_user_id else None
     if not target:
         return None, "La cuenta ya no existe."
     if target.get("id") == fresh_actor.get("id"):
         return None, "Tu propia contraseña se cambia en Mi perfil."
     if target.get("role") not in RESETTABLE_ROLES:
-        return None, ("La contraseña de otro perfil maestro no se restablece aquí: "
-                      "cada maestro la cambia en Mi perfil.")
+        return None, ("La contraseña de otro administrador no se restablece aquí: "
+                      "cada administrador la cambia en Mi perfil.")
 
     generated = new_password is None
     password = generate_temporary_password() if generated else new_password
@@ -567,7 +567,7 @@ def admin_reset_password(storage, actor: dict, target_user_id: str, new_password
         "email_requested": bool(send_email),
         "email_sent": bool(email_sent),
     }, now)
-    logger.info("Contraseña restablecida por el perfil maestro.")
+    logger.info("Contraseña restablecida por un administrador.")
     return {
         "user": public_user(updated),
         "temporary_password": password if generated else None,

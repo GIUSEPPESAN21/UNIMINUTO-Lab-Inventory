@@ -204,7 +204,7 @@ def default_name(now=None) -> str:
 def start_session(storage, actor: dict, name: str = "", scope: dict = None, now=None):
     """Abre un conteo. Devuelve (ok, mensaje, sesion)."""
     if not traceability.is_manager(actor):
-        return False, "Solo un profesor o el maestro pueden abrir un conteo.", None
+        return False, "Solo un supervisor autorizado o un administrador pueden abrir un conteo.", None
     current = open_session(storage)
     if current:
         return False, f"Ya hay un conteo abierto («{current['name']}»): ciérralo antes de abrir otro.", current
@@ -248,7 +248,7 @@ def record_mark(storage, session: dict, actor: dict, code: str, qty=None, method
     """Marca `code` como verificado en el conteo (y la cantidad contada, si se da).
     Devuelve (ok, mensaje, evento). No cambia la cantidad del inventario."""
     if not traceability.is_manager(actor):
-        return False, "Solo un profesor o el maestro pueden contar.", None
+        return False, "Solo un supervisor autorizado o un administrador pueden contar.", None
     if not session or not session.get("id"):
         return False, "No hay un conteo abierto.", None
     code = str(code or "").strip()
@@ -344,7 +344,7 @@ def apply_adjustments(storage, session: dict, actor: dict, rows: list):
     Solo el maestro. Devuelve (aplicados, errores); cada ajuste queda en el
     historial del producto ("Ajuste")."""
     if not can_adjust(actor):
-        return [], ["Solo el maestro puede ajustar cantidades a partir de un conteo."]
+        return [], ["Solo un administrador puede ajustar cantidades a partir de un conteo."]
     applied, errors = [], []
     session_name = (session or {}).get("name") or "conteo"
     for row in rows or []:
@@ -370,7 +370,8 @@ def apply_adjustments(storage, session: dict, actor: dict, rows: list):
                   + (f" + {on_loan} en préstamo" if on_loan else "") + f" (antes {current}).")
         try:
             storage.save_item({**item, "quantity": new_total}, code, is_new=False,
-                              actor_email=(actor or {}).get("institutional_email", ""), details=detail)
+                              actor_email=(actor or {}).get("institutional_email", ""), details=detail,
+                              actor=actor)
         except Exception as exc:  # validacion o E/S: se informa y se sigue con los demas
             errors.append(f"{code}: {exc}")
             continue
@@ -383,7 +384,7 @@ def close_session(storage, session: dict, actor: dict, report: dict, adjusted: l
                   notes: str = "", now=None):
     """Cierra el conteo guardando UN resumen. Devuelve (ok, mensaje, evento)."""
     if not traceability.is_manager(actor):
-        return False, "Solo un profesor o el maestro pueden cerrar un conteo.", None
+        return False, "Solo un supervisor autorizado o un administrador pueden cerrar un conteo.", None
     current = open_session(storage)
     if not session or not current or current["id"] != session.get("id"):
         return False, "Este conteo ya estaba cerrado.", None

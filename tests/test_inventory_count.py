@@ -89,7 +89,7 @@ def test_parse_quantity():
 def test_only_managers_open_a_count_and_only_one_at_a_time(lab):
     storage = lab["storage"]
     ok, message, _ = counting.start_session(storage, lab["student"], "Mi conteo")
-    assert not ok and "profesor" in message
+    assert not ok and "supervisor" in message
     ok, _, session = counting.start_session(storage, lab["prof"], "  Conteo   de\n octubre ", now=NOW)
     assert ok and session["name"] == "Conteo de octubre" and session["scope"] == {"kind": "all"}
     assert counting.open_session(storage)["id"] == session["id"]
@@ -206,7 +206,7 @@ def test_only_the_master_can_adjust(lab):
     storage = lab["storage"]
     rows = [{"code": "2-1-01-01-001", "counted": 4}]
     applied, errors = counting.apply_adjustments(storage, {"name": "X"}, lab["prof"], rows)
-    assert applied == [] and "maestro" in errors[0]
+    assert applied == [] and "administrador" in errors[0]
     assert counting.can_adjust(lab["master"]) and not counting.can_adjust(lab["prof"])
 
 
@@ -220,7 +220,7 @@ class _AdjustStorage:
     def __getattr__(self, name):
         return getattr(self.fake, name)
 
-    def save_item(self, data, custom_id, is_new=False, actor_email="", details=None):
+    def save_item(self, data, custom_id, is_new=False, actor_email="", details=None, actor=None):
         self.saved.append((custom_id, data["quantity"], actor_email, details))
         self.fake.items[custom_id]["quantity"] = data["quantity"]
 

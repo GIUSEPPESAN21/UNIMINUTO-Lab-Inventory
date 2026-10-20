@@ -8,9 +8,9 @@ from datetime import datetime, timedelta
 
 import streamlit as st
 
-from core import barcode, labels, loans as loans_core, notifications, traceability
+from core import barcode, labels, loans as loans_core, notifications, permissions, traceability
 from core.labels import ITEM_TYPE_BY_CHOICE, ITEM_TYPE_CHOICES, ITEM_TYPE_HELP, ITEM_TYPE_NAMES
-from core.ui import page_header
+from core.ui import guard_cap, page_header
 from views import photo_panel
 from views.code_input import render_code_input
 from views import ubicaciones
@@ -114,7 +114,10 @@ def _render_item_actions(item: dict, parent: dict = None):
                 expected_dt = None
                 if with_date:
                     expected_dt = loans_core.deadline_from_date(expected_date)
-                ok, msg, loan = loans_core.checkout(storage, item["id"], int(qty), user, expected_dt, notes)
+                try:
+                    ok, msg, loan = loans_core.checkout(storage, item["id"], int(qty), user, expected_dt, notes)
+                except PermissionError as exc:
+                    ok, msg, loan = False, str(exc), None
                 if ok:
                     st.success(msg)
                     if linked_request:
@@ -129,7 +132,7 @@ def _render_item_actions(item: dict, parent: dict = None):
 
     st.markdown("##### :material/move_to_inbox: Reingresar (checkin)")
     open_loans = storage.get_open_loans_for_item(item["id"])
-    if user["role"] == "estudiante":
+    if not permissions.has_cap(user, permissions.CAP_VIEW_ALL_LOANS):
         open_loans = [l for l in open_loans if l["user_id"] == user["id"]]
 
     if not open_loans:
@@ -140,8 +143,12 @@ def _render_item_actions(item: dict, parent: dict = None):
             with st.container(border=True):
                 cc1, cc2 = st.columns([3, 1])
                 cc1.write(f"**{loan['user_name']}** ({loan['user_role']}) · {loan['quantity']} u.{overdue_tag}")
-                if cc2.button("Reingresar", key=f"checkin_{loan['id']}", use_container_width=True):
-                    ok, msg = loans_core.checkin(storage, loan["id"], user)
+                if loans_core.can_checkin_loan(user, loan) and cc2.button(
+                        "Reingresar", key=f"checkin_{loan['id']}", use_container_width=True):
+                    try:
+                        ok, msg = loans_core.checkin(storage, loan["id"], user)
+                    except PermissionError as exc:
+                        ok, msg = False, str(exc)
                     if ok:
                         st.success(msg)
                         st.session_state.scan_result = barcode.scan(storage, item["id"])
@@ -158,8 +165,8 @@ def _render_new_item_wizard(scanned_code: str):
     if not barcode.is_valid_code(scanned_code):
         st.caption(f":material/warning: Este codigo no cumple ningun formato valido. {barcode.FORMAT_HELP}")
 
-    if user["role"] == "estudiante":
-        st.info("Pide a un profesor o al administrador del laboratorio que registre este item.")
+    if not permissions.has_cap(user, permissions.CAP_EDIT_INVENTORY):
+        st.info("Pide a un supervisor o al administrador del laboratorio que registre este item.")
         return
 
     item_kind = st.radio("¿Qué quieres registrar?", ITEM_TYPE_CHOICES, horizontal=True)
@@ -227,7 +234,7 @@ def _render_new_item_wizard(scanned_code: str):
                 }
                 try:
                     storage.save_item(data, code_to_save, is_new=True,
-                                      actor_email=user["institutional_email"])
+                                      actor_email=user["institutional_email"], actor=user)
                     st.success(f"¡'{name}' registrado correctamente con el código {code_to_save}!")
                     st.session_state.scan_result = barcode.scan(storage, code_to_save)
                     st.rerun()
@@ -237,6 +244,8 @@ def _render_new_item_wizard(scanned_code: str):
 
 def render():
     storage = st.session_state.storage
+    if not guard_cap(st.session_state.user, permissions.CAP_CHECKOUT, "Escanear"):
+        return
 
     page_header("Escanear", icon=":material/barcode_scanner:", subtitle="Conecta tu lector USB o escribe el código manualmente")
 

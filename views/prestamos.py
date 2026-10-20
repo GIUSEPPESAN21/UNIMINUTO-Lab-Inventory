@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-"""views/prestamos.py - Panel de prestamos: 'Mis prestamos' para estudiantes,
-'Quien tiene que' completo para profesor/maestro."""
+"""views/prestamos.py - Panel de prestamos: 'Mis prestamos' para quien solo ve lo
+suyo (cliente y encargado), 'Quien tiene que' completo para quien tiene la
+capacidad `view_all_loans` (profesor y administrador)."""
 
 import streamlit as st
 
-from core import loans as loans_core
-from core.ui import card, card_header, empty_state, page_header, section_title, stat_cards
+from core import loans as loans_core, permissions
+from core.ui import card, card_header, empty_state, guard_cap, page_header, section_title, stat_cards
 
 
 def _when(value, fmt: str = "%d/%m/%Y %H:%M") -> str:
@@ -33,12 +34,16 @@ def _loan_row(storage, loan: dict, user: dict, key_prefix: str):
         c1.caption(" · ".join(details))
         if loan.get("notes"):
             c1.caption(f"Notas: {loan['notes']}")
-        can_checkin = user["role"] != "estudiante" or loan["user_id"] == user["id"]
-        if can_checkin and c3.button(
+        if loan.get("operator_name"):
+            c1.caption(f"Despachado por: {loan['operator_name']}")
+        if loans_core.can_checkin_loan(user, loan) and c3.button(
             "↩️ Reingresar", key=f"{key_prefix}_{loan['id']}", use_container_width=True,
             type="primary" if overdue else "secondary",
         ):
-            ok, msg = loans_core.checkin(storage, loan["id"], user)
+            try:
+                ok, msg = loans_core.checkin(storage, loan["id"], user)
+            except PermissionError as exc:
+                ok, msg = False, str(exc)
             if ok:
                 st.success(msg)
                 st.rerun()
@@ -50,9 +55,11 @@ def render():
     storage = st.session_state.storage
     user = st.session_state.user
 
+    if not guard_cap(user, permissions.CAP_CHECKOUT, "Préstamos"):
+        return
     page_header("Préstamos", icon=":material/assignment:", subtitle="Salidas y reingresos del laboratorio")
 
-    if user["role"] == "estudiante":
+    if not permissions.has_cap(user, permissions.CAP_VIEW_ALL_LOANS):
         loans = storage.get_open_loans_for_user(user["id"])
         overdue_count = len([l for l in loans if loans_core.is_overdue(l)])
         stat_cards([

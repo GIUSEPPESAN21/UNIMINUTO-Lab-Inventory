@@ -138,8 +138,9 @@ def _user_card(storage, user: dict, current_user: dict) -> None:
         c2.caption(f"Programa: {user.get('program_or_department') or 'N/A'}")
 
         new_role = c3.selectbox(
-            "Rol", ROLES, index=ROLES.index(user.get("role", "estudiante")),
+            "Rol", ROLES, index=ROLES.index(user.get("role", permissions.ROLE_STUDENT)),
             key=f"role_{user['id']}", label_visibility="collapsed",
+            format_func=permissions.role_detail_label,
         )
         if new_role != user.get("role"):
             if user["id"] == current_user["id"]:
@@ -147,7 +148,7 @@ def _user_card(storage, user: dict, current_user: dict) -> None:
             elif c3.button("Guardar rol", key=f"save_role_{user['id']}"):
                 storage.update_user(user["id"], {"role": new_role}, actor=current_user)
                 st.success(
-                    f"Rol de {user['full_name']} actualizado a {permissions.role_label(new_role)}."
+                    f"Rol de {user['full_name']} actualizado a {permissions.role_detail_label(new_role)}."
                 )
                 st.rerun()
 
@@ -185,7 +186,7 @@ def _user_card(storage, user: dict, current_user: dict) -> None:
                         st.error(error)
                     else:
                         try:
-                            updated = storage.update_user(user["id"], changes)
+                            updated = storage.update_user(user["id"], changes, actor=current_user)
                             if user["id"] == current_user["id"] and updated:
                                 st.session_state.user = auth.public_user({**current_user, **updated})
                             st.success("Datos del usuario actualizados.")
@@ -208,15 +209,15 @@ def render():
 
     page_header(
         "Usuarios", icon=":material/group:",
-        subtitle="Corrección de datos, roles, estados y lista blanca de profesores",
+        subtitle="Corrección de datos, roles, estados y lista blanca de supervisores",
     )
-    tab_usuarios, tab_whitelist = st.tabs([":material/group: Usuarios", ":material/check_circle: Lista blanca de profesores"])
+    tab_usuarios, tab_whitelist = st.tabs([":material/group: Usuarios", ":material/check_circle: Lista blanca de supervisores"])
 
     with tab_usuarios:
         st.caption(
             "Puedes corregir nombre, ID, correo y programa, además de activar cuentas o cambiar roles. "
-            "Si un estudiante o profesor olvidó su contraseña, restablécela desde su tarjeta. "
-            "El registro solo otorga profesor si el correo ya está en la lista blanca."
+            "Si un cliente o supervisor olvidó su contraseña, restablécela desde su tarjeta. "
+            "El registro solo otorga el rol de supervisor (profesor) si el correo ya está en la lista blanca."
         )
         users = storage.get_all_users()
         stat_cards([
@@ -241,11 +242,11 @@ def render():
 
     with tab_whitelist:
         st.caption(
-            "Los correos en esta lista obtendrán automáticamente el rol profesor al registrarse. "
-            "Cualquier otro correo institucional se registra como estudiante."
+            "Los correos en esta lista obtendrán automáticamente el rol de supervisor (profesor) al registrarse. "
+            "Cualquier otro correo institucional se registra como cliente."
         )
         with st.form("add_whitelist_form", clear_on_submit=True):
-            email = st.text_input("Correo institucional del profesor")
+            email = st.text_input("Correo institucional del supervisor")
             if st.form_submit_button(":material/add: Agregar a la lista blanca", type="primary"):
                 if not auth.is_institutional_email(email):
                     st.error("Ingresa un correo institucional válido (.edu o .edu.co).")

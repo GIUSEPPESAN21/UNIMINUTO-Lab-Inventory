@@ -152,7 +152,13 @@ def decode_token(token: str) -> dict:
     return payload
 
 
-def revoke(token_or_claims) -> None:
+def revoke(token_or_claims, storage=None) -> None:
+    """Cierra una sesión: la recuerda en memoria y, con ``storage``, también en la base
+    hasta el vencimiento del token, así un reinicio de la app no la revive.
+
+    Límite que se mantiene (documentado en el README): la cookie la escribe JavaScript,
+    no puede ser HttpOnly; quien la haya copiado antes del cierre queda bloqueado por
+    este registro, pero no por el navegador."""
     try:
         claims = decode_token(token_or_claims) if isinstance(token_or_claims, str) else token_or_claims
         sid = str((claims or {}).get("sid") or "")
@@ -164,6 +170,11 @@ def revoke(token_or_claims) -> None:
         if len(_revoked) >= _REVOKED_LIMIT:
             _revoked.clear()
         _revoked.add(sid)
+    if storage is not None:
+        try:
+            storage.add_revoked_session(sid, int((claims or {}).get("exp") or 0))
+        except Exception:  # un fallo de E/S no debe impedir cerrar la sesión en memoria
+            pass
 
 
 def verify_token(token: str, storage, now=None) -> tuple:
@@ -176,8 +187,14 @@ def verify_token(token: str, storage, now=None) -> tuple:
         return None, None, str(exc)
     moment = int(_now(now).timestamp())
     with _revoked_lock:
-        if claims.get("sid") in _revoked:
-            return None, None, "La sesión fue cerrada."
+        closed = claims.get("sid") in _revoked
+    if not closed:
+        try:
+            closed = str(claims.get("sid") or "") in storage.get_revoked_sessions(moment)
+        except Exception:  # sin registro legible, valen las demás comprobaciones
+            closed = False
+    if closed:
+        return None, None, "La sesión fue cerrada."
     if moment > int(claims.get("exp") or 0):
         return None, None, "Tu sesión alcanzó su duración máxima."
     if moment - int(claims.get("last") or 0) > idle_minutes() * 60:

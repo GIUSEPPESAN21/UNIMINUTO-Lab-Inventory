@@ -67,7 +67,7 @@ def _render_count_start(storage, user: dict) -> None:
         "(si te pide iniciar sesión, el toque se registra al entrar). Sin chip, escribe o escanea el código aquí.\n"
         "3. Si quieres, anota cuántas unidades hay en el estante.\n"
         "4. Revisa lo que falta y cierra el conteo: se guarda un resumen. Las cantidades del inventario **no "
-        "cambian** salvo que el maestro confirme los ajustes."
+        "cambian** salvo que un administrador confirme los ajustes."
     )
     items = storage.get_all_items()
     masters = sorted((item for item in items if item.get("item_type") == "master"),
@@ -260,12 +260,12 @@ def _live_report(session_id: str) -> None:
 def _render_close(storage, user: dict, session: dict, report: dict) -> None:
     with st.expander(":material/flag: Cerrar el conteo"):
         st.caption("Se guarda un resumen con lo verificado, lo que faltó y las diferencias. Las cantidades del "
-                   "inventario no cambian, salvo los ajustes que el maestro marque y confirme aquí.")
+                   "inventario no cambian, salvo los ajustes que un administrador marque y confirme aquí.")
         adjustable = counting.can_adjust(user)
         differences = [row for row in report["differences"] if row["counted"] is not None]
         if differences and not adjustable:
             st.info(f"Hay {len(differences)} diferencia(s) entre lo contado y el sistema. Quedarán en el resumen; "
-                    "solo el maestro puede ajustar las cantidades.")
+                    "solo un administrador puede ajustar las cantidades.")
         with st.form("nfc_count_close"):
             edited = None
             confirm = False

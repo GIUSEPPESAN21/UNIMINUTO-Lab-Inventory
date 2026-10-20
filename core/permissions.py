@@ -13,14 +13,16 @@ ROLE_PROFESSOR = "profesor"
 ROLE_MASTER = "maestro"
 ROLES = (ROLE_STUDENT, ROLE_OPERATOR, ROLE_ATTENDANT, ROLE_PROFESSOR, ROLE_MASTER)
 
+# Única fuente de las etiquetas visibles; los ids técnicos de arriba no cambian.
+# Profesor y encargado comparten etiqueta («Supervisor»): se distinguen por sus
+# capacidades (el encargado no edita inventario) y, donde importa, por
+# role_detail_label().
 ROLE_LABELS = {
-    # En la lúdica, el estudiante actúa como «Cliente»; la etiqueta institucional
-    # se conserva porque aparece en correos y en la gestión de usuarios.
-    ROLE_STUDENT: "Estudiante",
-    ROLE_OPERATOR: "Encargado de despacho",
-    ROLE_ATTENDANT: "Encargado del laboratorio",
-    ROLE_PROFESSOR: "Profesor",
-    ROLE_MASTER: "Perfil maestro",
+    ROLE_STUDENT: "Cliente",
+    ROLE_OPERATOR: "Operario",
+    ROLE_ATTENDANT: "Supervisor",
+    ROLE_PROFESSOR: "Supervisor",
+    ROLE_MASTER: "Administrador",
 }
 
 CAP_REQUEST = "request"
@@ -28,6 +30,9 @@ CAP_VIEW_OWN_REQUESTS = "view_own_requests"
 CAP_CANCEL_OWN_REQUEST = "cancel_own_request"
 CAP_CONFIRM_RECEIPT = "confirm_receipt"
 CAP_RESERVE = "reserve"
+CAP_CHECKOUT = "checkout"
+CAP_VIEW_ALL_LOANS = "view_all_loans"
+CAP_CHECKIN_ANY = "checkin_any_loan"
 CAP_APPROVE = "approve"
 CAP_AUTHORIZE_DISPATCH = "authorize_dispatch"
 CAP_VIEW_DISPATCH_QUEUE = "view_dispatch_queue"
@@ -43,6 +48,7 @@ CAP_MANAGE_NFC = "manage_nfc"
 CAP_MANAGE_LOCATIONS = "manage_locations"
 CAP_REPORTS = "reports"
 CAP_DISPATCH_REPORTS = "dispatch_reports"
+CAP_DISPATCH_SETTINGS = "dispatch_settings"
 CAP_MANAGE_EMAIL = "manage_email"
 CAP_ADJUST_COUNTS = "adjust_counts"
 CAP_MANAGE_RESERVATIONS = "manage_reservations"
@@ -50,7 +56,7 @@ CAP_DELETE_PHOTOS = "delete_photos"
 
 _CLIENT = {
     CAP_REQUEST, CAP_VIEW_OWN_REQUESTS, CAP_CANCEL_OWN_REQUEST,
-    CAP_CONFIRM_RECEIPT, CAP_RESERVE,
+    CAP_CONFIRM_RECEIPT, CAP_RESERVE, CAP_CHECKOUT,
 }
 _DISPATCH = {CAP_VIEW_DISPATCH_QUEUE, CAP_CLAIM, CAP_RELEASE, CAP_PICK}
 _ATTEND = {
@@ -60,8 +66,9 @@ _ATTEND = {
 _PROFESSOR = {
     CAP_EDIT_INVENTORY, CAP_MANAGE_NFC, CAP_MANAGE_LOCATIONS,
     CAP_REPORTS, CAP_MANAGE_RESERVATIONS,
+    CAP_VIEW_ALL_LOANS, CAP_CHECKIN_ANY,
 }
-_ADMIN = {CAP_MANAGE_USERS, CAP_MANAGE_EMAIL, CAP_ADJUST_COUNTS, CAP_DELETE_PHOTOS}
+_ADMIN = {CAP_MANAGE_USERS, CAP_MANAGE_EMAIL, CAP_ADJUST_COUNTS, CAP_DELETE_PHOTOS, CAP_DISPATCH_SETTINGS}
 
 ROLE_CAPS = {
     ROLE_STUDENT: frozenset(_CLIENT),
@@ -89,6 +96,14 @@ def require_cap(user: dict, capability: str, message: str = "No tienes permiso p
     """Autorización de dominio; nunca debe sustituirse por ocultar un botón."""
     if not has_cap(user, capability):
         raise PermissionError(message)
+
+
+def role_detail_label(role_or_user) -> str:
+    """Etiqueta para quien asigna roles: si dos roles comparten etiqueta, agrega el id."""
+    role = role_or_user.get("role", "") if isinstance(role_or_user, dict) else str(role_or_user or "")
+    label = ROLE_LABELS.get(role, role or "Sin rol")
+    shared = sum(1 for value in ROLE_LABELS.values() if value == label) > 1
+    return f"{label} ({role})" if shared else label
 
 
 def role_label(role_or_user) -> str:

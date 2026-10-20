@@ -68,6 +68,11 @@ def _checkpoints_for(storage, item: dict, parent: dict = None) -> list:
     return _route_checkpoints(storage, item, parent)[0]
 
 
+def compact_route_for(storage, item: dict, parent: dict = None) -> str:
+    """Ruta corta (E2 › P1 › C01 › CJ01 › I001) de un producto, con el vocabulario de la etiqueta."""
+    return location.compact_route(_checkpoints_for(storage, item, parent))
+
+
 def _breadcrumb(crumbs: list) -> None:
     """Ruta compacta (E2 › P1 › C01 › CJ01 › I001) como pastillas de estado."""
     html = " › ".join(badge_html(text, _CRUMB_TONES.get(state, "neutral")) for text, state in crumbs)

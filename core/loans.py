@@ -11,7 +11,7 @@ import logging
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from core import email_events
+from core import email_events, permissions
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,7 @@ def due_instant(expected: datetime) -> datetime:
 
 
 def checkout(storage, item_id: str, quantity: int, user: dict, expected_return_at=None, notes: str = ""):
+    permissions.require_cap(user, permissions.CAP_CHECKOUT, "No tienes permiso para registrar salidas.")
     if quantity <= 0:
         return False, "La cantidad debe ser mayor a 0.", None
 
@@ -69,7 +70,12 @@ def checkout(storage, item_id: str, quantity: int, user: dict, expected_return_a
 
 
 def checkin(storage, loan_id: str, actor_user: dict):
-    ok, msg = storage.return_loan(loan_id, actor_email=actor_user.get("institutional_email", ""))
+    """Reingreso. Quien no tiene `checkin_any_loan` solo reingresa lo suyo
+    (la capa de datos lo vuelve a verificar con el préstamo leído bajo bloqueo)."""
+    permissions.require_cap(actor_user, permissions.CAP_CHECKOUT, "No tienes permiso para registrar reingresos.")
+    ok, msg = storage.return_loan(
+        loan_id, actor_email=actor_user.get("institutional_email", ""), actor=actor_user,
+    )
     if ok:
         email_events.notify_loan_checkin(storage, loan_id, actor_user)
     return ok, msg
@@ -90,7 +96,16 @@ def get_overdue_loans(storage) -> list:
 
 
 def get_loans_for_view(storage, user: dict) -> list:
-    """Estudiante ve solo lo suyo; profesor/maestro ven todos los prestamos abiertos."""
-    if user.get("role") == "estudiante":
-        return storage.get_open_loans_for_user(user["id"])
-    return storage.get_all_loans(status="out")
+    """Quien tiene `view_all_loans` (profesor/administrador) ve todos los préstamos
+    abiertos; los demás, solo los suyos."""
+    if permissions.has_cap(user, permissions.CAP_VIEW_ALL_LOANS):
+        return storage.get_all_loans(status="out")
+    return storage.get_open_loans_for_user(user["id"])
+
+
+def can_checkin_loan(user: dict, loan: dict) -> bool:
+    """True si ``user`` puede reingresar ``loan`` (vistas y pruebas comparten la regla)."""
+    if permissions.has_cap(user, permissions.CAP_CHECKIN_ANY):
+        return True
+    return (permissions.has_cap(user, permissions.CAP_CHECKOUT)
+            and bool(user.get("id")) and loan.get("user_id") == user.get("id"))

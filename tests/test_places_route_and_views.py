@@ -234,7 +234,7 @@ def test_scanning_an_unregistered_location_offers_to_register_it(db):
     assert "todavía no está registrada" in _text(at.warning)
     assert at.text_input[-1].value == "Mesa de trabajo 1"
     student = _scan(db, "M1-E0")
-    assert "Pide a un profesor" in _text(student.info)
+    assert "Pide a un supervisor" in _text(student.info)
 
 
 def test_the_verifiable_route_asks_for_the_shelf_label_when_it_exists(db):

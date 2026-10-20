@@ -11,6 +11,7 @@ from core import storage as storage_module
 from core.storage import LabStorage
 
 ACTOR = "profesor@uniminuto.edu.co"
+ADMIN = {"id": "admin-test", "role": "maestro", "institutional_email": "admin@uniminuto.edu.co"}
 
 
 @pytest.fixture
@@ -79,5 +80,5 @@ def test_user_and_whitelist_survive_a_restart(db):
     _restart()
     assert db.get_user_by_email("ana@uniminuto.edu.co")["id"] == user["id"]
     assert db.is_email_whitelisted_professor("prof@uniminuto.edu.co")
-    updated = db.update_user(user["id"], {"role": "profesor"})
+    updated = db.update_user(user["id"], {"role": "profesor"}, actor=ADMIN)
     assert updated["role"] == "profesor"

@@ -22,7 +22,7 @@ def _isolated_environment(tmp_path, monkeypatch):
       activa la sincronización con GitHub ni el envío de correos.
     - Se reinician la caché en memoria y el estado de sincronización/sesión.
     """
-    from core import auth, notifications
+    from core import auth, dispatch, live_data, notifications, picking, session
     from core import storage as storage_module
 
     monkeypatch.setattr(storage_module, "EXCEL_PATH", str(tmp_path / "isolated_db.xlsx"))
@@ -31,12 +31,17 @@ def _isolated_environment(tmp_path, monkeypatch):
     def no_secret(key, default=None):
         return default
 
-    for module in (storage_module, auth, notifications):
+    for module in (storage_module, auth, notifications, dispatch, session, live_data):
         monkeypatch.setattr(module, "safe_secret", no_secret)
     storage_module._reset_sync_state()
     auth.reset_login_throttle()
+    picking.reset()
+    dispatch.reset_orders_cache()
     yield
     storage_module._cached_dfs = None
+    storage_module._stop_flusher()
+    picking.reset()
+    dispatch.reset_orders_cache()
 
 
 class FakeStorage:
@@ -133,7 +138,8 @@ class FakeStorage:
         return {item_id: self.get_available_quantity(item_id) for item_id in self.items}
 
     # --- loans ---
-    def create_loan(self, item, quantity, user, expected_return_at=None, notes="", request_id=""):
+    def create_loan(self, item, quantity, user, expected_return_at=None, notes="", request_id="",
+                    operator=None):
         available = self.get_available_quantity(item["id"]) if item["id"] in self.items else None
         if available is not None and quantity > available:
             raise ValueError(f"Stock insuficiente. Disponible: {available}.")
@@ -145,14 +151,22 @@ class FakeStorage:
             "user_role": user.get("role", ""), "checkout_at": datetime.now(timezone.utc),
             "expected_return_at": expected_return_at, "return_at": None,
             "status": "out", "notes": notes, "request_id": request_id,
+            "operator_id": (operator or {}).get("id", ""),
+            "operator_name": (operator or {}).get("full_name", ""),
         }
         self.loans[loan_id] = loan
         return loan
 
-    def return_loan(self, loan_id, actor_email=""):
+    def return_loan(self, loan_id, actor_email="", actor=None):
         loan = self.loans.get(loan_id)
         if not loan:
             return False, "El prestamo no existe."
+        if actor is not None:
+            from core import permissions
+            owner = bool(actor.get("id")) and loan["user_id"] == actor.get("id")
+            if not (permissions.has_cap(actor, permissions.CAP_CHECKIN_ANY)
+                    or (owner and permissions.has_cap(actor, permissions.CAP_CHECKOUT))):
+                raise PermissionError("No puedes reingresar un préstamo de otra persona.")
         if loan["status"] == "returned":
             return False, "Este prestamo ya fue devuelto."
         loan["status"] = "returned"
@@ -226,8 +240,10 @@ class FakeStorage:
         row = self.service_requests.get(request_id)
         return dict(row) if row else None
 
-    def get_service_requests(self, status=None, user_id=None):
+    def get_service_requests(self, status=None, user_id=None, exclude_ids=None):
         rows = list(self.service_requests.values())
+        if exclude_ids:
+            rows = [row for row in rows if row.get("id") not in set(exclude_ids)]
         if status:
             rows = [row for row in rows if row.get("status") == status]
         if user_id:
@@ -254,6 +270,15 @@ class FakeStorage:
 
     def set_setting(self, key, value, actor_email=""):
         self.settings[key] = value
+
+    def get_revoked_sessions(self, now=None):
+        import time as _time
+
+        moment = int(now if now is not None else _time.time())
+        return {sid: exp for sid, exp in getattr(self, "revoked_sessions", {}).items() if exp > moment}
+
+    def add_revoked_session(self, sid, exp, now=None):
+        self.__dict__.setdefault("revoked_sessions", {})[str(sid)] = int(exp)
 
     # --- trazabilidad ---
     def add_trace_event(self, event):
@@ -321,8 +346,12 @@ class FakeStorage:
                 {"id": request.get("requester_id"), "full_name": request.get("requester_name", ""),
                  "role": requester.get("role", "")},
                 notes=f"Picking de la solicitud {request_id}", request_id=request_id,
+                operator=actor,
             )
             loan_id = loan["id"]
+        elif plan["loan_action"] == "reuse":
+            self.loans[loan_id].update(operator_id=actor.get("id", ""),
+                                       operator_name=actor.get("full_name", ""))
         elif plan["loan_action"] == "close":
             self.return_loan(loan_id)
         if plan["status"]:

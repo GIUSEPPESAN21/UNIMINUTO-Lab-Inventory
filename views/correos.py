@@ -60,7 +60,7 @@ def _show_flash() -> None:
 
 def render_email_settings(storage, user: dict) -> None:
     if not permissions.has_cap(user, permissions.CAP_MANAGE_EMAIL):
-        st.info("Solo el perfil maestro configura los correos automáticos.")
+        st.info("Solo un administrador configura los correos automáticos.")
         return
 
     status = notifications.smtp_status()
@@ -139,8 +139,8 @@ def _render_preferences(storage, user: dict, prefs: dict) -> None:
             for event in email_events.EVENTS
         }
         include_professors = st.toggle(
-            "Enviar también a los profesores activos", value=prefs["include_professors"],
-            help="Además de los perfiles maestro y de ADMIN_NOTIFICATION_EMAILS.", key="email_include_professors",
+            "Enviar también a los supervisores activos", value=prefs["include_professors"],
+            help="Además de los administradores y de ADMIN_NOTIFICATION_EMAILS.", key="email_include_professors",
         )
         if st.form_submit_button(":material/save: Guardar preferencias", type="primary", width="stretch"):
             try:
@@ -154,12 +154,12 @@ def _render_preferences(storage, user: dict, prefs: dict) -> None:
 
 def _render_recipients(sources: list, prefs: dict) -> None:
     section_title("Quién recibe los avisos", icon=":material/group:",
-                  caption="Perfiles maestro activos + ADMIN_NOTIFICATION_EMAILS"
-                          + (" + profesores activos" if prefs["include_professors"] else "")
+                  caption="Administradores activos + ADMIN_NOTIFICATION_EMAILS"
+                          + (" + supervisores activos" if prefs["include_professors"] else "")
                           + ", sin repetidos ni correos inválidos.")
     if not sources:
         empty_state("Nadie recibiría los avisos",
-                    "Ningún perfil maestro activo tiene un correo válido y ADMIN_NOTIFICATION_EMAILS está vacío.",
+                    "Ningún administrador activo tiene un correo válido y ADMIN_NOTIFICATION_EMAILS está vacío.",
                     icon=":material/group_off:")
         return
     kv_list(sources)
