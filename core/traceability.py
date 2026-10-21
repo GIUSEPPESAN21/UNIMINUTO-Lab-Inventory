@@ -626,7 +626,11 @@ def describe_event(event: dict) -> str:
         text = f"Terminó el picking de {units} unidad(es)" + (f" con {how}" if how else "")
         label = details.get("label_read") or {}
         if label:
-            text += f". Etiqueta de la caja leída con {_PICK_METHODS.get(str(label.get('method') or ''), 'un lector')}"
+            text += f". Etiqueta del producto leída con {_PICK_METHODS.get(str(label.get('method') or ''), 'un lector')}"
+        box = details.get("box_confirmation") or {}
+        if box:
+            text += (f". Retiró de la {box.get('box') or 'caja'}: lo confirmó {box.get('confirmed_by_name') or 'el operario'}"
+                     + (" (confirmación manual)" if box.get("via") == "manual" else ""))
         route = details.get("route") or []
         if route:
             text += ". Ruta leída: " + " › ".join(str(step.get("key") or "") for step in route)

@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""core/pick_route.py - Ruta obligatoria del picking: estantería → piso → contenedor → caja → unidades.
+"""core/pick_route.py - Ruta obligatoria del picking: estantería → piso → contenedor → casilla de la caja.
 
-Antes de leer las unidades de un pedido, quien hace el picking tiene que llegar leyendo, EN ORDEN, cada
-punto con etiqueta del camino (la misma ruta que ve el cliente): primero la estantería, luego su piso, después
-el contenedor y por último la caja. Las estanterías, los pisos y los contenedores llevan chip NFC (también sirve
-su código de barras); las cajas y los productos, código de barras. Una lectura fuera de orden o de otro lugar no
-avanza: queda como lectura rechazada con la indicación de qué leer.
+Antes de sacar las unidades de un pedido, quien hace el picking tiene que llegar leyendo, EN ORDEN, cada punto con
+etiqueta del camino (la misma ruta que ve el cliente): primero la estantería, luego su piso y después el contenedor.
+Esos tres llevan chip NFC (también sirve su código de barras). **La caja no se lee**: es un paso de casilla
+obligatorio («confirmo que abrí la Caja 02 y saqué las unidades»), que deja registrado quién retiró. Una lectura fuera
+de orden o de otro lugar no avanza: queda como lectura rechazada con la indicación de qué leer.
 
 Estantería y piso solo se exigen si esa ubicación está registrada (Inventario → Ubicaciones), igual que en la ruta
 del cliente. El administrador puede apagar la exigencia en Despacho → Ajustes."""
@@ -45,17 +45,28 @@ def _registered_places(storage, item: dict, parent: dict) -> dict:
     return found
 
 
-def checkpoints(storage, item_id: str) -> list:
-    """Puntos con etiqueta que hay que leer antes de las unidades, en orden. Vacío si el producto no tiene
-    una ruta estructurada (códigos libres) o si no hay etiqueta que leer."""
+def _route(storage, item_id: str) -> list:
+    """Todos los puntos de la ruta hacia el producto (el último es el propio producto)."""
     item = storage.get_item(item_id)
     if not item:
         return []
     parent = storage.get_item(item.get("parent_id")) if item.get("parent_id") else None
     places = _registered_places(storage, item, parent)
-    points = location.build_route_checkpoints(item, parent, places, places)
-    # El último punto es el propio producto: sus unidades se leen después, una a una.
-    return [point for point in points[:-1] if point.get("label_code")]
+    return location.build_route_checkpoints(item, parent, places, places)
+
+
+def checkpoints(storage, item_id: str) -> list:
+    """Puntos con etiqueta que hay que LEER antes de sacar las unidades, en orden: estantería, piso y contenedor.
+    La caja no se lee (ver ``box_step``) y el último punto es el propio producto. Vacío si el producto no tiene una
+    ruta estructurada (códigos libres) o si no hay etiqueta que leer."""
+    return [point for point in _route(storage, item_id)[:-1]
+            if point.get("label_code") and point.get("key") != "caja"]
+
+
+def box_step(storage, item_id: str):
+    """La caja de la ruta (``{"key", "title", "label_code", …}``) o ``None`` si el producto no está en una caja.
+    Se confirma con una casilla —obligatoria— y no leyendo su código."""
+    return next((point for point in _route(storage, item_id) if point.get("key") == "caja"), None)
 
 
 def progress(storage, item_id: str, steps: list) -> dict:
@@ -72,16 +83,27 @@ def hint(point: dict) -> str:
 
 def read(storage, request: dict, steps: list, code: str):
     """Interpreta una lectura mientras falte ruta. ``None`` si no hay nada que exigir (la lectura sigue su
-    camino normal de unidades); si no, ``(ok, mensaje, punto)``: ``punto`` es el confirmado (o ``None``)."""
+    camino normal); si no, ``(ok, mensaje, punto)``: ``punto`` es el confirmado (o ``None``)."""
     state = progress(storage, request.get("item_id"), steps)
     if state["complete"]:
         if any(location.codes_match(point["label_code"], code) for point in state["points"]):
             return True, "Ese punto de la ruta ya estaba confirmado.", None
+        box = box_step(storage, request.get("item_id"))
+        if (box and box.get("label_code") and location.codes_match(box["label_code"], code)
+                and not location.codes_match(request.get("item_id"), code)):
+            return True, f"La {box['title']} no se lee: marca la casilla de confirmación.", None
         return None
     nxt = state["next"]
     if location.codes_match(nxt["label_code"], code):
         after = state["points"][state["done"] + 1] if state["done"] + 1 < len(state["points"]) else None
-        follow = (f"Sigue: {hint(after)}." if after
-                  else "Ruta completa: ahora lee las unidades del producto.")
+        follow = f"Sigue: {hint(after)}." if after else f"Ruta completa. {next_step_text(storage, request)}"
         return True, f"Llegaste a {nxt['title']} · {state['done'] + 1}/{len(state['points'])}. {follow}", nxt
     return False, f"Primero confirma la ruta: lee {hint(nxt)}. Se leyó {code}.", None
+
+
+def next_step_text(storage, request: dict) -> str:
+    """Qué sigue cuando la ruta está completa."""
+    box = box_step(storage, (request or {}).get("item_id"))
+    if box:
+        return f"Ahora abre la {box['title']}, saca las unidades y marca la casilla de confirmación."
+    return "Ahora lee la etiqueta del producto, saca las unidades y confírmalas."

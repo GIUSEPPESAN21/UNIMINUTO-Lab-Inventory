@@ -281,8 +281,8 @@ def _returns_fragment(storage, user: dict) -> None:
                     st.rerun()
 
 
-def _route_steps(route: dict) -> None:
-    """Ruta obligatoria: cada punto con etiqueta, en orden, con el siguiente resaltado."""
+def _route_steps(route: dict, box_checked: bool = False) -> None:
+    """Ruta obligatoria: estantería, piso y contenedor se leen en orden; la caja es una casilla al final."""
     lines = []
     for number, point in enumerate(route["points"]):
         if number < route["done"]:
@@ -291,12 +291,13 @@ def _route_steps(route: dict) -> None:
             lines.append(f":material/arrow_forward: **{point['title']}** · lee `{point['label_code']}`")
         else:
             lines.append(f":gray[:material/radio_button_unchecked: {point['title']}]")
+    if route.get("box"):
+        lines.append(f":gray[:material/check_box_outline_blank: {route['box']} · no se lee: marca la casilla al sacar "
+                     "las unidades]")
     st.markdown("  \n".join(lines))
-    if route["complete"]:
-        st.success("Ruta completa: ahora lee las unidades del producto.", icon=":material/route:")
-    else:
-        st.caption("Lee en orden: estantería y piso (chip NFC o código de barras), contenedor (chip NFC o barras) "
-                   "y caja (barras). Las unidades se leen cuando la ruta esté completa.")
+    if not route["complete"]:
+        st.caption("Lee en orden: estantería y piso (chip NFC o código de barras) y contenedor (chip NFC o barras). "
+                   "La caja no se lee: se confirma con una casilla.")
 
 
 @st.fragment(run_every=_DISPATCH_EVERY)
@@ -304,31 +305,38 @@ def _picking_progress(storage, user: dict, request_id: str, needed: int) -> None
     """Avance del picking leído del almacén del proceso: se actualiza solo, así
     una lectura NFC hecha en otra pestaña aparece aquí sin tocar nada.
 
-    Orden: la ruta (estantería → piso → contenedor → caja), la etiqueta de la caja o del producto —una sola
-    vez— y, por último, el conteo de las unidades que se sacan: las unidades no llevan código de barras."""
+    Orden: la ruta (estantería → piso → contenedor, se leen), luego la caja —una casilla obligatoria que deja
+    registrado quién retiró— y el conteo de las unidades, que no llevan código de barras. Un producto que no está
+    en una caja pide, en lugar de la casilla, leer una vez su etiqueta."""
     readings = dispatch.current_readings(user, request_id)
     route = dispatch.route_progress(storage, user, request_id)
-    if route["required"]:
+    if route["required"] or route.get("box"):
         _route_steps(route)
-    label_read = bool(readings)
     request = storage.get_service_request(request_id) or {}
-    if label_read:
-        st.markdown(f":green[:material/check_circle:] Etiqueta de la caja leída "
+    label_read = bool(readings)
+    needs_label = route["label_required"]
+    if needs_label and label_read:
+        st.markdown(f":green[:material/check_circle:] Etiqueta del producto leída "
                     f"({dispatch.METHOD_LABELS.get(readings[0].get('method'), readings[0].get('method'))})")
-    elif route["complete"]:
-        st.markdown(f":material/arrow_forward: **Etiqueta de la caja o del producto** · lee "
-                    f"`{request.get('item_id')}`")
-    else:
-        st.caption("Cuando la ruta esté completa, lee la etiqueta de la caja o del producto.")
+    elif needs_label and route["complete"]:
+        st.markdown(f":material/arrow_forward: **Etiqueta del producto** · lee `{request.get('item_id')}`")
+    elif route["complete"] and route.get("box"):
+        st.success("Ruta leída. Abre la caja, saca las unidades y marca la casilla.", icon=":material/route:")
+    ready = route["complete"] and (label_read or not needs_label)
     with st.form(f"count_units_{request_id}", clear_on_submit=False):
-        counted = st.number_input(f"Unidades que sacaste de la caja (pedido: {needed})", min_value=0,
-                                  max_value=max(needed * 5, 1), value=needed, step=1,
-                                  disabled=not (label_read and route["complete"]),
+        box_ok = True
+        if route.get("box"):
+            box_ok = st.checkbox(
+                f"Confirmo que abrí la {route['box']} y saqué las unidades de ahí ({user.get('full_name') or 'yo'})",
+                key=f"box_ok_{request_id}", disabled=not ready,
+                help="Es obligatorio: queda registrado a tu nombre quién retiró el producto de la caja.")
+        counted = st.number_input(f"Unidades que sacaste (pedido: {needed})", min_value=0,
+                                  max_value=max(needed * 5, 1), value=needed, step=1, disabled=not ready,
                                   help="Las unidades no llevan código de barras: cuéntalas y confirma.")
         done = st.form_submit_button("Confirmar unidades y completar picking", type="primary",
-                                     disabled=not (label_read and route["complete"]), use_container_width=True)
+                                     disabled=not ready, use_container_width=True)
     if done:
-        ok, message, _ = dispatch.confirm_units(storage, request_id, user, counted)
+        ok, message, _ = dispatch.confirm_units(storage, request_id, user, counted, box_confirmed=bool(box_ok))
         _notice(ok, message)
         st.rerun()
     c1, c2 = st.columns(2)
@@ -357,7 +365,7 @@ def _picking_panel(storage, user: dict) -> None:
     needed = int(request.get("quantity") or 0)
     with st.container(border=True, key="dispatch_picking_panel"):
         section_title(f"Picking · {request.get('item_name')}", icon=":material/barcode_scanner:",
-                      caption=f"Lee la ruta y la etiqueta de la caja; las unidades no llevan código: cuéntalas ({needed} en total). "
+                      caption=f"Lee estantería, piso y contenedor; la caja se marca con una casilla y las unidades se cuentan ({needed} en total). "
                           f"{dispatch.scenario_label(storage)}.")
         if str(request.get("description") or "").strip():
             st.info(f"Nota del cliente: {str(request['description']).strip()}", icon=":material/sticky_note_2:")
@@ -485,8 +493,10 @@ def _settings(storage, user: dict) -> None:
         st.rerun()
 
     section_title("Ruta obligatoria del picking", icon=":material/route:",
-                  caption="El operario debe leer en orden estantería, piso, contenedor y caja antes de las unidades. "
-                          "Estantería y piso se exigen solo si están registrados en Inventario → Ubicaciones.")
+                  caption="El operario debe leer en orden estantería, piso y contenedor antes de sacar las unidades. "
+                          "Estantería y piso se exigen solo si están registrados en Inventario → Ubicaciones. "
+                          "La caja no se lee: su casilla de confirmación es obligatoria siempre y deja "
+                          "registrado quién retiró.")
     route_on = pick_route.required(storage)
     wanted = st.toggle("Exigir la lectura de la ruta en el picking", value=route_on, key="pick_route_toggle")
     if st.button("Guardar ruta obligatoria", key="pick_route_save", type="primary", disabled=wanted == route_on):
