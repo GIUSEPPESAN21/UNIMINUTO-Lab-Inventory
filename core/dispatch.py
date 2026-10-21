@@ -568,7 +568,8 @@ def register_reading(storage, request_id: str, actor: dict, code: str, method: s
     if not ok:
         picking.add_failed(user_id, request_id, code, message, method, _stamp(now))
         return False, message, current
-    follow = f"Ahora cuenta las {needed} unidad(es) que sacas y confírmalas."
+    follow = f"Ahora cuenta las {needed} unidad(es) que sacas y confírmalas." + (
+        " (La caja no necesita lectura: basta su casilla.)" if pick_route.box_step(storage, request.get("item_id")) else "")
     if not picking.add_reading_once(user_id, request_id, code, method, _stamp(now)):
         return True, f"La etiqueta del producto ya estaba leída. {follow}", 1
     return True, f"Etiqueta del producto leída ({METHOD_LABELS[method]}). {follow}", 1
@@ -623,14 +624,19 @@ def complete_picking(storage, request_id: str, actor: dict, readings: list = Non
     now = _stamp()
     label_read = None
     if from_store:
-        # Las unidades que se sacan de la caja no llevan código: se lee UNA vez la etiqueta de la caja o del
-        # producto y el operario cuenta lo que saca. Cada unidad queda registrada con el método «conteo».
+        # Las unidades que se sacan de la caja no llevan código. Si el producto está en una caja, la caja no se lee:
+        # se marca la casilla de confirmación (quién retiró queda registrado). Si no hay caja, se lee una vez la
+        # etiqueta del producto. Cada unidad queda registrada con el método «conteo».
         stored = picking.readings(actor.get("id"), request_id)
         request = storage.get_service_request(request_id)
-        if not stored:
-            return False, "Lee la etiqueta de la caja o del producto antes de confirmar las unidades.", None
-        label_read = stored[0]
-        source = [{"code": label_read["code"], "method": METHOD_COUNT, "at": now}
+        box = pick_route.box_step(storage, (request or {}).get("item_id"))
+        if box is not None and not (extra_details or {}).get("box_confirmation"):
+            return False, (f"Marca la casilla de la {box['title']}: confirma que abriste la caja y sacaste "
+                           "las unidades de ahí."), None
+        if box is None and not stored:
+            return False, "Lee la etiqueta del producto antes de confirmar las unidades.", None
+        label_read = stored[0] if stored else None
+        source = [{"code": (request or {}).get("item_id"), "method": METHOD_COUNT, "at": now}
                   for _ in range(int((request or {}).get("quantity") or 0))]
         method = METHOD_COUNT
     else:
@@ -662,11 +668,23 @@ def complete_picking(storage, request_id: str, actor: dict, readings: list = Non
     return result
 
 
-def confirm_units(storage, request_id: str, actor: dict, counted, note: str = ""):
-    """El operario confirma cuántas unidades sacó de la caja (no llevan código de barras) y completa el picking.
+def box_confirmation(storage, request: dict, actor: dict, via: str = "checkbox") -> dict:
+    """Constancia de quién retiró las unidades de la caja (o ``{}`` si el producto no está en una caja)."""
+    box = pick_route.box_step(storage, (request or {}).get("item_id"))
+    if not box:
+        return {}
+    return {"box": box["title"], "box_code": box.get("label_code", ""), "via": via,
+            "confirmed_by_id": actor.get("id", ""), "confirmed_by_name": actor.get("full_name", ""),
+            "confirmed_by_email": actor.get("institutional_email", ""), "units": int((request or {}).get("quantity") or 0),
+            "at": _stamp()}
 
-    Exige la ruta y la etiqueta de la caja o del producto ya leídas, y que la cuenta coincida con lo pedido.
-    Devuelve lo mismo que ``complete_picking``."""
+
+def confirm_units(storage, request_id: str, actor: dict, counted, note: str = "", box_confirmed: bool = False):
+    """El operario confirma cuántas unidades sacó (no llevan código de barras) y completa el picking.
+
+    Exige la ruta leída y que la cuenta coincida con lo pedido. Si el producto está en una caja, además exige la
+    **casilla de la caja** (``box_confirmed``): queda registrado quién retiró. Si no hay caja, exige la etiqueta del
+    producto ya leída. Devuelve lo mismo que ``complete_picking``."""
     permissions.require_cap(actor, permissions.CAP_PICK)
     request = storage.get_service_request(request_id)
     if not request:
@@ -679,8 +697,12 @@ def confirm_units(storage, request_id: str, actor: dict, counted, note: str = ""
     if counted != needed:
         return False, (f"El pedido es de {needed} unidad(es) y contaste {counted}. Saca la cantidad pedida; si no "
                        "alcanzan, libera el pedido y avisa al supervisor."), None
-    return complete_picking(storage, request_id, actor,
-                            extra_details={"counted_units": counted, "count_note": _clean(note)})
+    extra = {"counted_units": counted, "count_note": _clean(note)}
+    if box_confirmed:
+        proof = box_confirmation(storage, request, actor)
+        if proof:
+            extra["box_confirmation"] = proof
+    return complete_picking(storage, request_id, actor, extra_details=extra)
 
 
 def route_pending(storage, request_id: str, actor: dict) -> str:
@@ -699,10 +721,12 @@ def route_pending(storage, request_id: str, actor: dict) -> str:
 def route_progress(storage, actor: dict, request_id: str) -> dict:
     """Avance de la ruta del picking de ``actor`` (para el panel): ``{"required", "points", "done", "next", "complete"}``."""
     request = storage.get_service_request(request_id)
+    box = pick_route.box_step(storage, (request or {}).get("item_id")) if request else None
+    extra = {"box": box["title"] if box else "", "label_required": request is not None and box is None}
     if not request or not pick_route.required(storage):
-        return {"required": False, "points": [], "done": 0, "next": None, "complete": True}
+        return {"required": False, "points": [], "done": 0, "next": None, "complete": True, **extra}
     state = pick_route.progress(storage, request.get("item_id"), picking.route_steps(actor.get("id"), request_id))
-    return {"required": bool(state["points"]), **state}
+    return {"required": bool(state["points"]), **state, **extra}
 
 
 def manual_confirmation_message(actor: dict, request: dict) -> str:
@@ -736,6 +760,9 @@ def confirm_manual_picking(storage, request_id: str, actor: dict, authorized: bo
         "operator_id": actor.get("id", ""), "operator_name": actor.get("full_name", ""),
         "message": manual_confirmation_message(actor, request), "note": _clean(note), "at": now,
     }}
+    box_proof = box_confirmation(storage, request, actor, via="manual")
+    if box_proof:
+        proof["box_confirmation"] = box_proof
     result = complete_picking(storage, request_id, actor, readings=readings, method=METHOD_MANUAL,
                               extra_details=proof)
     if result[0]:

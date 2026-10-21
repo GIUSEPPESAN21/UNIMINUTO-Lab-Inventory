@@ -44,8 +44,9 @@ def _advance(storage, request_id, steps):
         "cancel": lambda: service_requests.cancel_request(storage, request_id, STUDENT)[0],
         "claim": lambda: dispatch.claim_request(storage, request_id, OPERATOR)[0],
         "pick": lambda: (dispatch.start_picking(storage, request_id, OPERATOR)[0]
-                         and dispatch.register_reading(storage, request_id, OPERATOR, ITEM, "manual")[0]
-                         and dispatch.complete_picking(storage, request_id, OPERATOR)[0]),
+                         and dispatch.confirm_units(storage, request_id, OPERATOR,
+                                                    storage.get_service_request(request_id)["quantity"],
+                                                    box_confirmed=True)[0]),
         "receive": lambda: dispatch.receive_request(storage, request_id, SUPERVISOR)[0],
         "deliver": lambda: dispatch.deliver_request(storage, request_id, SUPERVISOR)[0],
         "confirm": lambda: dispatch.confirm_client_receipt(storage, request_id, STUDENT)[0],
@@ -149,8 +150,8 @@ def test_rework_reuses_the_open_loan_and_never_loans_twice(lab):
     assert traceability.request_stage_key(lab.get_service_request(request_id),
                                           lab.get_trace_events(request_id=request_id)) == traceability.STAGE_CLAIMED
     assert dispatch.start_picking(lab, request_id, OPERATOR)[0]
-    assert dispatch.register_reading(lab, request_id, OPERATOR, ITEM, "manual")[0]
-    assert dispatch.complete_picking(lab, request_id, OPERATOR)[0]
+    assert dispatch.confirm_units(lab, request_id, OPERATOR, lab.get_service_request(request_id)["quantity"],
+                                  box_confirmed=True)[0]
     assert len(lab.loans) == 1 and lab.get_available_quantity(ITEM) == 499   # el mismo préstamo; no se descuenta dos veces
     picked = lab.get_trace_events(request_id=request_id, event_type=traceability.EVENT_ORDER_PICKED)
     assert traceability.event_details(picked[-1]).get("reused_loan") is True

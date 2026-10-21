@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.21.0 — La caja es una casilla, no una lectura
+
+- **Picking:** para dar salida solo hay que **leer la estantería, el piso y el contenedor** (chip NFC o código de barras).
+  La **caja ya no se lee**: es un paso de **casilla obligatoria** —«Confirmo que abrí la Caja 02 y saqué las unidades de
+  ahí»— que registra **quién retiró** (`box_confirmation`: caja, quién, correo, hora y unidades; también cuando se usa la
+  confirmación manual) y aparece en la trazabilidad («Retiró de la Caja 02: lo confirmó Olga»).
+- La casilla es obligatoria aunque el administrador apague la lectura de la ruta. Leer el código de la caja ya no cuenta
+  ni se rechaza (se avisa que no hace falta).
+- Un producto que **no está en una caja** (código libre, sin caja en su ruta) sigue leyendo una vez su etiqueta, porque no
+  tiene casilla que marcar.
+- Se mantiene igual la ruta que recorre el cliente cuando retira por su cuenta desde Solicitudes.
+
 ## v1.20.1 — Las unidades de la caja no llevan código
 
 - **Picking:** ya no se lee cada unidad. Después de la ruta (estantería → piso → contenedor → caja) se lee **una sola vez**

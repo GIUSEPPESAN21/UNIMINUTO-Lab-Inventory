@@ -243,16 +243,22 @@ def test_the_picking_panel_shows_the_route_steps_in_order():
     assert "Estantería 2" in text and "lee `2-0-00-00-000`" in text and "Contenedor 01" in text
     confirm = [b for b in at.button if b.label == "Confirmar unidades y completar picking"][0]
     assert confirm.disabled                                         # la ruta está incompleta
+    assert "Caja 02" in text and "no se lee" in text                # la caja aparece como paso de casilla, no de lectura
 
-    # Con la ruta y la etiqueta de la caja leídas, el panel pide contar las unidades (no llevan código).
-    for code in ("2-0-00-00-000", "2-1-01-00-000", "2-1-01-02-000"):
+    # Con estantería y contenedor leídos, el panel pide la casilla de la caja y el conteo (las unidades no llevan código).
+    for code in ("2-0-00-00-000", "2-1-01-00-000"):
         assert dispatch.register_reading(storage, rows[0]["id"], people["operario"], code, "nfc")[0]
-    assert dispatch.register_reading(storage, rows[0]["id"], people["operario"], "2-1-01-02-005", "barcode_gun")[0]
     ready = _open("despacho", people["operario"])
-    assert any("Etiqueta de la caja leída" in str(m.value) for m in ready.markdown)
+    assert any("Ruta leída" in str(s.value) for s in ready.success)
+    box = [c for c in ready.checkbox if c.key == f"box_ok_{rows[0]['id']}"][0]
+    assert "Caja 02" in box.label and "Persona operario" in box.label and not box.disabled
     confirm = [b for b in ready.button if b.label == "Confirmar unidades y completar picking"][0]
     assert not confirm.disabled
+    ready.checkbox(key=f"box_ok_{rows[0]['id']}").check()          # dentro de un formulario: se envía con el botón
     confirm.click().run()
-    assert not ready.exception
+    assert not ready.exception and not ready.error
     events = storage.get_trace_events(request_id=rows[0]["id"])
     assert traceability.request_stage_key(storage.get_service_request(rows[0]["id"]), events) == traceability.STAGE_PICKED
+    picked = next(e for e in events if e["event_type"] == traceability.EVENT_ORDER_PICKED)
+    proof = traceability.event_details(picked)["box_confirmation"]
+    assert proof["confirmed_by_name"] == "Persona operario" and proof["box"] == "Caja 02"

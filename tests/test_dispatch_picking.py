@@ -197,7 +197,7 @@ def test_each_order_shows_route_and_location_and_the_picking_panel_comes_first(l
     panel_at = next(i for i, chunk in enumerate(html_chunks) if "Picking ·" in chunk)
     queue_at = next(i for i, chunk in enumerate(html_chunks) if "Mis pedidos (" in chunk or "Por tomar (" in chunk)
     assert panel_at < queue_at                                            # el panel va ANTES de las listas
-    assert "Etiqueta de la caja o del producto" in text                   # sin ruta que leer: sigue la etiqueta
+    assert "Etiqueta del producto" in text                           # sin caja ni ruta: se lee la etiqueta
     assert any(b.label == "Confirmar unidades y completar picking" and b.disabled for b in at.button)
 
 

@@ -288,17 +288,20 @@ frescos y bajo el bloqueo, en `LabStorage.transition_request`; un intento rechaz
 evento de auditoría. Un supervisor **no aprueba su propia solicitud** (`ALLOW_SELF_APPROVAL`, apagado
 por omisión, lo permite en una demostración con una sola persona).
 
-**Ruta obligatoria del picking.** Antes de leer las unidades, el operario confirma la ruta **en orden**:
-**estantería → piso → contenedor → caja**. Estanterías, pisos y contenedores llevan **chip NFC** (o su código de
-barras); las cajas y los productos, código de barras. Una lectura fuera de orden no avanza (queda como lectura
-rechazada y el panel dice qué leer), «Completar picking» y la confirmación manual esperan a que la ruta esté completa y
-la ruta leída queda en la trazabilidad. Estantería y piso se exigen si están registrados en Inventario → Ubicaciones; los
-códigos libres no tienen ruta. El administrador la apaga en **Despacho → Ajustes** (`core/pick_route.py`).
+**Ruta obligatoria del picking.** Antes de sacar las unidades, el operario lee **en orden** la **estantería, el piso y
+el contenedor**, con su **chip NFC** o su código de barras. **La caja no se lee**: es un paso de **casilla obligatoria**
+(«Confirmo que abrí la Caja 02 y saqué las unidades de ahí») que deja registrado **quién retiró** (nombre, correo, hora,
+caja y unidades) en la trazabilidad del pedido. Una lectura fuera de orden no avanza (queda como lectura rechazada y el
+panel dice qué leer); «Confirmar unidades y completar picking» y la confirmación manual esperan a que la ruta esté
+leída. Estantería y piso se exigen si están registrados en Inventario → Ubicaciones. El administrador puede apagar la
+**lectura** de la ruta en **Despacho → Ajustes**; la casilla de la caja sigue siendo obligatoria siempre
+(`core/pick_route.py`).
 
-**Las unidades no llevan código.** Con la ruta completa, el operario lee **una vez** la etiqueta de la caja o del
-producto, saca las unidades, las **cuenta** y pulsa «Confirmar unidades y completar picking» (la cuenta debe ser la
-cantidad pedida). Cada unidad queda con el método «conteo de unidades» y el evento guarda cómo se leyó la etiqueta de la
-caja. Si no hay lector a mano, sigue la confirmación manual.
+**Las unidades no llevan código.** Con la ruta leída, el operario abre la caja, saca las unidades, las **cuenta**, marca
+la casilla de la caja y pulsa «Confirmar unidades y completar picking» (la cuenta debe ser la cantidad pedida). Cada
+unidad queda con el método «conteo de unidades». Un producto que **no está en una caja** (código libre) no tiene casilla:
+en su lugar se lee una vez su etiqueta. Si no hay lector a mano, sigue la confirmación manual, que también registra quién
+retiró.
 
 **Chips NFC: llegada.** Al tocar el chip de una estantería, un piso o un contenedor la app responde «Llegaste al
 contenedor «X» · N producto(s) dentro» (y, con un picking abierto, confirma ese punto de la ruta aunque el toque abra otra
@@ -658,7 +661,7 @@ core/
   loans.py                Checkout / checkin / vencidos (por capacidad)
   returns.py              Devolución en tres pasos: solicitud → verificación del supervisor → almacenamiento
   pieces.py               Retiro de piezas (Lego y similares) sin inventario por pieza
-  pick_route.py           Ruta obligatoria del picking: estantería → piso → contenedor → caja
+  pick_route.py           Ruta obligatoria del picking: estantería → piso → contenedor y casilla de la caja
   dispatch.py             Despacho: transiciones, picking, escenarios, listas de pedidos abiertos
   picking.py              Lecturas del picking en la memoria del proceso (por usuario y pedido)
   session.py              Sesión persistente: token firmado, época y cierres de sesión
