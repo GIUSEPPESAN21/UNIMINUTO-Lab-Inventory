@@ -244,7 +244,9 @@ def test_operator_home_shows_orders_not_inventory(lab):
     storage, people = lab
     at = _open("inicio", people["operario"])
     html = _text(at.markdown)
-    assert "Pedidos por tomar" in html and "Mis pedidos" in html
+    for label in ("Tu trabajo pendiente", "Por preparar", "Mis pedidos", "Devoluciones"):   # guarda lo devuelto
+        assert label in html
+    assert "Por aprobar" not in html and "Por entregar" not in html
     assert "Items en catálogo" not in html and "Usuarios registrados" not in html
 
 

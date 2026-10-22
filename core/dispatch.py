@@ -482,6 +482,131 @@ def deliver_order(storage, order_id: str, actor: dict):
     return _order_batch(lines, lambda rid: deliver_request(storage, rid, actor), "Entregaste")
 
 
+def hand_over(storage, request_id: str, actor: dict, notes: str = ""):
+    """Entrega al cliente en UN paso: si el picking está completo, registra la revisión del supervisor y la
+    entrega seguidas (los dos eventos quedan en la trazabilidad). Devuelve lo mismo que ``deliver_request``."""
+    permissions.require_cap(actor, permissions.CAP_RECEIVE_AND_DELIVER)
+    request = storage.get_service_request(request_id)
+    events = storage.get_trace_events(request_id=request_id) if request else []
+    stage = traceability.request_stage_key(request, events) if request else ""
+    if stage == traceability.STAGE_PICKED:
+        ok, message, event = receive_request(storage, request_id, actor, notes)
+        if not ok:
+            return ok, message, event
+    elif stage != traceability.STAGE_RECEIVED:
+        return False, "Este pedido no está listo para entregar.", None
+    ok, message, event = deliver_request(storage, request_id, actor, notes)
+    if ok:
+        message = f"Entregado al cliente: «{(request or {}).get('item_name')}» × {int((request or {}).get('quantity') or 0)}."
+    return ok, message, event
+
+
+def hand_over_order(storage, order_id: str, actor: dict):
+    """Entrega de una vez todas las líneas listas (picking completo) de un pedido de varios productos."""
+    permissions.require_cap(actor, permissions.CAP_RECEIVE_AND_DELIVER)
+    lines = [order["request"] for order in open_orders(storage)
+             if order_id and order["request"].get("order_id") == order_id
+             and order["stage"] in (traceability.STAGE_PICKED, traceability.STAGE_RECEIVED)]
+    return _order_batch(lines, lambda rid: hand_over(storage, rid, actor), "Entregaste")
+
+
+def next_to_pick(storage, actor: dict, after_request: dict = None) -> dict:
+    """Siguiente producto que ``actor`` tiene tomado y sin preparar: primero los del mismo pedido que acaba de
+    completar, luego el más antiguo. ``None`` si no queda ninguno (picking continuo, sin volver a la lista)."""
+    mine = [order["request"] for order in open_orders(storage)
+            if order["stage"] == traceability.STAGE_CLAIMED and assigned_picker(order["events"]) == actor.get("id")]
+    if not mine:
+        return None
+    order_id = str((after_request or {}).get("order_id") or "")
+    same = [row for row in mine if order_id and row.get("order_id") == order_id]
+    pool = same or mine
+    return sorted(pool, key=lambda row: str(row.get("created_at") or ""))[0]
+
+
+# --- Trabajo pendiente por rol (Inicio, menú y tablero de Despacho) ------------------------
+
+WORK_APPROVE, WORK_PREPARE, WORK_MINE, WORK_DELIVER, WORK_RETURNS = (
+    "approve", "prepare", "mine", "deliver", "returns")
+# Pestañas de Despacho (sus nombres no cambian: la pestaña abierta se recuerda por su nombre).
+TAB_APPROVE, TAB_PREPARE, TAB_MINE, TAB_DELIVER, TAB_RETURNS = (
+    "Por aprobar", "Por preparar", "Mis pedidos", "Por entregar", "Devoluciones")
+
+
+def count_orders(rows: list) -> int:
+    """Cuántos pedidos hay en ``rows`` (las líneas de un pedido de varios productos cuentan una vez)."""
+    return len({row.get("order_id") or row.get("id") for row in rows})
+
+
+def pending_approvals(storage) -> list:
+    """Pedidos de productos que esperan la aprobación de un supervisor, del más antiguo al más reciente."""
+    rows = [row for row in storage.get_service_requests(status="pending") if row.get("request_type") == "product"]
+    return sorted(rows, key=lambda row: str(row.get("created_at") or ""))
+
+
+def work_summary(storage, user: dict) -> list:
+    """Lo que ``user`` tiene por hacer, según sus capacidades: ``[{"key", "label", "count", "icon", "tab",
+    "hint"}]``. Cuenta pedidos (no líneas) y solo incluye lo que esa persona puede atender."""
+    rows = []
+
+    def add(key, label, count, icon, tab, hint):
+        rows.append({"key": key, "label": label, "count": count, "icon": icon, "tab": tab, "hint": hint})
+
+    if permissions.has_cap(user, permissions.CAP_APPROVE):
+        add(WORK_APPROVE, "Por aprobar", count_orders(pending_approvals(storage)), ":material/rule:", TAB_APPROVE,
+            "Pedidos de clientes que esperan tu visto bueno.")
+    if permissions.has_cap(user, permissions.CAP_VIEW_DISPATCH_QUEUE):
+        add(WORK_PREPARE, "Por preparar", count_orders(queue_for(storage, user)), ":material/inbox:", TAB_PREPARE,
+            "Aprobados: cualquier operario o supervisor los toma.")
+        mine = [order["request"] for order in open_orders(storage)
+                if order["stage"] == traceability.STAGE_CLAIMED and assigned_picker(order["events"]) == user.get("id")]
+        add(WORK_MINE, "Mis pedidos", count_orders(mine), ":material/barcode_scanner:", TAB_MINE,
+            "Los que tomaste y estás preparando.")
+    if permissions.has_cap(user, permissions.CAP_RECEIVE_AND_DELIVER):
+        add(WORK_DELIVER, "Por entregar", count_orders(review_queue(storage, user)), ":material/handshake:", TAB_DELIVER,
+            "Preparados: revisa y entrega al cliente.")
+    verify = permissions.has_cap(user, permissions.CAP_VERIFY_RETURN)
+    store = permissions.has_cap(user, permissions.CAP_STORE_RETURN)
+    if verify or store:
+        from core import returns
+
+        count = (len(returns.pending(storage, returns.STAGE_REQUESTED)) if verify else 0) + (
+            len(returns.pending(storage, returns.STAGE_VERIFIED)) if store else 0)
+        add(WORK_RETURNS, "Devoluciones", count, ":material/assignment_return:", TAB_RETURNS,
+            "Lo que los clientes devuelven: verificar y guardar.")
+    return rows
+
+
+def pending_total(storage, user: dict) -> int:
+    """Total de pedidos que esperan algo de ``user`` (para el contador del menú). 0 si algo falla."""
+    try:
+        return sum(row["count"] for row in work_summary(storage, user))
+    except Exception:            # el menú nunca debe caerse por un conteo
+        return 0
+
+
+def waiting_text(value, now=None) -> str:
+    """Cuánto lleva esperando algo, en palabras: «hace 5 min», «hace 3 h», «hace 2 días»."""
+    when = traceability.to_datetime(value)
+    if when is None:
+        return ""
+    minutes = max(0, int(((now or datetime.now(timezone.utc)) - when).total_seconds() // 60))
+    if minutes < 1:
+        return "recién"
+    if minutes < 60:
+        return f"hace {minutes} min"
+    if minutes < 48 * 60:
+        return f"hace {minutes // 60} h"
+    return f"hace {minutes // 1440} días"
+
+
+def is_urgent(request: dict, now=None, hours: int = 24) -> bool:
+    """El cliente lo necesita en menos de ``hours`` horas (o ya pasó la fecha)."""
+    needed = traceability.to_datetime((request or {}).get("needed_at"))
+    if needed is None:
+        return False
+    return (needed - (now or datetime.now(timezone.utc))).total_seconds() < hours * 3600
+
+
 def release_request(storage, request_id: str, actor: dict, reason: str = ""):
     permissions.require_cap(actor, permissions.CAP_RELEASE)
     previous = assigned_picker(storage.get_trace_events(request_id=request_id))

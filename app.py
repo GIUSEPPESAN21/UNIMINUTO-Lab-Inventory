@@ -164,7 +164,11 @@ if permissions.has_cap(user, permissions.CAP_VIEW_ALL_TRACES):
     # El cliente sigue su pedido en Solicitudes → Mis pedidos; la trazabilidad completa es del personal.
     pages["trazabilidad"] = st.Page(trazabilidad.render, title="Trazabilidad", icon=":material/explore:", url_path="trazabilidad")
 if permissions.has_cap(user, permissions.CAP_VIEW_DISPATCH_QUEUE) or permissions.has_cap(user, permissions.CAP_RECEIVE_AND_DELIVER):
-    pages["despacho"] = st.Page(despacho.render, title="Despacho", icon=":material/local_shipping:", url_path="despacho")
+    from core import dispatch as _dispatch
+
+    _waiting = _dispatch.pending_total(storage, user)       # pedidos que esperan algo de esta persona
+    pages["despacho"] = st.Page(despacho.render, title=f"Despacho ({_waiting})" if _waiting else "Despacho",
+                                icon=":material/local_shipping:", url_path="despacho")
 
 if permissions.has_cap(user, permissions.CAP_EDIT_INVENTORY):
     pages["inventario"] = st.Page(inventario.render, title="Inventario", icon=":material/inventory_2:", url_path="inventario")

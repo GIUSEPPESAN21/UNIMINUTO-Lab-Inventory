@@ -14,7 +14,10 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from core import dispatch, live_data, loans, ludica, permissions, pick_route, picking, returns, service_requests, traceability
-from core.ui import badge_html, empty_state, esc, guard_cap, page_header, persistent_tabs, section_title
+from core.ui import (
+    card, card_header, empty_state, esc, guard_cap, page_header, persistent_tabs, section_title,
+    stat_cards,
+)
 from views import location_guide, photo_panel
 
 _DISPATCH_EVERY = live_data.run_every(live_data.dispatch_refresh_seconds())
@@ -59,19 +62,127 @@ def _focus_reading_input(label: str) -> None:
     components.html(script, height=0)
 
 
-def _heading(request: dict, events: list) -> None:
-    stage, tone = traceability.request_stage(request, events)
-    st.markdown(
-        f"<b>{esc(request.get('item_name') or request.get('item_id'))}</b> "
-        f"{badge_html(stage, tone)}<br>"
-        f"<span class='lab-section__caption'>{esc(traceability.short_id(request.get('id')))} · "
-        f"{esc(request.get('requester_name'))} · {int(request.get('quantity') or 0)} u.</span>",
-        unsafe_allow_html=True,
-    )
-    note = str(request.get("description") or "").strip()
-    if note:      # la nota que escribió el cliente la ve quien prepara, recibe o entrega el pedido
+# ---------------------------------------------------------------------------
+# Tarjeta de pedido: una por pedido (las líneas de un pedido de varios productos van juntas)
+# ---------------------------------------------------------------------------
+
+def _route_text(storage, request: dict) -> str:
+    try:
+        item = storage.get_item(request.get("item_id") or "")
+        if not item:
+            return ""
+        parent = storage.get_item(item.get("parent_id") or "") if item.get("parent_id") else None
+        return location_guide.compact_route_for(storage, item, parent)
+    except Exception:       # la ruta es una ayuda: nunca tumba la lista
+        return ""
+
+
+def _sorted_groups(rows: list) -> list:
+    """Pedidos agrupados, primero los urgentes y luego el más antiguo (el primero que llegó, el primero que sale)."""
+    groups = service_requests.group_by_order(rows)
+    for group in groups:
+        group["rows"].sort(key=lambda row: str(row.get("created_at") or ""))
+    return sorted(groups, key=lambda g: (not any(dispatch.is_urgent(r) for r in g["rows"]),
+                                         str(g["rows"][0].get("created_at") or "")))
+
+
+def _group_title(group: dict) -> str:
+    rows = group["rows"]
+    if len(rows) > 1:
+        return f"Pedido {group['order_id'].upper()} · {len(rows)} productos"
+    row = rows[0]
+    return f"{row.get('item_name') or row.get('item_id')} × {int(row.get('quantity') or 0)}"
+
+
+def _group_header(group: dict, badges: list = None) -> None:
+    first = group["rows"][0]
+    meta = [str(first.get("requester_name") or "Cliente"), dispatch.waiting_text(first.get("created_at"))]
+    if first.get("needed_at"):
+        meta.append("para el " + traceability.to_datetime(first["needed_at"]).astimezone(
+            loans.BOGOTA_TZ).strftime("%d/%m %I:%M %p"))
+    pills = list(badges or [])
+    if any(dispatch.is_urgent(row) for row in group["rows"]):
+        pills.insert(0, {"text": "Urgente", "tone": "danger", "icon": "⏱️"})
+    card_header(_group_title(group), subtitle=" · ".join(m for m in meta if m),
+                icon=":material/shopping_cart:" if len(group["rows"]) > 1 else ":material/inventory_2:", badges=pills)
+    note = str(first.get("description") or "").strip()
+    if note:      # la nota que escribió el cliente la ve quien aprueba, prepara y entrega
         st.info(f"Nota del cliente: {note}", icon=":material/sticky_note_2:")
 
+
+def _lines(storage, rows: list, extra=None) -> None:
+    """Una línea por producto: nombre × cantidad, ruta corta y (opcional) un dato extra por línea. Un pedido de un
+    solo producto ya lo nombra el encabezado: ahí solo va la ruta y el dato extra."""
+    if len(rows) == 1:
+        route = _route_text(storage, rows[0])
+        detail = [f"Ruta: {route}"] if route else []
+        if extra:
+            detail.append(extra(rows[0]).lstrip(" ·"))
+        if detail:
+            st.caption(" · ".join(detail))
+        return
+    out = []
+    for row in rows:
+        route = _route_text(storage, row)
+        text = f"**{esc(row.get('item_name') or row.get('item_id'))}** × {int(row.get('quantity') or 0)}"
+        if route and len(rows) > 1:
+            text += f" · :gray[{esc(route)}]"
+        if extra:
+            text += extra(row)
+        out.append(f"- {text}")
+    st.markdown("\n".join(out))
+
+
+# ---------------------------------------------------------------------------
+# Por aprobar (supervisor)
+# ---------------------------------------------------------------------------
+
+@st.fragment(run_every=_DISPATCH_EVERY)
+def _approve_fragment(storage, user: dict) -> None:
+    rows = dispatch.pending_approvals(storage)
+    groups = _sorted_groups(rows)
+    if service_requests.auto_approve_products(storage):
+        st.caption(":material/bolt: La aprobación automática está activa: los pedidos nuevos pasan solos a «Por preparar».")
+    if not groups:
+        empty_state("Nada por aprobar", "Los pedidos nuevos de los clientes aparecerán aquí.", icon=":material/rule:")
+        return
+    for group in groups:
+        key = group["order_id"] or group["rows"][0]["id"]
+        with card(f"approve_{key}", tone="warning"):
+            _group_header(group)
+
+            def stock(row):
+                available = storage.get_available_quantity(row.get("item_id"))
+                short = available < int(row.get("quantity") or 0)
+                return f" · {'🔴 solo hay' if short else 'hay'} {available} disponible(s)"
+
+            _lines(storage, group["rows"], stock)
+            own = group["rows"][0].get("requester_id") == user.get("id") and not dispatch.allow_self_approval()
+            if own:
+                st.caption("Es tu propio pedido: lo aprueba otra persona.")
+            c1, c2 = st.columns([2, 1])
+            if c1.button("Aprobar", key=f"approve_{key}", type="primary", use_container_width=True, disabled=own,
+                         icon=":material/check:"):
+                ok, message = _review(storage, user, group, service_requests.STATUS_APPROVED, "")
+                _notice(ok, message)
+                st.rerun()
+            with c2.popover("Rechazar", icon=":material/close:", use_container_width=True):
+                reason = st.text_input("Motivo (lo verá el cliente)", key=f"reject_reason_{key}")
+                if st.button("Rechazar pedido", key=f"reject_{key}", use_container_width=True):
+                    ok, message = _review(storage, user, group, service_requests.STATUS_REJECTED, reason)
+                    _notice(ok, message)
+                    st.rerun()
+
+
+def _review(storage, user: dict, group: dict, decision: str, notes: str):
+    if len(group["rows"]) > 1:
+        return service_requests.review_order(storage, group["order_id"], decision, user, notes)
+    return service_requests.review_request(storage, group["rows"][0]["id"], decision, user, notes)
+
+
+# ---------------------------------------------------------------------------
+# Por preparar (cola), Mis pedidos (operario) y Por entregar (supervisor)
+# ---------------------------------------------------------------------------
 
 @st.fragment(run_every=_DISPATCH_EVERY)
 def _queue_fragment(storage, user: dict) -> None:
@@ -80,137 +191,114 @@ def _queue_fragment(storage, user: dict) -> None:
     except PermissionError as exc:
         st.error(str(exc))
         return
-    section_title(f"Por tomar ({len(rows)})", icon=":material/inbox:")
-    if not rows:
-        empty_state("Cola al día", "No hay pedidos autorizados disponibles.", icon=":material/inbox:")
+    groups = _sorted_groups(rows)
+    if not groups:
+        empty_state("Cola al día", "No hay pedidos aprobados esperando preparación.", icon=":material/inbox:")
         return
-    for group in service_requests.group_by_order(rows):
-        if len(group["rows"]) > 1:
-            _order_header(group, f"Tomar todo el pedido ({len(group['rows'])})", f"claim_order_{group['order_id']}",
-                          lambda order_id=group["order_id"]: _claim_whole_order(storage, user, order_id))
-        for request in group["rows"]:
-            _queue_line(storage, user, request)
+    st.caption("Primero los urgentes y después el que más lleva esperando. Al tomarlo se abre la preparación arriba.")
+    for group in groups:
+        key = group["order_id"] or group["rows"][0]["id"]
+        with card(f"queue_{key}", tone="info"):
+            _group_header(group)
+            _lines(storage, group["rows"])
+            label = "Tomar pedido y preparar" if len(group["rows"]) > 1 else "Tomar y preparar"
+            if st.button(label, key=f"claim_{key}", type="primary", use_container_width=True,
+                         icon=":material/play_arrow:"):
+                _claim(storage, user, group)
 
 
-def _order_header(group: dict, label: str, key: str, action) -> None:
-    """Encabezado de un pedido de varios productos con su acción para todas las líneas a la vez."""
-    first = group["rows"][0]
-    total = sum(int(row.get("quantity") or 0) for row in group["rows"])
-    with st.container(border=True):
-        st.markdown(f":material/shopping_cart: **Pedido {esc(group['order_id'].upper())}** · "
-                    f"{len(group['rows'])} productos · {total} unidades · {esc(first.get('requester_name'))}")
-        if st.button(label, key=key, type="primary", use_container_width=True):
-            action()
-
-
-def _claim_whole_order(storage, user: dict, order_id: str) -> None:
-    ok, message, taken = dispatch.claim_order(storage, order_id, user)
-    if ok and taken:
-        started, text = dispatch.start_picking(storage, taken[0]["id"], user)
-        message += " Lee la ruta y las unidades de cada producto." if started else f" {text}"
+def _claim(storage, user: dict, group: dict) -> None:
+    if len(group["rows"]) > 1:
+        ok, message, taken = dispatch.claim_order(storage, group["order_id"], user)
+        first = taken[0] if taken else None
+    else:
+        ok, message, _ = dispatch.claim_request(storage, group["rows"][0]["id"], user)
+        first = group["rows"][0] if ok else None
+    if ok and first:
+        started, text = dispatch.start_picking(storage, first["id"], user)
+        message = ("Pedido tomado. Lee la ruta y prepara cada producto." if started else text)
     _notice(ok, message)
     st.rerun()
-
-
-def _queue_line(storage, user: dict, request: dict) -> None:
-    events = storage.get_trace_events(request_id=request["id"])
-    with st.container(border=True):
-        _heading(request, events)
-        _order_context(storage, request, f"queue_{request['id']}")
-        if st.button("Tomar y empezar picking", key=f"claim_{request['id']}", type="primary",
-                     use_container_width=True,
-                     help="Lo tomas y se abre el panel de picking arriba, listo para leer el código."):
-            ok, message, _ = dispatch.claim_request(storage, request["id"], user)
-            if ok:
-                ok, message = dispatch.start_picking(storage, request["id"], user)
-                message = "Pedido tomado. Lee la ruta y el código de cada unidad, o confirma manualmente." if ok else message
-            _notice(ok, message)
-            st.rerun()
 
 
 @st.fragment(run_every=_DISPATCH_EVERY)
 def _mine_fragment(storage, user: dict) -> None:
     rows = dispatch.my_orders(storage, user)
-    section_title(f"Mis pedidos ({len(rows)})", icon=":material/person_pin:")
     if not rows:
-        empty_state("Sin pedidos asignados", "Toma uno desde la cola cuando estés listo.",
+        empty_state("Sin pedidos en preparación", "Toma uno desde «Por preparar» cuando estés listo.",
                     icon=":material/person_pin:")
         return
     active = picking.active_request(user["id"])
-    for request in rows:
-        events = storage.get_trace_events(request_id=request["id"])
-        stage = traceability.request_stage_key(request, events)
-        with st.container(border=True):
-            _heading(request, events)
-            if stage == traceability.STAGE_CLAIMED:
-                _order_context(storage, request, f"mine_{request['id']}")
-                c1, c2 = st.columns(2)
-                if c1.button("Seguir picking" if active == request["id"] else "Iniciar picking",
-                             key=f"start_pick_{request['id']}", type="primary", use_container_width=True):
-                    ok, message = dispatch.start_picking(storage, request["id"], user)
+    stages = {row["id"]: traceability.request_stage_key(row, storage.get_trace_events(request_id=row["id"]))
+              for row in rows}
+    for group in _sorted_groups(rows):
+        key = group["order_id"] or group["rows"][0]["id"]
+        with card(f"mine_{key}"):
+            done = sum(stages[row["id"]] == traceability.STAGE_PICKED for row in group["rows"])
+            _group_header(group, [{"text": f"{done}/{len(group['rows'])} preparado(s)",
+                                   "tone": "success" if done == len(group["rows"]) else "info"}])
+            for row in group["rows"]:
+                c1, c2 = st.columns([3, 1], vertical_alignment="center")
+                route = _route_text(storage, row)
+                c1.markdown(f"**{esc(row.get('item_name'))}** × {int(row.get('quantity') or 0)}"
+                            + (f" · :gray[{esc(route)}]" if route else ""))
+                if stages[row["id"]] == traceability.STAGE_PICKED:
+                    c2.markdown(":green[:material/check_circle: Listo]")
+                elif c2.button("Seguir" if active == row["id"] else "Preparar", key=f"start_pick_{row['id']}",
+                               type="primary", use_container_width=True):
+                    ok, message = dispatch.start_picking(storage, row["id"], user)
                     if not ok:
                         _notice(False, message)
                     st.rerun()
-                if c2.button("Liberar", key=f"release_{request['id']}", use_container_width=True):
-                    ok, message, _ = dispatch.release_request(storage, request["id"], user)
-                    _notice(ok, message)
-                    st.rerun()
-            elif stage == traceability.STAGE_PICKED:
-                st.success("Picking completo. Esperando recepción del supervisor.")
+            claimed = [row for row in group["rows"] if stages[row["id"]] == traceability.STAGE_CLAIMED]
+            if done == len(group["rows"]):
+                st.success("Pedido preparado: espera la entrega del supervisor.", icon=":material/done_all:")
+            elif claimed and st.button("Devolver a la cola", key=f"release_{key}", use_container_width=True,
+                                       help="Otra persona podrá tomarlo. Las lecturas pendientes se descartan."):
+                results = [dispatch.release_request(storage, row["id"], user) for row in claimed]
+                _notice(all(r[0] for r in results), results[-1][1])
+                st.rerun()
 
 
 @st.fragment(run_every=_DISPATCH_EVERY)
 def _review_fragment(storage, user: dict) -> None:
     rows = dispatch.review_queue(storage, user)
-    section_title(f"Por revisar y entregar ({len(rows)})", icon=":material/fact_check:")
     if not rows:
-        empty_state("Sin pedidos por revisar", "Los picking completos aparecerán aquí.",
-                    icon=":material/fact_check:")
+        empty_state("Nada por entregar", "Los pedidos preparados aparecerán aquí para entregarlos al cliente.",
+                    icon=":material/handshake:")
         return
-    for group in service_requests.group_by_order(rows):
-        if len(group["rows"]) > 1:
-            stages = {traceability.request_stage_key(r, storage.get_trace_events(request_id=r["id"]))
-                      for r in group["rows"]}
-            order_id = group["order_id"]
-            if traceability.STAGE_PICKED in stages:
-                _order_header(group, "Confirmar recepción de todo el pedido", f"receive_order_{order_id}",
-                              lambda oid=order_id: _order_step(storage, user, dispatch.receive_order, oid))
-            elif stages == {traceability.STAGE_RECEIVED}:
-                _order_header(group, "Entregar todo el pedido al cliente", f"deliver_order_{order_id}",
-                              lambda oid=order_id: _order_step(storage, user, dispatch.deliver_order, oid))
-        for request in group["rows"]:
-            _review_line(storage, user, request)
+    open_rows = dispatch.open_orders(storage)
+    for group in _sorted_groups(rows):
+        key = group["order_id"] or group["rows"][0]["id"]
+        with card(f"deliver_{key}", tone="success"):
+            _group_header(group)
 
+            def who(row):
+                name = dispatch.assigned_picker_name(storage.get_trace_events(request_id=row["id"]))
+                return f" · preparó {esc(name)}" if name else ""
 
-def _order_step(storage, user: dict, step, order_id: str) -> None:
-    ok, message, _ = step(storage, order_id, user)
-    _notice(ok, message)
-    st.rerun()
-
-
-def _review_line(storage, user: dict, request: dict) -> None:
-    events = storage.get_trace_events(request_id=request["id"])
-    stage = traceability.request_stage_key(request, events)
-    with st.container(border=True):
-        _heading(request, events)
-        _order_context(storage, request, f"review_{request['id']}")
-        if stage == traceability.STAGE_PICKED:
-            if st.button("Confirmar recepción", key=f"receive_{request['id']}",
-                         type="primary", use_container_width=True):
-                ok, message, _ = dispatch.receive_request(storage, request["id"], user)
+            _lines(storage, group["rows"], who)
+            missing = [o for o in open_rows if group["order_id"] and o["request"].get("order_id") == group["order_id"]
+                       and o["stage"] in (traceability.STAGE_APPROVED, traceability.STAGE_CLAIMED)]
+            if missing:
+                st.caption(f":material/hourglass_top: Faltan {len(missing)} producto(s) de este pedido por preparar; "
+                           "puedes entregar lo que ya está listo.")
+            c1, c2 = st.columns([2, 1])
+            if c1.button("Entregar al cliente", key=f"handover_{key}", type="primary", use_container_width=True,
+                         icon=":material/handshake:", help="Registra la revisión y la entrega en un solo paso."):
+                if len(group["rows"]) > 1:
+                    ok, message, _ = dispatch.hand_over_order(storage, group["order_id"], user)
+                else:
+                    ok, message, _ = dispatch.hand_over(storage, group["rows"][0]["id"], user)
                 _notice(ok, message)
                 st.rerun()
-        elif stage == traceability.STAGE_RECEIVED:
-            c1, c2 = st.columns(2)
-            if c1.button("Entregar al cliente", key=f"deliver_{request['id']}",
-                         type="primary", use_container_width=True):
-                ok, message, _ = dispatch.deliver_request(storage, request["id"], user)
-                _notice(ok, message)
-                st.rerun()
-            if c2.button("Corregir / devolver", key=f"review_fix_{request['id']}",
-                         use_container_width=True):
-                st.session_state.dispatch_review_focus = request["id"]
-                st.rerun()
+            with c2.popover("Corregir", icon=":material/undo:", use_container_width=True):
+                st.caption("Si algo no cuadra, vuelve al picking o regresa las unidades al estante.")
+                for row in group["rows"]:
+                    if st.button(f"{row.get('item_name')} × {int(row.get('quantity') or 0)}",
+                                 key=f"review_fix_{row['id']}", use_container_width=True):
+                        st.session_state.dispatch_review_focus = row["id"]
+                        st.rerun()
 
 
 def _return_heading(row: dict) -> None:
@@ -281,6 +369,18 @@ def _returns_fragment(storage, user: dict) -> None:
                     st.rerun()
 
 
+def _continue_picking(storage, user: dict, request: dict, message: str) -> str:
+    """Picking continuo: al completar un producto se abre el siguiente que la persona tiene tomado (primero los
+    del mismo pedido), sin volver a la lista."""
+    nxt = dispatch.next_to_pick(storage, user, request)
+    if not nxt:
+        return "Producto preparado. " + ("Pedido completo: queda listo para entregar." if request.get("order_id")
+                                         else "Queda listo para entregar.")
+    started, _ = dispatch.start_picking(storage, nxt["id"], user)
+    return (f"Producto preparado. Sigue: «{nxt.get('item_name')}» × {int(nxt.get('quantity') or 0)}."
+            if started else message)
+
+
 def _route_steps(route: dict, box_checked: bool = False) -> None:
     """Ruta obligatoria: estantería, piso y contenedor se leen en orden; la caja es una casilla al final."""
     lines = []
@@ -337,7 +437,7 @@ def _picking_progress(storage, user: dict, request_id: str, needed: int) -> None
                                      disabled=not ready, use_container_width=True)
     if done:
         ok, message, _ = dispatch.confirm_units(storage, request_id, user, counted, box_confirmed=bool(box_ok))
-        _notice(ok, message)
+        _notice(ok, _continue_picking(storage, user, request, message) if ok else message)
         st.rerun()
     c1, c2 = st.columns(2)
     if c1.button("Deshacer última", disabled=not (readings or route["done"]), key=f"undo_pick_{request_id}",
@@ -398,7 +498,7 @@ def _manual_confirmation(storage, user: dict, request: dict) -> None:
         if st.button("Confirmar y completar picking", key=f"manual_done_{request_id}", type="primary",
                      disabled=not authorized, use_container_width=True):
             ok, message, _ = dispatch.confirm_manual_picking(storage, request_id, user, authorized, note)
-            _notice(ok, message)
+            _notice(ok, _continue_picking(storage, user, request, message) if ok else message)
             st.rerun()
 
 
@@ -475,6 +575,16 @@ def _settings(storage, user: dict) -> None:
     """Ajustes del despacho (administrador): el escenario fija cómo se registra lo escrito."""
     if not permissions.has_cap(user, permissions.CAP_DISPATCH_SETTINGS):
         return
+    section_title("Aprobación de pedidos", icon=":material/rule:",
+                  caption="Con la aprobación automática, los pedidos de productos pasan directo a «Por preparar» "
+                          "y el supervisor no tiene que aprobar uno por uno. Los servicios y reservas se siguen aprobando.")
+    auto_on = service_requests.auto_approve_products(storage)
+    auto = st.toggle("Aprobar automáticamente los pedidos de productos", value=auto_on, key="auto_approve_toggle")
+    if st.button("Guardar aprobación", key="auto_approve_save", type="primary", disabled=auto == auto_on):
+        ok, message = service_requests.set_auto_approve(storage, user, auto)
+        _notice(ok, message)
+        st.rerun()
+
     current = dispatch.scenario_key(storage)
     section_title("Escenario de la lúdica", icon=":material/tune:",
                   caption="Lo fija el administrador; quien hace el picking no lo cambia.")
@@ -520,6 +630,22 @@ def _settings(storage, user: dict) -> None:
         st.rerun()
 
 
+FOCUS_KEY = "despacho_focus"       # pestaña que debe abrirse (la fija Inicio al pulsar una tarjeta de trabajo)
+_TONE_BY_WORK = {dispatch.WORK_APPROVE: "warning", dispatch.WORK_DELIVER: "success", dispatch.WORK_RETURNS: "info"}
+
+
+def _board(storage, user: dict) -> None:
+    """Tablero de etapas: cuántos pedidos esperan en cada una, para quien está mirando."""
+    try:
+        work = dispatch.work_summary(storage, user)
+    except Exception:          # el tablero es una ayuda: nunca tumba la página
+        return
+    if work:
+        stat_cards([{"label": row["label"], "value": row["count"], "icon": row["icon"],
+                     "tone": _TONE_BY_WORK.get(row["key"], "info") if row["count"] else "neutral"}
+                    for row in work])
+
+
 def render() -> None:
     storage, user = st.session_state.storage, st.session_state.user
     if not (permissions.has_cap(user, permissions.CAP_VIEW_DISPATCH_QUEUE)
@@ -527,23 +653,27 @@ def render() -> None:
         guard_cap(user, permissions.CAP_VIEW_DISPATCH_QUEUE, "Despacho")
         return
     page_header("Despacho", icon=":material/local_shipping:",
-                subtitle="Tomar pedido → picking por unidad → recepción → entrega · devoluciones")
+                subtitle="Aprobar → preparar → entregar · devoluciones")
     notice = st.session_state.pop("dispatch_notice", None)
     if notice:
         (st.success if notice[0] else st.error)(notice[1])
     # Lo que se está haciendo ahora, arriba: en el teléfono no hay que recorrer la lista.
     _picking_panel(storage, user)
     _review_action_panel(storage, user)
+    _board(storage, user)
     titles, renderers = [], []
+    if permissions.has_cap(user, permissions.CAP_APPROVE):
+        titles.append(dispatch.TAB_APPROVE)
+        renderers.append(_approve_fragment)
     if permissions.has_cap(user, permissions.CAP_VIEW_DISPATCH_QUEUE):
-        titles += ["Por tomar", "Mis pedidos"]
+        titles += [dispatch.TAB_PREPARE, dispatch.TAB_MINE]
         renderers += [_queue_fragment, _mine_fragment]
     if permissions.has_cap(user, permissions.CAP_RECEIVE_AND_DELIVER):
-        titles.append("Por revisar")
+        titles.append(dispatch.TAB_DELIVER)
         renderers.append(_review_fragment)
     if (permissions.has_cap(user, permissions.CAP_VERIFY_RETURN)
             or permissions.has_cap(user, permissions.CAP_STORE_RETURN)):
-        titles.append("Devoluciones")
+        titles.append(dispatch.TAB_RETURNS)
         renderers.append(_returns_fragment)
     if permissions.has_cap(user, permissions.CAP_DISPATCH_REPORTS):
         titles.append("Tiempos")
@@ -551,6 +681,9 @@ def render() -> None:
     if permissions.has_cap(user, permissions.CAP_DISPATCH_SETTINGS):
         titles.append("Ajustes")
         renderers.append(_settings)
+    focus = st.session_state.pop(FOCUS_KEY, None)
+    if focus in titles:
+        st.session_state["tabs_despacho"] = focus
     tabs = persistent_tabs(titles, "despacho")
     for tab, renderer in zip(tabs, renderers):
         with tab:

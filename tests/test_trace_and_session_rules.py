@@ -97,6 +97,6 @@ def test_allow_self_approval_is_off_by_default_and_can_be_turned_on(lab, monkeyp
 
 
 def test_automatic_approval_is_not_blocked_by_the_rule(lab, monkeypatch):
-    monkeypatch.setattr(service_requests, "auto_approve_products", lambda: True)
+    monkeypatch.setattr(service_requests, "auto_approve_products", lambda storage=None: True)
     row, _, _ = service_requests.submit_request(lab, SUPERVISOR, "product", ITEM, 1)
     assert lab.get_service_request(row["id"])["status"] == "approved"      # la aprobación del sistema no es «propia»

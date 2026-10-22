@@ -137,12 +137,19 @@ def test_reviewer_manages_requests_and_reservations_in_one_place(lab):
     storage, people = lab
     row, _, _ = service_requests.submit_request(storage, people["estudiante"], "product", CODE, 1)
     at = _open("solicitudes", people["profesor"])
-    assert any("Microscopio óptico" in e.label for e in at.expander)
-    approve = [b for b in at.button if b.label == "Aprobar"][0]
-    approve.click().run()
-    assert not at.exception
-    assert storage.get_service_request(row["id"])["status"] == "approved"
+    assert "Despacho → Por aprobar" in _text(at)              # los productos se aprueban en Despacho
     assert "Reservas" in _text(at)                           # la gestión de reservas vive en la misma pestaña
+    service, _, _ = service_requests.submit_request(storage, people["estudiante"], "service",
+                                                    service_name="Corte láser", description="Plantilla")
+    at = _open("solicitudes", people["profesor"])
+    assert any("Corte láser" in e.label for e in at.expander)
+    [b for b in at.button if b.label == "Aprobar"][0].click().run()
+    assert not at.exception
+    assert storage.get_service_request(service["id"])["status"] == "approved"
+    dispatch_page = _open("despacho", people["profesor"])
+    [b for b in dispatch_page.button if b.key == f"approve_{row['id']}"][0].click().run()
+    assert not dispatch_page.exception
+    assert storage.get_service_request(row["id"])["status"] == "approved"
 
 
 # --- Buscar: un solo cuadro ----------------------------------------------------------------------------
