@@ -207,14 +207,19 @@ def test_the_client_sees_one_grouped_order_with_a_cancel_for_all():
 def test_the_supervisor_reviews_the_group_and_the_operator_takes_it_whole():
     pytest.importorskip("streamlit.testing.v1")
     storage, people, rows = _real_order()
-    at = _open("solicitudes", people["encargado"])
-    approve = [b for b in at.button if "Aprobar pedido completo" in b.label]
-    assert approve
+    # Los pedidos de productos se aprueban en Despacho → Por aprobar (Solicitudes solo avisa y lleva allí).
+    requests_page = _open("solicitudes", people["encargado"])
+    assert "Despacho → Por aprobar" in " ".join(str(i.value) for i in requests_page.info)
+    at = _open("despacho", people["encargado"])
+    approve = [b for b in at.button if b.key == f"approve_{rows[0]['order_id']}"]
+    assert approve and "Pedido " + rows[0]["order_id"].upper() + " · 2 productos" in " ".join(
+        str(m.value) for m in at.markdown)
     approve[0].click().run()
+    assert not at.exception
     assert {r["status"] for r in storage.get_service_requests()} == {"approved"}
 
     queue = _open("despacho", people["operario"])
-    take = [b for b in queue.button if "Tomar todo el pedido" in b.label]
+    take = [b for b in queue.button if b.label == "Tomar pedido y preparar"]
     assert take and "Taller de herramientas" in " ".join(str(i.value) for i in queue.info)
     take[0].click().run()
     assert not queue.exception

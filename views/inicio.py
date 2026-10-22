@@ -14,8 +14,8 @@ from core.ui import (
 
 _ROLE_PITCH = {
     "estudiante": "Solicita y recibe materiales del laboratorio desde un solo lugar.",
-    "operario": "Toma pedidos autorizados y registra cada unidad durante el picking.",
-    "encargado": "Aprueba, autoriza, recibe y entrega solicitudes del laboratorio.",
+    "operario": "Prepara los pedidos aprobados: lee la ruta, confirma la caja y cuenta las unidades.",
+    "encargado": "Aprueba pedidos, entrega lo preparado y verifica las devoluciones.",
     "profesor": "Gestiona el inventario, los préstamos y las reservas de tus cursos.",
     "maestro": "Visión completa del laboratorio: inventario, usuarios, préstamos y alertas.",
 }
@@ -36,7 +36,7 @@ _ACTIONS = [
 
 _ROLE_GUIDE = (
     "el **{cliente}** solicita y confirma que recibió; el **{operario}** toma pedidos y hace el picking; "
-    "el **{supervisor}** aprueba, autoriza operarios, recibe y entrega; el **{admin}** gestiona usuarios y ajustes."
+    "el **{supervisor}** aprueba, entrega y verifica devoluciones; el **{admin}** gestiona usuarios y ajustes."
 )
 
 
@@ -94,6 +94,32 @@ def _alerts(user, items, availability, my_open_loans, overdue) -> list:
     return rows
 
 
+def _work_section(storage, user) -> bool:
+    """«Tu trabajo pendiente»: una tarjeta por etapa con cuántos pedidos esperan y un botón que abre esa pestaña
+    de Despacho. Devuelve si se mostró (solo para quien atiende pedidos)."""
+    try:
+        work = dispatch.work_summary(storage, user)
+    except Exception as e:
+        load_error("No se pudo cargar el trabajo pendiente", e)
+        return False
+    if not work:
+        return False
+    total = sum(row["count"] for row in work)
+    section_title("Tu trabajo pendiente", icon=":material/task_alt:",
+                  caption=(f"{total} pedido(s) esperan algo de ti." if total else "Todo al día: no hay nada esperándote."))
+    pages = st.session_state.get("pages", {})
+    columns = st.columns(len(work))
+    for column, row in zip(columns, work):
+        with column:
+            stat_cards([{"label": row["label"], "value": row["count"], "icon": row["icon"],
+                         "tone": "warning" if row["count"] else "neutral"}])
+            if "despacho" in pages and st.button("Abrir", key=f"work_go_{row['key']}", use_container_width=True,
+                                                 type="primary" if row["count"] else "secondary"):
+                st.session_state["despacho_focus"] = row["tab"]
+                st.switch_page(pages["despacho"])
+    return True
+
+
 def render():
     user = st.session_state.user
     storage = st.session_state.storage
@@ -126,16 +152,11 @@ def render():
             load_error("No se pudieron cargar las estadísticas", e)
             items, my_open_loans, overdue = [], [], []
 
+    # Primero lo que hay que hacer: quien atiende pedidos ve cuántos esperan en cada etapa.
+    _work_section(storage, user)
+
     if operator_only:
-        try:
-            queue, mine = dispatch.queue_for(storage, user), dispatch.my_orders(storage, user)
-        except Exception as e:
-            load_error("No se pudo cargar la cola de despacho", e)
-            queue, mine = [], []
-        stat_cards([
-            {"label": "Pedidos por tomar", "value": len(queue), "icon": "📥", "tone": "info"},
-            {"label": "Mis pedidos", "value": len(mine), "icon": "📦", "tone": "info"},
-        ])
+        pass
     elif not permissions.has_cap(user, permissions.CAP_VIEW_ALL_LOANS):
         my_overdue = len([l for l in my_open_loans if loans_core.is_overdue(l)])
         stat_cards([

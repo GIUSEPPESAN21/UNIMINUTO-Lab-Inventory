@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.22.0 — Despacho profesional y sencillo
+
+Auditoría de usabilidad con datos en todas las etapas y cada rol. Lo que más costaba: el supervisor no veía en Inicio lo
+que tenía pendiente («Sin alertas» con pedidos esperando), aprobaba en otra página (Solicitudes → Gestionar, tercera
+pestaña), las tarjetas de Despacho eran enormes (un pedido de varios productos aparecía partido en tarjetas sueltas) y
+entregar exigía dos clics (recibir y luego entregar).
+
+- **Tu trabajo pendiente** en Inicio: cuántos pedidos esperan en cada etapa para esa persona, con **Abrir** que lleva a
+  la pestaña exacta de Despacho. Contador en el menú: «Despacho (6)». Tablero de etapas arriba de Despacho
+  (`dispatch.work_summary`, `pending_total`).
+- **Por aprobar dentro de Despacho**: aprobar o **rechazar con motivo** el pedido completo, viendo la nota y si alcanza
+  la disponibilidad. Solicitudes → Gestionar queda para servicios y reservas (avisa y lleva a Despacho si hay productos).
+- **Aprobación automática configurable** en Despacho → Ajustes (`service_requests.set_auto_approve`); el secreto
+  `AUTO_APPROVE_PRODUCT_REQUESTS` queda como valor por omisión.
+- **Tarjetas compactas por pedido** en Por aprobar, Por preparar, Mis pedidos y Por entregar: productos juntos con su
+  ruta corta, cliente, «hace N min», fecha requerida y **Urgente** si es para menos de 24 h; orden: urgentes y luego el
+  más antiguo.
+- **Entregar en un clic** (`dispatch.hand_over` / `hand_over_order`): registra revisión + entrega; «Corregir» sigue
+  disponible por producto.
+- **Preparación continua** (`dispatch.next_to_pick`): al terminar un producto se abre el siguiente del mismo pedido.
+- Pestañas con nombres claros (Por aprobar · Por preparar · Mis pedidos · Por entregar · Devoluciones) y textos de rol
+  actualizados. Las devoluciones se cuentan con tres filtros en lugar de recorrer todos los eventos.
+- Pruebas: `tests/test_dispatch_usability.py` y pruebas de vista adaptadas.
+
 ## v1.21.0 — La caja es una casilla, no una lectura
 
 - **Picking:** para dar salida solo hay que **leer la estantería, el piso y el contenedor** (chip NFC o código de barras).

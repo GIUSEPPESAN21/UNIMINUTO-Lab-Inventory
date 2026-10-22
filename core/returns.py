@@ -158,8 +158,10 @@ def pending(storage, wanted: str) -> list:
     """Préstamos abiertos cuya devolución está en la etapa ``wanted``, del más antiguo al más reciente.
     Cada fila es ``{"loan": …, "requested": {…}, "verified": {…}}`` con los detalles registrados."""
     by_loan = {}
-    for event in storage.get_trace_events():
-        if event.get("event_type") in traceability.RETURN_EVENTS and event.get("loan_id"):
+    events = [event for kind in traceability.RETURN_EVENTS            # tres filtros, no recorrer todos los eventos
+              for event in storage.get_trace_events(event_type=kind)]
+    for event in sorted(events, key=lambda row: str(row.get("created_at") or "")):
+        if event.get("loan_id"):
             by_loan.setdefault(event["loan_id"], []).append(event)
     rows = []
     for loan in storage.get_all_loans(status="out"):

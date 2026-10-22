@@ -195,7 +195,7 @@ def test_each_order_shows_route_and_location_and_the_picking_panel_comes_first(l
     assert "Ruta" in text and "Gabinete azul" in text
     html_chunks = [str(e.value) for e in at.markdown]
     panel_at = next(i for i, chunk in enumerate(html_chunks) if "Picking ·" in chunk)
-    queue_at = next(i for i, chunk in enumerate(html_chunks) if "Mis pedidos (" in chunk or "Por tomar (" in chunk)
+    queue_at = next(i for i, chunk in enumerate(html_chunks) if "Por preparar" in chunk)          # tablero de etapas
     assert panel_at < queue_at                                            # el panel va ANTES de las listas
     assert "Etiqueta del producto" in text                           # sin caja ni ruta: se lee la etiqueta
     assert any(b.label == "Confirmar unidades y completar picking" and b.disabled for b in at.button)
@@ -296,7 +296,7 @@ def test_two_orders_of_the_same_product_do_not_collide_on_widget_keys(lab):
         assert dispatch.claim_request(storage, row["id"], people["maestro"])[0]
     at = _open_despacho(people["maestro"])           # el administrador puede tomar y adjuntar fotos
     assert not at.exception
-    assert len([b for b in at.button if "Iniciar picking" in b.label]) == 2
+    assert len([b for b in at.button if b.label == "Preparar"]) == 2
 
 
 # --- confirmación manual con constancia (v1.17) -------------------------------------------------
@@ -356,7 +356,7 @@ def test_one_click_takes_the_order_and_opens_the_picking_panel(lab):
     row, _, _ = service_requests.submit_request(storage, people["estudiante"], "product", CODE, 2)
     assert service_requests.review_request(storage, row["id"], "approved", people["encargado"])[0]
     at = _open_despacho(people["operario"])
-    [b for b in at.button if b.label == "Tomar y empezar picking"][0].click().run()
+    [b for b in at.button if b.label == "Tomar y preparar"][0].click().run()
     assert not at.exception
     assert dispatch.assigned_picker(storage.get_trace_events(request_id=row["id"])) == people["operario"]["id"]
     assert picking.active_request(people["operario"]["id"]) == row["id"]            # el panel queda abierto

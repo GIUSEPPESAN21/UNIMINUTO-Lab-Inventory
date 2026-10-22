@@ -19,10 +19,30 @@ REVIEWER_ROLES = permissions.MANAGER_ROLES
 MAX_ORDER_LINES = 30          # productos distintos en un solo pedido
 
 
-def auto_approve_products() -> bool:
-    return str(safe_secret("AUTO_APPROVE_PRODUCT_REQUESTS", "false") or "").strip().lower() in {
-        "1", "true", "yes", "si", "sí",
-    }
+SETTING_AUTO_APPROVE = "auto_approve_products"
+_YES = {"1", "true", "yes", "si", "sí", "on"}
+
+
+def auto_approve_products(storage=None) -> bool:
+    """¿Los pedidos de productos se aprueban solos? Lo decide el administrador en Despacho → Ajustes; si nunca lo
+    cambió, vale el secreto ``AUTO_APPROVE_PRODUCT_REQUESTS`` (apagado por omisión)."""
+    if storage is not None:
+        try:
+            value = storage.get_setting(SETTING_AUTO_APPROVE, None)
+        except Exception:        # un ajuste ilegible nunca frena una solicitud
+            value = None
+        if value not in (None, ""):
+            return str(value).strip().lower() in _YES
+    return str(safe_secret("AUTO_APPROVE_PRODUCT_REQUESTS", "false") or "").strip().lower() in _YES
+
+
+def set_auto_approve(storage, actor: dict, on: bool):
+    """Activa o apaga la aprobación automática de pedidos de productos (solo el administrador)."""
+    permissions.require_cap(actor, permissions.CAP_DISPATCH_SETTINGS,
+                            "Solo un administrador cambia la aprobación automática.")
+    storage.set_setting(SETTING_AUTO_APPROVE, "1" if on else "0", (actor or {}).get("institutional_email", ""))
+    return True, ("Aprobación automática activada: los pedidos de productos pasan directo a «Por preparar»."
+                  if on else "Aprobación automática apagada: un supervisor aprueba cada pedido.")
 
 
 def validate_request(storage, request_type: str, item_id: str = "", quantity=1,
@@ -86,7 +106,7 @@ def submit_request(storage, user: dict, request_type: str, item_id: str = "", qu
         storage, request_type, item_id, quantity, service_name, description, needed_at
     )
     row = storage.create_service_request(data, user)
-    if request_type == TYPE_PRODUCT and auto_approve_products():
+    if request_type == TYPE_PRODUCT and auto_approve_products(storage):
         row = _auto_approve(storage, row)
     notified, message = email_events.notify_request_created(storage, row, user)
     row["email_notified"], row["email_error"] = notified, "" if notified else message
@@ -150,7 +170,7 @@ def submit_order(storage, user: dict, lines, description: str = "", needed_at=No
             raise ValueError(f"«{name}»: {exc}") from None
     order_id = uuid.uuid4().hex[:8]
     rows = storage.create_service_requests(data, user, order_id)
-    if auto_approve_products():
+    if auto_approve_products(storage):
         rows = [_auto_approve(storage, row) or row for row in rows]
     summary = dict(rows[0], item_name=f"Pedido de {len(rows)} productos: " + ", ".join(
         f"{row.get('item_name')} ×{row.get('quantity')}" for row in rows),

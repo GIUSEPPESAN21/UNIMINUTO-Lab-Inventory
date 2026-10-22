@@ -271,14 +271,30 @@ suyas; el profesor o el administrador registran la devolución de otra persona d
 nombre o la categoría dicen Lego, bloques, armable…, el formulario de edición sugiere activar la casilla. La
 columna nueva `loose_pieces` de `items` se completa sola en las bases antiguas.
 
-### Despacho: tomar, hacer picking, recibir y entregar (🚚 Despacho)
+### Despacho: aprobar, preparar y entregar (🚚 Despacho)
 
-Un pedido de producto recorre: **solicitado → aprobado (y autorizado) → tomado → picking
-completo → recibido → entregado → confirmado por el cliente**. Quien aprueba (supervisor) solo
-decide si se aprueba: **cualquier operario o supervisor** elige en **Por tomar** el pedido que va a
-despachar, sin que nadie le asigne cuáles puede tomar. La **nota del cliente** se ve en Solicitudes,
-en la cola de Despacho y en el panel de picking, para todo el personal. El operario hace el picking leyendo
-**una unidad a la vez** y, al completarlo, el sistema crea **un solo préstamo a nombre del
+**Todo el despacho en un solo lugar, en tres pasos: Aprobar → Preparar → Entregar.**
+
+- **Tu trabajo pendiente.** En **Inicio**, cada persona del laboratorio ve cuántos pedidos esperan algo de ella
+  (Por aprobar, Por preparar, Mis pedidos, Por entregar, Devoluciones) y un botón **Abrir** que lleva directo a esa
+  pestaña. El menú muestra el total: «Despacho (6)». El mismo tablero encabeza la página de Despacho.
+- **Por aprobar** (supervisor): los pedidos de productos se aprueban aquí —ya no en Solicitudes, que queda para
+  servicios y reservas—. Cada tarjeta muestra el pedido completo, la nota del cliente, la disponibilidad de cada producto
+  (🔴 si no alcanza) y **Aprobar** / **Rechazar** con motivo para el cliente. El administrador puede activar la
+  **aprobación automática** en **Despacho → Ajustes** y los pedidos pasan solos a «Por preparar».
+- **Por preparar**: una tarjeta compacta **por pedido** (sus productos juntos, con la ruta corta), los **urgentes primero**
+  (los que se necesitan en menos de 24 h) y luego el que más lleva esperando, con «hace 25 min». **Tomar y preparar**
+  toma el pedido completo y abre la preparación.
+- **Preparación continua**: al confirmar un producto se abre solo el siguiente del mismo pedido (o el siguiente que
+  tengas tomado): «Producto preparado. Sigue: «Pinzas de punta» × 2».
+- **Por entregar** (supervisor): **Entregar al cliente** registra la revisión y la entrega en **un solo clic** (también
+  para todo el pedido). Si algo no cuadra, **Corregir** devuelve un producto al picking o al estante.
+
+Por dentro, un pedido de producto recorre: **solicitado → aprobado → tomado → picking
+completo → recibido → entregado → confirmado por el cliente** (los eventos siguen siendo los mismos para la
+trazabilidad y los reportes). **Cualquier operario o supervisor** elige el pedido que va a
+despachar, sin que nadie le asigne cuáles puede tomar. La **nota del cliente** se ve en la aprobación,
+en la cola y en el panel de preparación, para todo el personal. Al completar la preparación, el sistema crea **un solo préstamo a nombre del
 cliente** (con «despachado por …»: columnas `operator_id`/`operator_name` de `loans`, el
 historial del producto, **Préstamos** y el correo de salida/reingreso). El **supervisor** recibe,
 revisa y entrega; si algo no cuadra, **vuelve al picking** (reutiliza el mismo préstamo: no se

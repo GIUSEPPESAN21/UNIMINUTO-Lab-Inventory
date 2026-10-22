@@ -401,10 +401,24 @@ def _review_order(storage, user: dict, group: dict) -> None:
 
 
 def _render_manage(storage, user: dict) -> None:
-    pending = storage.get_service_requests(status=service_requests.STATUS_PENDING)
-    section_title(f"Solicitudes por revisar ({len(pending)})", icon=":material/fact_check:")
+    # Los pedidos de productos se aprueban en Despacho → Por aprobar (un solo lugar para todo el despacho);
+    # aquí quedan los servicios y las reservas.
+    products = [row for row in storage.get_service_requests(status=service_requests.STATUS_PENDING)
+                if row.get("request_type") == service_requests.TYPE_PRODUCT]
+    if products:
+        c1, c2 = st.columns([3, 1], vertical_alignment="center")
+        c1.info(f"Hay {dispatch.count_orders(products)} pedido(s) de productos por aprobar: se aprueban en "
+                "**Despacho → Por aprobar**.", icon=":material/local_shipping:")
+        pages = st.session_state.get("pages") or {}
+        if "despacho" in pages and c2.button("Ir a aprobar", key="goto_approve", type="primary",
+                                             use_container_width=True):
+            st.session_state["despacho_focus"] = dispatch.TAB_APPROVE
+            st.switch_page(pages["despacho"])
+    pending = [row for row in storage.get_service_requests(status=service_requests.STATUS_PENDING)
+               if row.get("request_type") != service_requests.TYPE_PRODUCT]
+    section_title(f"Servicios por revisar ({len(pending)})", icon=":material/fact_check:")
     if not pending:
-        st.success("No hay solicitudes pendientes.")
+        st.success("No hay servicios pendientes.")
     for group in paginate(service_requests.group_by_order(pending), "requests_pending"):
         if len(group["rows"]) > 1:
             _review_order(storage, user, group)
@@ -434,8 +448,8 @@ def _render_manage(storage, user: dict) -> None:
                     flash(message, "success" if ok else "error", key=_FLASH)
                     st.rerun()
     more_button(len(pending), "requests_pending")
-    st.caption("Al aprobar un producto entra a la cola de Despacho: cualquier operario o supervisor lo puede tomar. "
-               "El préstamo y el descuento de disponibilidad se crean al completar el picking.")
+    st.caption("Al aprobar un servicio, su avance se marca en Trazabilidad. Los pedidos de productos se aprueban en "
+               "Despacho y el préstamo se crea al completar la preparación.")
 
     if permissions.has_cap(user, permissions.CAP_MANAGE_RESERVATIONS):
         st.divider()
