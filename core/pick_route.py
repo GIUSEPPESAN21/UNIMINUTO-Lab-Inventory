@@ -15,6 +15,13 @@ from core import location, permissions
 SETTING_ROUTE_REQUIRED = "picking_route_required"
 _OFF = {"0", "no", "false", "off", "apagado", "n"}
 
+# v1.23 (apagada por omision): hoy la caja se confirma con una casilla ("confirmo que
+# abri la Caja XX...") sin leer su codigo, lo que no distingue abrir la caja correcta de
+# otra del mismo contenedor. Activada, la caja se vuelve un punto mas de la ruta: se lee
+# como estanteria/piso/contenedor y una lectura que no coincide se rechaza (ver checkpoints()).
+SETTING_BOX_READ_REQUIRED = "exigir_lectura_caja"
+_BOX_READ_ON = {"1", "si", "sí", "true", "yes", "on", "activado"}
+
 
 def required(storage) -> bool:
     """¿El picking exige leer la ruta? Sí por omisión; un ajuste ilegible nunca frena el picking."""
@@ -31,6 +38,37 @@ def set_required(storage, actor: dict, on: bool):
     storage.set_setting(SETTING_ROUTE_REQUIRED, "1" if on else "0", (actor or {}).get("institutional_email", ""))
     return True, ("Ruta obligatoria: el picking exige leer estantería, piso, contenedor y caja."
                   if on else "Ruta obligatoria apagada: el picking solo lee las unidades.")
+
+
+def box_read_required(storage) -> bool:
+    """¿La caja se lee (barras o NFC) en vez de confirmarse con una casilla? No por omisión."""
+    try:
+        value = str(storage.get_setting(SETTING_BOX_READ_REQUIRED, "0") or "").strip().lower()
+    except Exception:
+        value = "0"
+    return value in _BOX_READ_ON
+
+
+def enforced(storage) -> bool:
+    """¿Hay algo de la ruta que leer? La ruta obligatoria o, aunque esté apagada, la lectura de la caja."""
+    return required(storage) or box_read_required(storage)
+
+
+def box_read_applies(storage, item_id: str) -> bool:
+    """True si la caja de ``item_id`` se debe LEER: hay caja, tiene etiqueta y ``exigir_lectura_caja`` está activo.
+    Una caja sin etiqueta sigue con su casilla."""
+    if not box_read_required(storage):
+        return False
+    box = box_step(storage, item_id)
+    return bool(box and box.get("label_code"))
+
+
+def set_box_read_required(storage, actor: dict, on: bool):
+    permissions.require_cap(actor, permissions.CAP_DISPATCH_SETTINGS,
+                            "Solo un administrador exige la lectura de la caja.")
+    storage.set_setting(SETTING_BOX_READ_REQUIRED, "1" if on else "0", (actor or {}).get("institutional_email", ""))
+    return True, ("La caja ahora se lee (barras o NFC): una lectura que no coincida con la caja esperada se rechaza."
+                  if on else "La caja vuelve a confirmarse con una casilla, sin leer su código.")
 
 
 def _registered_places(storage, item: dict, parent: dict) -> dict:
@@ -56,11 +94,16 @@ def _route(storage, item_id: str) -> list:
 
 
 def checkpoints(storage, item_id: str) -> list:
-    """Puntos con etiqueta que hay que LEER antes de sacar las unidades, en orden: estantería, piso y contenedor.
-    La caja no se lee (ver ``box_step``) y el último punto es el propio producto. Vacío si el producto no tiene una
-    ruta estructurada (códigos libres) o si no hay etiqueta que leer."""
-    return [point for point in _route(storage, item_id)[:-1]
-            if point.get("label_code") and point.get("key") != "caja"]
+    """Puntos con etiqueta que hay que LEER antes de sacar las unidades, en orden: estantería, piso, contenedor y,
+    con ``exigir_lectura_caja`` activo, también la caja. Por omisión la caja no se lee (ver ``box_step``) y el
+    último punto es el propio producto. Vacío si el producto no tiene una ruta estructurada (códigos libres) o si
+    no hay etiqueta que leer."""
+    points = _route(storage, item_id)[:-1]
+    if box_read_required(storage):
+        if not required(storage):     # ruta apagada: la caja se sigue leyendo (reemplaza su casilla)
+            return [point for point in points if point.get("key") == "caja" and point.get("label_code")]
+        return [point for point in points if point.get("label_code")]
+    return [point for point in points if point.get("label_code") and point.get("key") != "caja"]
 
 
 def box_step(storage, item_id: str):
@@ -98,12 +141,18 @@ def read(storage, request: dict, steps: list, code: str):
         after = state["points"][state["done"] + 1] if state["done"] + 1 < len(state["points"]) else None
         follow = f"Sigue: {hint(after)}." if after else f"Ruta completa. {next_step_text(storage, request)}"
         return True, f"Llegaste a {nxt['title']} · {state['done'] + 1}/{len(state['points'])}. {follow}", nxt
+    from core import reading      # diferido: reading depende de options
+
+    if reading.enabled(storage):
+        return False, reading.route_mismatch(code, nxt), None
     return False, f"Primero confirma la ruta: lee {hint(nxt)}. Se leyó {code}.", None
 
 
 def next_step_text(storage, request: dict) -> str:
     """Qué sigue cuando la ruta está completa."""
     box = box_step(storage, (request or {}).get("item_id"))
+    if box and box_read_required(storage):
+        return f"Ya leíste la {box['title']}: ahora saca las unidades y confírmalas."
     if box:
         return f"Ahora abre la {box['title']}, saca las unidades y marca la casilla de confirmación."
     return "Ahora lee la etiqueta del producto, saca las unidades y confírmalas."

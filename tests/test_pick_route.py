@@ -171,6 +171,67 @@ def test_the_box_checkbox_stays_mandatory_even_if_the_route_reading_is_turned_of
     assert permissions.has_cap(ADMIN, permissions.CAP_DISPATCH_SETTINGS)
 
 
+def test_box_read_required_is_off_by_default_and_admin_only(lab):
+    assert not pick_route.box_read_required(lab)
+    with pytest.raises(PermissionError):
+        pick_route.set_box_read_required(lab, SUPERVISOR, True)
+    assert not pick_route.box_read_required(lab)          # el intento rechazado no cambia nada
+    assert pick_route.set_box_read_required(lab, ADMIN, True)[0] and pick_route.box_read_required(lab)
+    assert pick_route.set_box_read_required(lab, ADMIN, False)[0] and not pick_route.box_read_required(lab)
+
+
+def test_box_read_required_off_by_default_leaves_the_route_unchanged(lab):
+    """Con el ajuste en su valor por defecto (apagado), checkpoints() no incluye la caja: igual que antes."""
+    assert [p["key"] for p in pick_route.checkpoints(lab, ITEM)] == ["estanteria", "piso", "contenedor"]
+    assert not pick_route.box_read_required(lab)
+
+
+def test_box_read_required_turns_the_box_into_a_checkpoint_and_rejects_the_wrong_box(lab):
+    assert pick_route.set_box_read_required(lab, ADMIN, True)[0]
+    assert [p["key"] for p in pick_route.checkpoints(lab, ITEM)] == ["estanteria", "piso", "contenedor", "caja"]
+    request_id = _claimed(lab)
+    for code in (SHELF, FLOOR, CONTAINER):
+        _read(lab, request_id, code)
+    ok, message, _ = _read(lab, request_id, "2-1-01-03-000")        # otra caja del mismo contenedor
+    assert not ok and "2-1-01-02-000" in message and "2-1-01-03-000" in message
+    ok, message, point = _read(lab, request_id, BOX)
+    assert ok and point is not None and "Ruta completa" in message
+    assert [s["key"] for s in picking.route_steps("o1", request_id)] == ["estanteria", "piso", "contenedor", "caja"]
+
+
+def test_box_read_required_skips_the_checkbox_and_records_the_scan(lab):
+    assert pick_route.set_box_read_required(lab, ADMIN, True)[0]
+    request_id = _claimed(lab, ITEM, 2)
+    for code in (SHELF, FLOOR, CONTAINER, BOX):
+        assert _read(lab, request_id, code)[0]
+    ok, message, event = dispatch.confirm_units(lab, request_id, OPERATOR, 2)     # sin casilla: ya se leyó la caja
+    assert ok, message
+    proof = traceability.event_details(event)["box_confirmation"]
+    assert proof["via"] == "scan" and proof["confirmed_by_name"] == "Olga" and proof["box"] == "Caja 02"
+
+
+def test_manual_confirmation_note_stays_optional_by_default(lab):
+    assert not pick_route.box_read_required(lab)
+    request_id = _claimed(lab)
+    for code in (SHELF, FLOOR, CONTAINER):
+        _read(lab, request_id, code)
+    ok, message, _ = dispatch.confirm_manual_picking(lab, request_id, OPERATOR, True)    # sin motivo: sigue igual
+    assert ok, message
+
+
+def test_box_read_required_tightens_manual_confirmation_to_need_a_reason(lab):
+    """exigir_lectura_caja no quita el fallback manual de las unidades, pero le exige un motivo."""
+    assert pick_route.set_box_read_required(lab, ADMIN, True)[0]
+    request_id = _claimed(lab)
+    for code in (SHELF, FLOOR, CONTAINER, BOX):           # la ruta, con la caja incluida, sí hay que leerla
+        assert _read(lab, request_id, code)[0]
+    ok, message, _ = dispatch.confirm_manual_picking(lab, request_id, OPERATOR, True, "")
+    assert not ok and "motivo" in message.lower()
+    ok, message, event = dispatch.confirm_manual_picking(lab, request_id, OPERATOR, True, "pistola sin batería")
+    assert ok, message
+    assert traceability.event_details(event)["manual_confirmation"]["note"] == "pistola sin batería"
+
+
 def test_progress_for_the_panel(lab):
     request_id = _claimed(lab)
     _read(lab, request_id, SHELF)
@@ -228,3 +289,36 @@ def test_the_count_method_cannot_be_used_to_fake_a_label_read(lab):
     assert dispatch.current_readings(OPERATOR, request_id) == []
     with pytest.raises(PermissionError):
         dispatch.confirm_units(lab, request_id, STUDENT, 1, box_confirmed=True)
+
+
+# --- exigir_lectura_caja con la ruta obligatoria apagada ----------------------------------------------------
+
+def test_box_read_required_still_applies_when_the_route_is_turned_off(lab):
+    """Sin ruta obligatoria, exigir_lectura_caja sigue exigiendo leer la caja (antes se registraba una «lectura»
+    de caja que nunca ocurrió)."""
+    assert pick_route.set_required(lab, ADMIN, False)[0]
+    assert pick_route.set_box_read_required(lab, ADMIN, True)[0]
+    assert [p["key"] for p in pick_route.checkpoints(lab, ITEM)] == ["caja"]
+    request_id = _claimed(lab, ITEM, 2)
+    ok, message, _ = dispatch.confirm_units(lab, request_id, OPERATOR, 2)
+    assert not ok and "Caja 02" in message                                   # sin leer la caja no avanza
+    ok, message, _ = _read(lab, request_id, "2-1-01-03-000")                 # otra caja del contenedor
+    assert not ok and BOX in message and "2-1-01-03-000" in message
+    assert _read(lab, request_id, BOX, "nfc")[0]
+    ok, message, event = dispatch.confirm_units(lab, request_id, OPERATOR, 2)
+    assert ok, message
+    proof = traceability.event_details(event)["box_confirmation"]
+    assert proof["via"] == "scan" and proof["read_code"] == BOX and proof["read_method"] == "nfc"
+    assert proof["read_at"]
+
+
+def test_route_off_and_box_read_off_keeps_the_checkbox_as_before(lab):
+    """Valor por defecto de exigir_lectura_caja (apagado) con la ruta apagada: nada que leer, la casilla manda."""
+    assert pick_route.set_required(lab, ADMIN, False)[0]
+    assert not pick_route.enforced(lab)
+    request_id = _claimed(lab, ITEM, 2)
+    ok, message, _ = dispatch.confirm_units(lab, request_id, OPERATOR, 2)
+    assert not ok and "casilla" in message
+    ok, message, event = dispatch.confirm_units(lab, request_id, OPERATOR, 2, box_confirmed=True)
+    assert ok, message
+    assert traceability.event_details(event)["box_confirmation"]["via"] == "checkbox"

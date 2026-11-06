@@ -38,6 +38,12 @@ METHOD_LABELS = {METHOD_NFC: "Chip NFC", METHOD_CODE: "Código"}
 
 MAX_LIST = 500  # tope de codigos guardados por lista en el resumen (la celda del Excel es finita)
 
+# Conteo ciego (v1.23, apagado por omision): mientras el conteo esta abierto, quien
+# cuenta no ve cuanto "deberia haber" (evita que ajuste el conteo a lo esperado).
+# El resumen al cerrar siempre muestra esperado, contado y diferencia: ver close_session.
+SETTING_BLIND_COUNT = "conteo_ciego"
+_BLIND_ON = {"1", "true", "si", "sí", "yes", "on", "activado"}
+
 
 # ---------------------------------------------------------------------------
 # Utilidades
@@ -231,7 +237,7 @@ def session_marks(storage, session_id: str) -> list:
                           "by": event.get("actor_name", ""), "by_id": event.get("actor_id", "")})
     for event in storage.get_trace_events(event_type=traceability.EVENT_COUNT_MARK):
         info = traceability.event_details(event)
-        if info.get("session") == session_id:
+        if info.get("session") == session_id and not info.get("duplicate"):
             try:
                 qty = parse_quantity(info.get("qty"))
             except ValueError:
@@ -241,6 +247,22 @@ def session_marks(storage, session_id: str) -> list:
                           "by": event.get("actor_name", ""), "by_id": event.get("actor_id", "")})
     aware_min = datetime.min.replace(tzinfo=timezone.utc)
     return sorted(marks, key=lambda mark: traceability.to_datetime(mark["at"]) or aware_min)
+
+
+def _mark_qty(event: dict):
+    try:
+        return parse_quantity(traceability.event_details(event).get("qty"))
+    except ValueError:
+        return None
+
+
+def _last_mark(storage, session_id: str, actor: dict):
+    """Última marca real (no repetida) de ``actor`` en ese conteo, o ``None``."""
+    marks = [event for event in storage.get_trace_events(user_id=(actor or {}).get("id", ""),
+                                                         event_type=traceability.EVENT_COUNT_MARK)
+             if traceability.event_details(event).get("session") == session_id
+             and not traceability.event_details(event).get("duplicate")]
+    return marks[-1] if marks else None
 
 
 def record_mark(storage, session: dict, actor: dict, code: str, qty=None, method: str = METHOD_CODE,
@@ -260,6 +282,25 @@ def record_mark(storage, session: dict, actor: dict, code: str, qty=None, method
         return False, str(exc), None
     if method not in METHOD_LABELS:
         method = METHOD_CODE
+    if by_location_enabled(storage):
+        blocked = location_blocked(storage, session, item or storage.get_item(code))
+        if blocked:
+            return False, blocked, None
+    from core import reading      # diferido: reading depende de options
+
+    if reading.enabled(storage):
+        window = reading.window_seconds(storage)
+        last = _last_mark(storage, session["id"], actor)
+        if (last and reading.is_double_read({"code": last.get("item_id"), "at": last.get("created_at")}, code,
+                                            _now(now), window)
+                and _mark_qty(last) == qty):
+            details = {"session": session["id"], "qty": qty, "method": method,
+                       "item_name": (item or {}).get("name", ""), "duplicate": True}
+            event = storage.add_trace_event(_event(traceability.EVENT_COUNT_MARK, actor, details, item_id=code,
+                                                   now=now))
+            seconds = f"{window:g}".replace(".", ",")
+            return True, (f"Lectura repetida ignorada: «{(item or {}).get('name') or code}» llegó dos veces en menos "
+                          f"de {seconds} s."), event
     details = {"session": session["id"], "qty": qty, "method": method, "item_name": (item or {}).get("name", "")}
     event = storage.add_trace_event(_event(traceability.EVENT_COUNT_MARK, actor, details, item_id=code, now=now))
     name = (item or {}).get("name") or code
@@ -337,6 +378,79 @@ def can_adjust(actor: dict) -> bool:
     return permissions.has_cap(actor, permissions.CAP_ADJUST_COUNTS)
 
 
+def blind_count_enabled(storage) -> bool:
+    """¿El conteo ciego está activo? No por omisión; un ajuste ilegible nunca lo activa."""
+    try:
+        value = str(storage.get_setting(SETTING_BLIND_COUNT, "0") or "").strip().lower()
+    except Exception:
+        value = "0"
+    return value in _BLIND_ON
+
+
+def set_blind_count(storage, actor: dict, on: bool):
+    """Activa o apaga el conteo ciego (solo administrador). Devuelve (ok, mensaje)."""
+    permissions.require_cap(actor, permissions.CAP_ADJUST_COUNTS, "Solo un administrador activa el conteo ciego.")
+    storage.set_setting(SETTING_BLIND_COUNT, "1" if on else "0", (actor or {}).get("institutional_email", ""))
+    message = ("Conteo ciego activado: mientras el conteo esté abierto no se muestra la cantidad esperada."
+               if on else "Conteo ciego desactivado: vuelve a mostrarse la cantidad esperada durante el conteo.")
+    return True, message
+
+
+NO_PLACE = "Sin ubicación"
+
+
+def place_of(row: dict, names: dict = None) -> tuple:
+    """(clave, nombre) del lugar donde se cuenta un producto: su contenedor o, si no
+    tiene, la ubicación escrita. Clave "" = sin ubicación."""
+    parent = str((row or {}).get("parent_id") or "").strip()
+    if parent:
+        name = str((names or {}).get(parent) or "").strip()
+        return parent, (f"{name} ({parent})" if name else parent)
+    where = " ".join(str((row or {}).get("location") or "").split())
+    if where:
+        return f"ubicacion:{where.casefold()}", where
+    return "", NO_PLACE
+
+
+def summary_by_location(report: dict, names: dict = None) -> list:
+    """Esperado, contado y diferencia por ubicación a partir de ``progress()``.
+
+    ``expected``, ``counted`` y ``difference`` se calculan sobre los productos con
+    cantidad anotada (difference = counted - expected); ``expected_total`` es lo que
+    el sistema esperaba en el estante para TODOS los productos de esa ubicación."""
+    groups = {}
+    for row in (report or {}).get("rows") or []:
+        key, label = place_of(row, names)
+        group = groups.setdefault(key, {
+            "location": label, "items": 0, "verified": 0, "with_quantity": 0,
+            "expected": 0, "counted": 0, "difference": 0, "expected_total": 0,
+        })
+        available = int(row.get("available") or 0)
+        group["items"] += 1
+        group["expected_total"] += available
+        if row.get("verified"):
+            group["verified"] += 1
+        if row.get("counted") is not None:
+            group["with_quantity"] += 1
+            group["expected"] += available
+            group["counted"] += int(row["counted"])
+            group["difference"] += int(row["counted"]) - available
+    order = sorted(groups, key=lambda key: (key == "", code_order(groups[key]["location"])))
+    return [groups[key] for key in order]
+
+
+def _parent_names(storage, report: dict) -> dict:
+    names = {}
+    for row in (report or {}).get("rows") or []:
+        parent = str(row.get("parent_id") or "")
+        if parent and parent not in names:
+            try:
+                names[parent] = (storage.get_item(parent) or {}).get("name", "")
+            except Exception:  # un nombre que no se lee no impide cerrar
+                names[parent] = ""
+    return names
+
+
 def apply_adjustments(storage, session: dict, actor: dict, rows: list):
     """Ajusta la cantidad total de los productos elegidos para que el estante
     quede como se conto: total = contadas + unidades hoy en prestamo.
@@ -405,6 +519,14 @@ def close_session(storage, session: dict, actor: dict, report: dict, adjusted: l
         "adjusted": list(adjusted or [])[:MAX_LIST],
         "notes": " ".join(str(notes or "").split())[:500],
     }
+    if blind_count_enabled(storage):
+        # Conteo ciego: lo esperado no se mostró mientras se contaba; se congela aquí, al cerrar.
+        details["blind"] = True
+        details["by_location"] = summary_by_location(report, _parent_names(storage, report))[:MAX_LIST]
+        details["snapshot"] = [
+            [row["code"], row.get("available"), row.get("counted")]
+            for row in report.get("rows") or [] if row.get("counted") is not None
+        ][:MAX_LIST]
     event = storage.add_trace_event(_event(traceability.EVENT_COUNT_CLOSED, actor, details, now=now))
     message = (f"Conteo «{details['name']}» cerrado: {details['verified']} de {details['expected']} productos "
                f"verificados, {details['missing_total']} sin verificar")
@@ -422,3 +544,139 @@ def closed_sessions(storage, limit: int = 20) -> list:
         if len(rows) >= limit:
             break
     return rows
+
+
+# ---------------------------------------------------------------------------
+# M6: continuidad y control del conteo por ubicación (opción conteo_por_ubicacion)
+# ---------------------------------------------------------------------------
+#
+# Todo queda en `trace_events` (nada en la memoria de la sesión), así que una recarga o una
+# conexión perdida retoman el conteo tal como estaba:
+# - count_location_done: quien cuenta da por terminada una ubicación (contenedor o ubicación escrita).
+# - count_recount_authorized: un supervisor autoriza, con motivo, volver a contar una ubicación terminada.
+# Una ubicación terminada no acepta marcas ni toques del conteo hasta que se autorice el reconteo.
+
+STATUS_PENDING, STATUS_IN_PROGRESS, STATUS_DONE, STATUS_RECOUNT = "pendiente", "en conteo", "contada", "reconteo"
+
+
+def by_location_enabled(storage) -> bool:
+    from core import options
+
+    return options.enabled(storage, options.COUNT_BY_LOCATION)
+
+
+def _session_events(storage, session_id: str, kind: str) -> list:
+    return [event for event in storage.get_trace_events(event_type=kind)
+            if traceability.event_details(event).get("session") == session_id]
+
+
+def location_states(storage, session_id: str) -> dict:
+    """``{clave: {"done", "done_by", "done_at", "recounts", "authorized_by", "reason"}}`` en orden de hora."""
+    events = (_session_events(storage, session_id, traceability.EVENT_COUNT_LOCATION_DONE)
+              + _session_events(storage, session_id, traceability.EVENT_COUNT_RECOUNT_AUTHORIZED))
+    aware_min = datetime.min.replace(tzinfo=timezone.utc)
+    states = {}
+    for event in sorted(events, key=lambda row: traceability.to_datetime(row.get("created_at")) or aware_min):
+        info = traceability.event_details(event)
+        state = states.setdefault(str(info.get("location") or ""), {
+            "done": False, "done_by": "", "done_at": "", "recounts": 0, "authorized_by": "", "reason": ""})
+        if event.get("event_type") == traceability.EVENT_COUNT_LOCATION_DONE:
+            state.update(done=True, done_by=event.get("actor_name", ""), done_at=event.get("created_at", ""))
+        else:
+            state.update(done=False, authorized_by=event.get("actor_name", ""), reason=info.get("reason", ""))
+            state["recounts"] += 1
+    return states
+
+
+def location_progress(session: dict, items: list, marks: list, states: dict) -> dict:
+    """Ubicaciones del alcance del conteo: contadas, en conteo y pendientes."""
+    scope = (session or {}).get("scope") or {"kind": SCOPE_ALL}
+    names = {str(item.get("id")): item.get("name") or "" for item in items or []}
+    verified = {mark["code"] for mark in marks or []}
+    groups = {}
+    for item in expected_items(items, scope):
+        key, label = place_of(item, names)
+        group = groups.setdefault(key, {"key": key, "location": label, "items": 0, "verified": 0})
+        group["items"] += 1
+        group["verified"] += 1 if str(item.get("id")) in verified else 0
+    rows = []
+    for key in sorted(groups, key=lambda value: (value == "", code_order(groups[value]["location"]))):
+        group, state = groups[key], (states or {}).get(key) or {}
+        if state.get("done"):
+            status = STATUS_DONE
+        elif state.get("recounts"):
+            status = STATUS_RECOUNT
+        else:
+            status = STATUS_IN_PROGRESS if group["verified"] else STATUS_PENDING
+        rows.append({**group, "status": status, "done_by": state.get("done_by", ""),
+                     "done_at": state.get("done_at", ""), "recounts": state.get("recounts", 0)})
+    done = len([row for row in rows if row["status"] == STATUS_DONE])
+    return {"rows": rows, "total": len(rows), "done": done, "pending": len(rows) - done,
+            "ratio": (done / len(rows)) if rows else 0.0}
+
+
+def item_place(storage, item: dict) -> tuple:
+    parent = str((item or {}).get("parent_id") or "")
+    name = ""
+    if parent:
+        try:
+            name = (storage.get_item(parent) or {}).get("name", "")
+        except Exception:
+            name = ""
+    return place_of(item, {parent: name} if parent else None)
+
+
+def location_blocked(storage, session: dict, item: dict) -> str:
+    """Mensaje si ``item`` está en una ubicación ya contada de ``session`` (sin reconteo autorizado); '' si se
+    puede contar o si la opción está apagada."""
+    if not session or not item or not by_location_enabled(storage):
+        return ""
+    key, label = item_place(storage, item)
+    if (location_states(storage, session["id"]).get(key) or {}).get("done"):
+        return (f"«{label}» ya se contó en este conteo. Para volver a contarla, un supervisor debe autorizar el "
+                "reconteo.")
+    return ""
+
+
+def finish_location(storage, session: dict, actor: dict, key: str, label: str = "", now=None):
+    """Da por contada una ubicación del conteo abierto. Devuelve (ok, mensaje, evento)."""
+    if not by_location_enabled(storage):
+        return False, "El conteo por ubicación está apagado.", None
+    if not traceability.is_manager(actor):
+        return False, "Solo un supervisor autorizado o un administrador pueden contar.", None
+    current = open_session(storage)
+    if not session or not current or current["id"] != session.get("id"):
+        return False, "Este conteo ya estaba cerrado.", None
+    if (location_states(storage, session["id"]).get(key or "") or {}).get("done"):
+        return False, f"«{label or key}» ya está contada en este conteo.", None
+    details = {"session": session["id"], "location": key or "", "label": label or NO_PLACE}
+    event = storage.add_trace_event(_event(traceability.EVENT_COUNT_LOCATION_DONE, actor, details, now=now))
+    return True, f"«{label or NO_PLACE}» quedó contada.", event
+
+
+def authorize_recount(storage, session: dict, actor: dict, key: str, label: str = "", reason: str = "", now=None):
+    """Un supervisor autoriza volver a contar una ubicación terminada (con motivo). Devuelve (ok, mensaje, evento)."""
+    if not by_location_enabled(storage):
+        return False, "El conteo por ubicación está apagado.", None
+    if not permissions.has_cap(actor, permissions.CAP_APPROVE):
+        return False, "Solo un supervisor puede autorizar un reconteo.", None
+    reason = " ".join(str(reason or "").split())[:300]
+    if not reason:
+        return False, "Escribe el motivo del reconteo.", None
+    if not session or not (location_states(storage, session["id"]).get(key or "") or {}).get("done"):
+        return False, "Esa ubicación no está contada: se puede seguir contando sin autorización.", None
+    details = {"session": session["id"], "location": key or "", "label": label or NO_PLACE, "reason": reason}
+    event = storage.add_trace_event(_event(traceability.EVENT_COUNT_RECOUNT_AUTHORIZED, actor, details, now=now))
+    return True, f"Reconteo de «{label or NO_PLACE}» autorizado.", event
+
+
+def resume_point(storage, session: dict, actor: dict):
+    """Lo último que ``actor`` verificó en ``session`` (``{"code", "method", "at"}``), para retomar tras recargar;
+    ``None`` si todavía no verificó nada."""
+    if not session or not actor:
+        return None
+    mine = [mark for mark in session_marks(storage, session["id"]) if mark.get("by_id") == actor.get("id")]
+    if not mine:
+        return None
+    last = mine[-1]
+    return {"code": last["code"], "method": last["method"], "at": last["at"]}

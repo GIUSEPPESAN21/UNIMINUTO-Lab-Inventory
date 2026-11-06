@@ -166,6 +166,70 @@ def clear(user_id, request_id) -> None:
         _drop(*_key(user_id, request_id))
 
 
+# --- Registro de lecturas (M3, solo con ``registro_eventos`` activo) -------------------------
+#
+# Cada lectura (correcta, rechazada, repetida o deshecha) se agrega aquí con la hora del servidor
+# y nunca se quita: viaja en la misma escritura que completa, libera o reasigna el pedido.
+
+MAX_LOG = 300             # tope de lecturas anotadas por picking
+LOG_OK, LOG_REJECTED, LOG_DUPLICATE, LOG_UNDONE = "ok", "rechazado", "repetida", "deshecha"
+
+
+def log_read(user_id, request_id, entry: dict, now=None) -> int:
+    """Agrega una lectura al registro del picking y devuelve cuántas hay."""
+    with _lock:
+        log = _entry(user_id, request_id, now).setdefault("log", [])
+        if len(log) < MAX_LOG:
+            log.append(dict(entry))
+        return len(log)
+
+
+def read_log(user_id, request_id) -> list:
+    with _lock:
+        entry = _entries.get(_key(user_id, request_id))
+        return [dict(row) for row in entry.get("log", [])] if entry else []
+
+
+def restart(user_id, request_id, now=None) -> None:
+    """Cierra el panel: descarta lecturas, ruta y fallos del intento, pero conserva el registro de lecturas para
+    guardarlo cuando el pedido se complete o se libere."""
+    with _lock:
+        entry = _entries.get(_key(user_id, request_id))
+        log = list(entry.get("log", [])) if entry else []
+        _drop(*_key(user_id, request_id))
+        if log:
+            _entry(user_id, request_id, now)["log"] = log
+
+
 def size() -> int:
     with _lock:
         return len(_entries)
+
+
+# --- Lectura robusta (M5, solo con ``lectura_robusta`` activo) --------------------------------
+
+def last_read(user_id, request_id):
+    """Última lectura evaluada de ese picking (``{"code", "at"}``) o ``None``."""
+    with _lock:
+        entry = _entries.get(_key(user_id, request_id))
+        return dict(entry["last"]) if entry and entry.get("last") else None
+
+
+def note_read(user_id, request_id, code: str, at: str, now=None) -> None:
+    with _lock:
+        _entry(user_id, request_id, now)["last"] = {"code": code, "at": at}
+
+
+def add_duplicate(user_id, request_id, code: str, method: str, at: str, now=None) -> int:
+    """Guarda una lectura repetida que se ignoró (se registra al completar) y devuelve cuántas hay."""
+    with _lock:
+        duplicates = _entry(user_id, request_id, now).setdefault("duplicates", [])
+        if len(duplicates) < MAX_FAILED:
+            duplicates.append({"code": code, "method": method, "at": at})
+        return len(duplicates)
+
+
+def duplicates(user_id, request_id) -> list:
+    with _lock:
+        entry = _entries.get(_key(user_id, request_id))
+        return [dict(row) for row in entry.get("duplicates", [])] if entry else []

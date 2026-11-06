@@ -13,7 +13,7 @@ import json
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import dispatch, live_data, loans, ludica, permissions, pick_route, picking, returns, service_requests, traceability
+from core import dispatch, event_log, live_data, loans, ludica, options, permissions, pick_route, picking, reading, research_metrics, returns, service_requests, traceability
 from core.ui import (
     card, card_header, empty_state, esc, guard_cap, page_header, persistent_tabs, section_title,
     stat_cards,
@@ -47,18 +47,22 @@ def _order_context(storage, request: dict, key: str, photo: bool = True) -> None
     location_guide.render_location_guide(item, parent, key_prefix=f"dispatch_guide_{key}")
 
 
-def _focus_reading_input(label: str) -> None:
+def _focus_reading_input(label: str, nonce: str = "") -> None:
     """Enfoca el campo del código: la pistola «teclea» donde esté el foco.
 
     Streamlit no tiene ``autofocus`` en ``text_input`` (1.65), así que se pide el
     foco desde un iframe de altura cero (mismo origen que la app, como el puente
-    de cookie de core.session)."""
+    de cookie de core.session). Con ``nonce`` (lectura robusta, M5) el iframe cambia
+    en cada recarga y el foco se vuelve a pedir tras CADA lectura: con el mismo
+    contenido Streamlit no vuelve a montar el iframe."""
     script = (
         "<script>const label = %s; const tries = [0, 150, 500];"
         "tries.forEach(ms => setTimeout(() => {"
         "const box = window.parent.document.querySelector('input[aria-label=' + JSON.stringify(label) + ']');"
         "if (box && window.parent.document.activeElement !== box) box.focus();}, ms));</script>"
     ) % json.dumps(label)
+    if nonce:
+        script += f"<!-- {json.dumps(str(nonce))} -->"
     components.html(script, height=0)
 
 
@@ -382,7 +386,9 @@ def _continue_picking(storage, user: dict, request: dict, message: str) -> str:
 
 
 def _route_steps(route: dict, box_checked: bool = False) -> None:
-    """Ruta obligatoria: estantería, piso y contenedor se leen en orden; la caja es una casilla al final."""
+    """Ruta obligatoria: estantería, piso y contenedor se leen en orden; la caja es una casilla al final, salvo que
+    ``exigir_lectura_caja`` esté activo, en cuyo caso ya es un punto más de ``route["points"]`` que también se lee."""
+    box_is_checkpoint = any(point.get("key") == "caja" for point in route["points"])
     lines = []
     for number, point in enumerate(route["points"]):
         if number < route["done"]:
@@ -391,13 +397,16 @@ def _route_steps(route: dict, box_checked: bool = False) -> None:
             lines.append(f":material/arrow_forward: **{point['title']}** · lee `{point['label_code']}`")
         else:
             lines.append(f":gray[:material/radio_button_unchecked: {point['title']}]")
-    if route.get("box"):
+    if route.get("box") and not box_is_checkpoint:
         lines.append(f":gray[:material/check_box_outline_blank: {route['box']} · no se lee: marca la casilla al sacar "
                      "las unidades]")
     st.markdown("  \n".join(lines))
     if not route["complete"]:
-        st.caption("Lee en orden: estantería y piso (chip NFC o código de barras) y contenedor (chip NFC o barras). "
-                   "La caja no se lee: se confirma con una casilla.")
+        if box_is_checkpoint:
+            st.caption("Lee en orden: estantería, piso, contenedor y caja (chip NFC o código de barras).")
+        else:
+            st.caption("Lee en orden: estantería y piso (chip NFC o código de barras) y contenedor (chip NFC o barras). "
+                       "La caja no se lee: se confirma con una casilla.")
 
 
 @st.fragment(run_every=_DISPATCH_EVERY)
@@ -410,6 +419,7 @@ def _picking_progress(storage, user: dict, request_id: str, needed: int) -> None
     en una caja pide, en lugar de la casilla, leer una vez su etiqueta."""
     readings = dispatch.current_readings(user, request_id)
     route = dispatch.route_progress(storage, user, request_id)
+    box_is_checkpoint = any(point.get("key") == "caja" for point in route["points"])
     if route["required"] or route.get("box"):
         _route_steps(route)
     request = storage.get_service_request(request_id) or {}
@@ -420,12 +430,12 @@ def _picking_progress(storage, user: dict, request_id: str, needed: int) -> None
                     f"({dispatch.METHOD_LABELS.get(readings[0].get('method'), readings[0].get('method'))})")
     elif needs_label and route["complete"]:
         st.markdown(f":material/arrow_forward: **Etiqueta del producto** · lee `{request.get('item_id')}`")
-    elif route["complete"] and route.get("box"):
+    elif route["complete"] and route.get("box") and not box_is_checkpoint:
         st.success("Ruta leída. Abre la caja, saca las unidades y marca la casilla.", icon=":material/route:")
     ready = route["complete"] and (label_read or not needs_label)
     with st.form(f"count_units_{request_id}", clear_on_submit=False):
         box_ok = True
-        if route.get("box"):
+        if route.get("box") and not box_is_checkpoint:
             box_ok = st.checkbox(
                 f"Confirmo que abrí la {route['box']} y saqué las unidades de ahí ({user.get('full_name') or 'yo'})",
                 key=f"box_ok_{request_id}", disabled=not ready,
@@ -442,11 +452,11 @@ def _picking_progress(storage, user: dict, request_id: str, needed: int) -> None
     c1, c2 = st.columns(2)
     if c1.button("Deshacer última", disabled=not (readings or route["done"]), key=f"undo_pick_{request_id}",
                  use_container_width=True):
-        dispatch.undo_reading(user, request_id)
+        dispatch.undo_reading(user, request_id, storage)
         st.rerun()
     if c2.button("Cerrar panel", key=f"close_pick_{request_id}", use_container_width=True,
                  help="Descarta las lecturas de este panel; el pedido sigue tomado."):
-        dispatch.abandon_picking(user, request_id)
+        dispatch.abandon_picking(user, request_id, storage)
         st.rerun()
 
 
@@ -464,8 +474,11 @@ def _picking_panel(storage, user: dict) -> None:
         return
     needed = int(request.get("quantity") or 0)
     with st.container(border=True, key="dispatch_picking_panel"):
+        how = ("Lee estantería, piso, contenedor y caja; las unidades se cuentan"
+               if pick_route.box_read_applies(storage, request.get("item_id"))
+               else "Lee estantería, piso y contenedor; la caja se marca con una casilla y las unidades se cuentan")
         section_title(f"Picking · {request.get('item_name')}", icon=":material/barcode_scanner:",
-                      caption=f"Lee estantería, piso y contenedor; la caja se marca con una casilla y las unidades se cuentan ({needed} en total). "
+                      caption=f"{how} ({needed} en total). "
                           f"{dispatch.scenario_label(storage)}.")
         if str(request.get("description") or "").strip():
             st.info(f"Nota del cliente: {str(request['description']).strip()}", icon=":material/sticky_note_2:")
@@ -476,13 +489,21 @@ def _picking_panel(storage, user: dict) -> None:
         with st.form(f"pick_scan_{request_id}", clear_on_submit=True):
             code = st.text_input("Código leído", placeholder=request.get("item_id"))
             add = st.form_submit_button("Registrar lectura", type="primary", use_container_width=True)
-        _focus_reading_input("Código leído")
+        _focus_reading_input("Código leído", _focus_nonce(storage))
         if add:
             ok, message, _ = dispatch.register_reading(
                 storage, request_id, user, code, dispatch.typed_method(storage))
             _notice(ok, message)
             st.rerun()
         _manual_confirmation(storage, user, request)
+
+
+def _focus_nonce(storage) -> str:
+    """'' sin lectura robusta (igual que antes); con ella, un número nuevo en cada recarga del panel."""
+    if not reading.enabled(storage):
+        return ""
+    st.session_state["pick_focus_nonce"] = int(st.session_state.get("pick_focus_nonce", 0)) + 1
+    return str(st.session_state["pick_focus_nonce"])
 
 
 def _manual_confirmation(storage, user: dict, request: dict) -> None:
@@ -493,7 +514,9 @@ def _manual_confirmation(storage, user: dict, request: dict) -> None:
         st.caption(dispatch.manual_confirmation_message(user, request))
         authorized = st.checkbox("Autorizo esta confirmación manual", key=f"manual_auth_{request_id}",
                                  help="Queda registrada con tu nombre y se distingue de una lectura real.")
-        note = st.text_input("Nota (opcional)", key=f"manual_note_{request_id}",
+        reason_needed = pick_route.box_read_required(storage)
+        note = st.text_input("Motivo (obligatorio)" if reason_needed else "Nota (opcional)",
+                             key=f"manual_note_{request_id}",
                              placeholder="Por qué no se leyó el código")
         if st.button("Confirmar y completar picking", key=f"manual_done_{request_id}", type="primary",
                      disabled=not authorized, use_container_width=True):
@@ -563,12 +586,57 @@ def _reports(storage, user: dict) -> None:
     # Los CSV se generan al pulsar el botón (con miles de eventos tardaban segundos en cada recarga).
     st.download_button("Descargar tiempos CSV", lambda: dispatch.dispatch_csv(storage, user),
                        "tiempos-despacho.csv", "text/csv", use_container_width=True)
+    if event_log.enabled(storage):
+        _event_log_section(storage, user)
+        return
     st.download_button(
         "Descargar eventos de la lúdica (CSV sin datos personales)", lambda: ludica.events_csv(storage, user),
         f"eventos-{ludica.session_id(storage)}.csv", "text/csv", use_container_width=True,
         help="Columnas: sesion_id, timestamp, estacion, tipo_evento, item_codigo, transaccion_id, "
              "usuario_sim, resultado_sistema. Los identificadores van seudonimizados.",
     )
+
+
+def _event_log_section(storage, user: dict) -> None:
+    """Registro de eventos único (M3), por sesión. La hora se guarda en UTC y aquí se muestra en Bogotá."""
+    section_title("Registro de eventos", icon=":material/receipt_long:",
+                  caption="Una fila por hecho (lecturas, reintentos, confirmaciones manuales, cambios de etapa, "
+                          "devoluciones y conteos), ordenadas por la hora del servidor.")
+    current = ludica.session_id(storage)
+    choices = ["Todas"] + sorted(set(event_log.sessions(storage)) | {current})
+    picked = st.selectbox("Sesión de la lúdica", choices, index=choices.index(current), key="event_log_session")
+    session = None if picked == "Todas" else picked
+    st.download_button(
+        "Descargar registro de eventos (CSV sin datos personales)",
+        lambda: event_log.csv_bytes(storage, user, session),
+        f"registro-{picked if session else 'todas'}.csv", "text/csv", use_container_width=True,
+        help="Columnas: " + ", ".join(event_log.COLUMNS) + ". La hora va en UTC (ISO 8601).",
+    )
+    if st.toggle("Ver los últimos eventos", key="event_log_preview"):
+        rows = event_log.rows(storage, session)
+        st.caption(f"{len(rows)} evento(s) · se muestran los 200 más recientes · hora en {event_log.ZONE_LABEL}.")
+        st.dataframe([{"Hora": event_log.bogota_text(row["timestamp"]), **row} for row in rows[-200:]],
+                     use_container_width=True, hide_index=True)
+
+
+def _metrics(storage, user: dict) -> None:
+    """M7: métricas de la lúdica para el administrador (solo lectura), calculadas del registro de eventos."""
+    section_title("Métricas para la investigación", icon=":material/monitoring:",
+                  caption="Solo lectura: se calculan con el registro de eventos y no escriben nada en la base.")
+    if not event_log.enabled(storage):
+        st.info("El registro de eventos está apagado: las métricas usan los eventos que ya existen, sin las lecturas "
+                "correctas ni los reintentos. Actívalo en Ajustes antes de la sesión de la lúdica.")
+    if not st.toggle("Calcular métricas", key="research_metrics_on"):
+        return
+    data = research_metrics.report(storage, user)
+    st.markdown("**Por escenario**")
+    st.dataframe(data["by_scenario"], use_container_width=True, hide_index=True)
+    st.markdown("**Por sesión y escenario**")
+    st.dataframe(data["by_session"], use_container_width=True, hide_index=True)
+    st.download_button("Descargar métricas (CSV)", lambda: research_metrics.csv_bytes(storage, user),
+                       "metricas-ludica.csv", "text/csv", use_container_width=True)
+    st.caption("exactitud_registros = correctos / evaluados · exactitud_lecturas = lecturas correctas / lecturas · "
+               "tiempos en segundos, recalculados del registro (coinciden con Tiempos).")
 
 
 def _settings(storage, user: dict) -> None:
@@ -614,6 +682,18 @@ def _settings(storage, user: dict) -> None:
         _notice(ok, message)
         st.rerun()
 
+    box_read_on = pick_route.box_read_required(storage)
+    box_wanted = st.toggle(
+        "Exigir la lectura del código de la caja (en vez de la casilla)", value=box_read_on,
+        key="pick_route_box_toggle",
+        help="Activado, la caja se lee como un punto más de la ruta y una lectura de otra caja se rechaza. "
+             "La confirmación manual sigue existiendo, pero exige un motivo.")
+    if st.button("Guardar lectura de caja", key="pick_route_box_save", type="primary",
+                 disabled=box_wanted == box_read_on):
+        ok, message = pick_route.set_box_read_required(storage, user, box_wanted)
+        _notice(ok, message)
+        st.rerun()
+
     section_title("Retiro por autoservicio", icon=":material/outbox:",
                   caption="Qué pueden retirar los clientes desde Buscar sin pasar por Despacho. "
                           "El personal que aprueba solicitudes no se ve limitado.")
@@ -628,6 +708,29 @@ def _settings(storage, user: dict) -> None:
         ok, message = loans.set_self_checkout_mode(storage, user, mode)
         _notice(ok, message)
         st.rerun()
+    _research_options(storage, user)
+
+
+def _research_options(storage, user: dict) -> None:
+    """Mejoras opcionales: todas apagadas por omisión (la app funciona como antes) y cada cambio queda registrado."""
+    section_title("Mejoras opcionales para la investigación", icon=":material/science:",
+                  caption="Apagadas por omisión: así la app se comporta como antes. Solo el administrador las cambia.")
+    for key, (title, help_text) in options.FLAGS.items():
+        current = options.enabled(storage, key)
+        wanted = st.toggle(title, value=current, key=f"option_toggle_{key}", help=help_text)
+        if st.button("Guardar", key=f"option_save_{key}", type="primary", disabled=wanted == current):
+            ok, message = options.set_enabled(storage, user, key, wanted)
+            _notice(ok, message)
+            st.rerun()
+        if key == options.ROBUST_READS and current:
+            saved = reading.window_seconds(storage)
+            low, high = reading.WINDOW_RANGE
+            window = st.number_input("Ventana anti doble lectura (segundos)", min_value=low, max_value=high,
+                                     value=float(saved), step=0.1, format="%.1f", key="double_read_window")
+            if st.button("Guardar ventana", key="double_read_window_save", disabled=window == saved):
+                ok, message = reading.set_window(storage, user, window)
+                _notice(ok, message)
+                st.rerun()
 
 
 FOCUS_KEY = "despacho_focus"       # pestaña que debe abrirse (la fija Inicio al pulsar una tarjeta de trabajo)
@@ -678,6 +781,9 @@ def render() -> None:
     if permissions.has_cap(user, permissions.CAP_DISPATCH_REPORTS):
         titles.append("Tiempos")
         renderers.append(_reports)
+    if permissions.has_cap(user, permissions.CAP_DISPATCH_SETTINGS) and research_metrics.enabled(storage):
+        titles.append("Métricas")
+        renderers.append(_metrics)
     if permissions.has_cap(user, permissions.CAP_DISPATCH_SETTINGS):
         titles.append("Ajustes")
         renderers.append(_settings)

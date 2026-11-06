@@ -263,8 +263,10 @@ def plan_transition(request: dict, events: list, actor: dict, event_type: str,
         if failed_scans:
             # Todas las lecturas rechazadas del picking, en UN solo evento y en la
             # misma escritura que el «picking completo».
-            plan["extra_events"].append((traceability.EVENT_ORDER_SCAN_FAILED,
-                                         {"scans": failed_scans, "count": len(failed_scans)}))
+            payload = {"scans": failed_scans, "count": len(failed_scans)}
+            if details.get("read_log"):
+                payload["in_read_log"] = True     # M3: las mismas lecturas ya van, en orden, en read_log
+            plan["extra_events"].append((traceability.EVENT_ORDER_SCAN_FAILED, payload))
     elif event_type == traceability.EVENT_ORDER_DELIVERED:
         if not open_loan:
             return fail("No hay un préstamo abierto de este picking para entregar.")
@@ -610,10 +612,11 @@ def is_urgent(request: dict, now=None, hours: int = 24) -> bool:
 def release_request(storage, request_id: str, actor: dict, reason: str = ""):
     permissions.require_cap(actor, permissions.CAP_RELEASE)
     previous = assigned_picker(storage.get_trace_events(request_id=request_id))
-    result = storage.transition_request(
-        request_id, traceability.EVENT_ORDER_RELEASED, actor,
-        {"picker_id": actor.get("id", ""), "reason": " ".join((reason or "").split())},
-    )
+    details = {"picker_id": actor.get("id", ""), "reason": " ".join((reason or "").split())}
+    log = _pending_log(storage, previous, request_id) if previous else []
+    if log:
+        details["read_log"] = log            # M3: lo leído antes de liberar no se pierde
+    result = storage.transition_request(request_id, traceability.EVENT_ORDER_RELEASED, actor, details)
     if result[0] and previous:
         picking.clear(previous, request_id)  # sus lecturas pendientes ya no valen
     return result
@@ -624,11 +627,12 @@ def reassign_request(storage, request_id: str, actor: dict, picker: dict, reason
     if not picker or picker.get("status") != "active" or picker.get("role") != permissions.ROLE_OPERATOR:
         return False, "Selecciona un operario activo.", None
     previous = assigned_picker(storage.get_trace_events(request_id=request_id))
-    result = storage.transition_request(
-        request_id, traceability.EVENT_ORDER_REASSIGNED, actor,
-        {"picker_id": picker["id"], "picker_name": picker.get("full_name", ""),
-         "reason": " ".join((reason or "").split())},
-    )
+    details = {"picker_id": picker["id"], "picker_name": picker.get("full_name", ""),
+               "reason": " ".join((reason or "").split())}
+    log = _pending_log(storage, previous, request_id) if previous else []
+    if log:
+        details["read_log"] = log
+    result = storage.transition_request(request_id, traceability.EVENT_ORDER_REASSIGNED, actor, details)
     if result[0] and previous:
         picking.clear(previous, request_id)
     return result
@@ -677,27 +681,71 @@ def register_reading(storage, request_id: str, actor: dict, code: str, method: s
     user_id = actor.get("id")
     needed = int(request.get("quantity") or 0)
     current = len(picking.readings(user_id, request_id))      # 0 o 1: la etiqueta de la caja o del producto
-    code = str(code or "").strip()
-    if pick_route.required(storage):
+    from core import reading      # diferido: reading depende de options
+
+    robust = reading.enabled(storage)
+    code = reading.normalize_code(code) if robust else str(code or "").strip()
+    if robust and code:
+        window = reading.window_seconds(storage)
+        moment = now or datetime.now(timezone.utc)
+        if reading.is_double_read(picking.last_read(user_id, request_id), code, moment, window):
+            picking.add_duplicate(user_id, request_id, code, method, _stamp(now))
+            _log_read(storage, actor, request_id, code, method, picking.LOG_DUPLICATE, "doble", now)
+            seconds = f"{window:g}".replace(".", ",")
+            return True, f"Lectura repetida ignorada: {code} llegó dos veces en menos de {seconds} s.", current
+        picking.note_read(user_id, request_id, code, _stamp(now))
+    if pick_route.enforced(storage):
         route = pick_route.read(storage, request, picking.route_steps(user_id, request_id), code)
         if route is not None:
             ok, message, point = route
             if point is not None:
                 picking.add_route_step(user_id, request_id, point["key"], code, method, _stamp(now))
+                _log_read(storage, actor, request_id, code, method, picking.LOG_OK, point["key"], now)
             elif not ok:
                 picking.add_failed(user_id, request_id, code, message, method, _stamp(now))
+                _log_read(storage, actor, request_id, code, method, picking.LOG_REJECTED, "ruta", now)
+            else:
+                _log_read(storage, actor, request_id, code, method, picking.LOG_DUPLICATE, "ruta", now)
             return ok, message, current
     if method == METHOD_COUNT:
         return False, "El conteo es solo para confirmar las unidades que se sacan de la caja.", current
-    ok, message = validate_reading(request, code)
+    if robust and code:
+        ok = reading.same_code(request.get("item_id"), code)
+        message = "Lectura correcta." if ok else reading.product_mismatch(code, request)
+        if ok:
+            code = str(request.get("item_id") or code)    # se guarda el código tal como está en el inventario
+    else:
+        ok, message = validate_reading(request, code)
     if not ok:
         picking.add_failed(user_id, request_id, code, message, method, _stamp(now))
+        _log_read(storage, actor, request_id, code, method, picking.LOG_REJECTED, "producto", now)
         return False, message, current
     follow = f"Ahora cuenta las {needed} unidad(es) que sacas y confírmalas." + (
-        " (La caja no necesita lectura: basta su casilla.)" if pick_route.box_step(storage, request.get("item_id")) else "")
+        " (La caja no necesita lectura: basta su casilla.)"
+        if pick_route.box_step(storage, request.get("item_id"))
+        and not pick_route.box_read_applies(storage, request.get("item_id")) else "")
     if not picking.add_reading_once(user_id, request_id, code, method, _stamp(now)):
+        _log_read(storage, actor, request_id, code, method, picking.LOG_DUPLICATE, "producto", now)
         return True, f"La etiqueta del producto ya estaba leída. {follow}", 1
+    _log_read(storage, actor, request_id, code, method, picking.LOG_OK, "producto", now)
     return True, f"Etiqueta del producto leída ({METHOD_LABELS[method]}). {follow}", 1
+
+
+def _log_read(storage, actor: dict, request_id: str, code: str, method: str, result: str, step: str = "",
+              now=None) -> None:
+    """M3: anota la lectura en el registro del picking (solo con ``registro_eventos`` activo)."""
+    from core import event_log   # diferido: event_log importa este módulo
+
+    if event_log.enabled(storage):
+        picking.log_read(actor.get("id"), request_id,
+                         event_log.read_entry(storage, actor, code, method, result, step, now))
+
+
+def _pending_log(storage, user_id: str, request_id: str) -> list:
+    """Registro de lecturas que debe viajar con la próxima escritura del pedido (vacío con M3 apagado)."""
+    from core import event_log
+
+    return picking.read_log(user_id, request_id) if event_log.enabled(storage) else []
 
 
 def register_active_reading(storage, actor: dict, code: str, method: str, now=None,
@@ -716,13 +764,23 @@ def register_active_reading(storage, actor: dict, code: str, method: str, now=No
         text = reason or "El toque no fue aceptado."
         picking.add_failed(actor.get("id"), request_id, str(code or "").strip(), text,
                            normalize_method(method) or METHOD_NFC, _stamp(now))
+        _log_read(storage, actor, request_id, code, normalize_method(method) or METHOD_NFC, picking.LOG_REJECTED,
+                  "nfc", now)
         return False, text
     ok, message, _ = register_reading(storage, request_id, actor, code, method, now)
     return ok, message
 
 
-def undo_reading(actor: dict, request_id: str) -> int:
+def undo_reading(actor: dict, request_id: str, storage=None) -> int:
+    """Quita la última lectura. Con ``storage`` y ``registro_eventos`` activo, deja constancia de qué se deshizo."""
     permissions.require_cap(actor, permissions.CAP_PICK)
+    if storage is not None:
+        readings = picking.readings(actor.get("id"), request_id)
+        steps = picking.route_steps(actor.get("id"), request_id)
+        target = readings[-1] if readings else (steps[-1] if steps else None)
+        if target:
+            _log_read(storage, actor, request_id, target.get("code"), target.get("method"), picking.LOG_UNDONE,
+                      target.get("key") or "producto")
     return picking.undo_last(actor.get("id"), request_id)
 
 
@@ -730,8 +788,14 @@ def current_readings(actor: dict, request_id: str) -> list:
     return picking.readings(actor.get("id"), request_id)
 
 
-def abandon_picking(actor: dict, request_id: str) -> None:
-    """Cierra el panel de picking y descarta lecturas y fallos pendientes."""
+def abandon_picking(actor: dict, request_id: str, storage=None) -> None:
+    """Cierra el panel de picking y descarta lecturas y fallos pendientes. Con ``storage`` y ``registro_eventos``
+    activo, el registro de lecturas se conserva para guardarlo con el pedido."""
+    from core import event_log
+
+    if storage is not None and event_log.enabled(storage):
+        picking.restart(actor.get("id"), request_id)
+        return
     picking.clear(actor.get("id"), request_id)
 
 
@@ -749,13 +813,21 @@ def complete_picking(storage, request_id: str, actor: dict, readings: list = Non
     now = _stamp()
     label_read = None
     if from_store:
-        # Las unidades que se sacan de la caja no llevan código. Si el producto está en una caja, la caja no se lee:
-        # se marca la casilla de confirmación (quién retiró queda registrado). Si no hay caja, se lee una vez la
-        # etiqueta del producto. Cada unidad queda registrada con el método «conteo».
+        # Las unidades que se sacan de la caja no llevan código. Si el producto está en una caja y no se exige
+        # leerla (exigir_lectura_caja apagado), se marca la casilla de confirmación (queda registrado quién
+        # retiró); si se exige, la caja ya se leyó como un punto más de la ruta (ver pick_route.checkpoints). Si
+        # no hay caja, se lee una vez la etiqueta del producto. Cada unidad queda registrada con el método «conteo».
         stored = picking.readings(actor.get("id"), request_id)
         request = storage.get_service_request(request_id)
         box = pick_route.box_step(storage, (request or {}).get("item_id"))
-        if box is not None and not (extra_details or {}).get("box_confirmation"):
+        box_read = box is not None and pick_route.box_read_applies(storage, (request or {}).get("item_id"))
+        extra_details = dict(extra_details or {})
+        if box_read and "box_confirmation" not in extra_details:
+            proof = _box_scan_proof(storage, request, actor, request_id)
+            if proof is None:
+                return False, f"Lee el código de la {box['title']} antes de confirmar las unidades.", None
+            extra_details["box_confirmation"] = proof
+        if box is not None and not box_read and "box_confirmation" not in extra_details:
             return False, (f"Marca la casilla de la {box['title']}: confirma que abriste la caja y sacaste "
                            "las unidades de ahí."), None
         if box is None and not stored:
@@ -785,6 +857,12 @@ def complete_picking(storage, request_id: str, actor: dict, readings: list = Non
     failed = picking.failed(actor.get("id"), request_id) if from_store else []
     if failed:
         details["failed_scans"] = failed
+    log = _pending_log(storage, actor.get("id"), request_id)
+    if log:
+        details["read_log"] = log
+    duplicates = picking.duplicates(actor.get("id"), request_id) if from_store else []
+    if duplicates:
+        details["duplicate_reads"] = duplicates      # M5: lecturas repetidas que se ignoraron
     result = storage.transition_request(request_id, traceability.EVENT_ORDER_PICKED, actor, details)
     if result[0]:
         picking.clear(actor.get("id"), request_id)
@@ -802,6 +880,19 @@ def box_confirmation(storage, request: dict, actor: dict, via: str = "checkbox")
             "confirmed_by_id": actor.get("id", ""), "confirmed_by_name": actor.get("full_name", ""),
             "confirmed_by_email": actor.get("institutional_email", ""), "units": int((request or {}).get("quantity") or 0),
             "at": _stamp()}
+
+
+def _box_scan_proof(storage, request: dict, actor: dict, request_id: str):
+    """Constancia de la caja LEÍDA (``exigir_lectura_caja``): qué código se leyó, cómo y cuándo. ``None`` si la caja
+    todavía no se leyó en este picking."""
+    scanned = next((step for step in picking.route_steps(actor.get("id"), request_id)
+                    if step.get("key") == "caja"), None)
+    if scanned is None:
+        return None
+    proof = box_confirmation(storage, request, actor, via="scan")
+    proof.update(read_code=scanned.get("code", ""), read_method=scanned.get("method", ""),
+                 read_at=scanned.get("at", ""))
+    return proof
 
 
 def confirm_units(storage, request_id: str, actor: dict, counted, note: str = "", box_confirmed: bool = False):
@@ -832,7 +923,7 @@ def confirm_units(storage, request_id: str, actor: dict, counted, note: str = ""
 
 def route_pending(storage, request_id: str, actor: dict) -> str:
     """Mensaje si todavía falta leer puntos de la ruta (estantería → piso → contenedor → caja); '' si no."""
-    if not pick_route.required(storage):
+    if not pick_route.enforced(storage):
         return ""
     request = storage.get_service_request(request_id)
     if not request:
@@ -848,7 +939,7 @@ def route_progress(storage, actor: dict, request_id: str) -> dict:
     request = storage.get_service_request(request_id)
     box = pick_route.box_step(storage, (request or {}).get("item_id")) if request else None
     extra = {"box": box["title"] if box else "", "label_required": request is not None and box is None}
-    if not request or not pick_route.required(storage):
+    if not request or not pick_route.enforced(storage):
         return {"required": False, "points": [], "done": 0, "next": None, "complete": True, **extra}
     state = pick_route.progress(storage, request.get("item_id"), picking.route_steps(actor.get("id"), request_id))
     return {"required": bool(state["points"]), **state, **extra}
@@ -870,6 +961,10 @@ def confirm_manual_picking(storage, request_id: str, actor: dict, authorized: bo
     permissions.require_cap(actor, permissions.CAP_PICK)
     if not authorized:
         return False, "Marca la casilla de autorización para confirmar sin leer el código.", None
+    note = _clean(note)
+    if pick_route.box_read_required(storage) and not note:
+        return False, ("Escribe el motivo de la confirmación manual: con la lectura de caja exigida, hace falta "
+                       "una razón."), None
     request = storage.get_service_request(request_id)
     events = storage.get_trace_events(request_id=request_id) if request else []
     if (not request or traceability.request_stage_key(request, events) != traceability.STAGE_CLAIMED
@@ -883,9 +978,12 @@ def confirm_manual_picking(storage, request_id: str, actor: dict, authorized: bo
     readings = [{"code": request.get("item_id"), "method": METHOD_MANUAL, "at": now} for _ in range(needed)]
     proof = {"manual_confirmation": {
         "operator_id": actor.get("id", ""), "operator_name": actor.get("full_name", ""),
-        "message": manual_confirmation_message(actor, request), "note": _clean(note), "at": now,
+        "message": manual_confirmation_message(actor, request), "note": note, "at": now,
     }}
-    box_proof = box_confirmation(storage, request, actor, via="manual")
+    box_proof = None
+    if pick_route.box_read_applies(storage, request.get("item_id")):
+        box_proof = _box_scan_proof(storage, request, actor, request_id)
+    box_proof = box_proof or box_confirmation(storage, request, actor, via="manual")
     if box_proof:
         proof["box_confirmation"] = box_proof
     result = complete_picking(storage, request_id, actor, readings=readings, method=METHOD_MANUAL,
@@ -958,6 +1056,9 @@ def confirm_client_receipt(storage, request_id: str, actor: dict):
 
 def dispatch_metrics(storage, actor: dict) -> list:
     permissions.require_cap(actor, permissions.CAP_DISPATCH_REPORTS)
+    from core import event_log   # diferido: event_log importa este módulo
+
+    log_on = event_log.enabled(storage)
     rows = []
     index = storage.get_events_index()          # una sola lectura de eventos, no una por pedido
     for request in storage.get_service_requests():
@@ -969,22 +1070,29 @@ def dispatch_metrics(storage, actor: dict) -> list:
         delivered = traceability.to_datetime((by_type.get(traceability.EVENT_ORDER_DELIVERED) or {}).get("created_at"))
         claimed = traceability.to_datetime((by_type.get(traceability.EVENT_ORDER_CLAIMED) or {}).get("created_at"))
         picked = traceability.to_datetime((by_type.get(traceability.EVENT_ORDER_PICKED) or {}).get("created_at"))
-        rows.append({
+        row = {
             "request_id": request["id"], "stage": traceability.request_stage_key(request, events),
             "requested_at": request.get("created_at", ""),
             "claim_seconds": int((claimed - requested).total_seconds()) if requested and claimed else "",
             "picking_seconds": int((picked - claimed).total_seconds()) if claimed and picked else "",
             "delivery_seconds": int((delivered - requested).total_seconds()) if requested and delivered else "",
             "picker_role": (by_type.get(traceability.EVENT_ORDER_PICKED) or {}).get("actor_role", ""),
-        })
+        }
+        if log_on:
+            row.update(event_log.time_columns(request, events))     # columnas nuevas, siempre al final
+        rows.append(row)
     return rows
 
 
 def dispatch_csv(storage, actor: dict, salt: str = "dispatch-report") -> bytes:
+    from core import event_log
+
     rows = dispatch_metrics(storage, actor)
     output = io.StringIO(newline="")
     fields = ["request_id", "stage", "requested_at", "claim_seconds", "picking_seconds",
               "delivery_seconds", "picker_role"]
+    if event_log.enabled(storage):
+        fields += list(event_log.TIME_COLUMNS)
     writer = csv.DictWriter(output, fieldnames=fields)
     writer.writeheader()
     for row in rows:
