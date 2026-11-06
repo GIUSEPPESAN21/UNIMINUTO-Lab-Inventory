@@ -13,7 +13,7 @@ import json
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import dispatch, event_log, live_data, loans, ludica, options, permissions, pick_route, picking, reading, returns, service_requests, traceability
+from core import dispatch, event_log, live_data, loans, ludica, options, permissions, pick_route, picking, reading, research_metrics, returns, service_requests, traceability
 from core.ui import (
     card, card_header, empty_state, esc, guard_cap, page_header, persistent_tabs, section_title,
     stat_cards,
@@ -619,6 +619,26 @@ def _event_log_section(storage, user: dict) -> None:
                      use_container_width=True, hide_index=True)
 
 
+def _metrics(storage, user: dict) -> None:
+    """M7: métricas de la lúdica para el administrador (solo lectura), calculadas del registro de eventos."""
+    section_title("Métricas para la investigación", icon=":material/monitoring:",
+                  caption="Solo lectura: se calculan con el registro de eventos y no escriben nada en la base.")
+    if not event_log.enabled(storage):
+        st.info("El registro de eventos está apagado: las métricas usan los eventos que ya existen, sin las lecturas "
+                "correctas ni los reintentos. Actívalo en Ajustes antes de la sesión de la lúdica.")
+    if not st.toggle("Calcular métricas", key="research_metrics_on"):
+        return
+    data = research_metrics.report(storage, user)
+    st.markdown("**Por escenario**")
+    st.dataframe(data["by_scenario"], use_container_width=True, hide_index=True)
+    st.markdown("**Por sesión y escenario**")
+    st.dataframe(data["by_session"], use_container_width=True, hide_index=True)
+    st.download_button("Descargar métricas (CSV)", lambda: research_metrics.csv_bytes(storage, user),
+                       "metricas-ludica.csv", "text/csv", use_container_width=True)
+    st.caption("exactitud_registros = correctos / evaluados · exactitud_lecturas = lecturas correctas / lecturas · "
+               "tiempos en segundos, recalculados del registro (coinciden con Tiempos).")
+
+
 def _settings(storage, user: dict) -> None:
     """Ajustes del despacho (administrador): el escenario fija cómo se registra lo escrito."""
     if not permissions.has_cap(user, permissions.CAP_DISPATCH_SETTINGS):
@@ -761,6 +781,9 @@ def render() -> None:
     if permissions.has_cap(user, permissions.CAP_DISPATCH_REPORTS):
         titles.append("Tiempos")
         renderers.append(_reports)
+    if permissions.has_cap(user, permissions.CAP_DISPATCH_SETTINGS) and research_metrics.enabled(storage):
+        titles.append("Métricas")
+        renderers.append(_metrics)
     if permissions.has_cap(user, permissions.CAP_DISPATCH_SETTINGS):
         titles.append("Ajustes")
         renderers.append(_settings)
