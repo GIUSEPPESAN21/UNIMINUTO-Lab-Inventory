@@ -142,6 +142,93 @@ def test_without_session_secret_each_new_tab_still_asks_for_login():
     assert any("Tocaste el chip NFC" in element.value for element in second.info)
 
 
+# --- Streamlit Community Cloud: la cookie no llega al servidor --------------------------------
+
+def _cloud_browser(monkeypatch, token=""):
+    """Community Cloud filtra las cookies de la app antes del servidor (st.context.cookies vacío); solo el
+    navegador las ve. En la primera ejecución de cada pestaña el puente todavía no respondió (None); su
+    respuesta, con la cookie que guarda el navegador, provoca la ejecución siguiente."""
+    def browser():
+        import streamlit as st
+        reads = st.session_state.get("_bridge_reads", 0) + 1
+        st.session_state["_bridge_reads"] = reads
+        return None if reads == 1 else token
+
+    monkeypatch.setattr(session, "cookie_from_context", lambda: "")
+    monkeypatch.setattr(session, "cookie_from_browser", browser)
+
+
+def _browser_answers(tab):
+    """El navegador responde: la app se vuelve a ejecutar en la misma pestaña."""
+    tab.run()
+    assert not tab.exception
+
+
+def test_on_community_cloud_the_browser_cookie_keeps_the_session_between_taps(persistent):
+    _cloud_browser(persistent)                                   # primer toque: el navegador no tiene cookie
+    first = _tab(FIRST)
+    storage = first.session_state["storage"]
+    _seed_items(storage)
+    prof = _user(storage, "prof@uniminuto.edu.co", "profesor")
+    ok, _, count = inventory_count.start_session(storage, prof, "Conteo de prueba")
+    assert ok and _login_screen(first)
+    _login(first, "prof@uniminuto.edu.co")
+    token = first.session_state["session_token"]
+    writes = _cookie_writes(first)
+    assert token and writes and all(json.dumps(token) in write for write in writes)
+    _cloud_browser(persistent, token)                            # el navegador guardó esa cookie
+
+    for code in (SECOND, THIRD):                                 # toques siguientes: pestañas nuevas
+        tab = _tab(code)
+        _browser_answers(tab)
+        assert not _login_screen(tab)
+        assert tab.session_state["user"]["id"] == prof["id"]
+    assert _count_taps(storage, count["id"]) == [FIRST, SECOND, THIRD]
+    assert _logins(storage) == 1
+
+
+def test_a_tab_reads_the_browser_cookie_only_once(persistent):
+    """Tras cerrar sesión, la pestaña no vuelve a leer la cookie: una sesión cerrada no revive."""
+    _cloud_browser(persistent)
+    first = _tab(FIRST)
+    storage = first.session_state["storage"]
+    _seed_items(storage)
+    prof = _user(storage, "prof@uniminuto.edu.co", "profesor")
+    _login(first, "prof@uniminuto.edu.co")
+    _cloud_browser(persistent, first.session_state["session_token"])
+    tab = _tab(SECOND)
+    _browser_answers(tab)
+    assert tab.session_state["user"]["id"] == prof["id"] and tab.session_state["_bridge_reads"] == 2
+    next(b for b in tab.sidebar.button if "Cerrar sesión" in b.label).click().run()
+    assert not tab.exception and _login_screen(tab) and tab.session_state["user"] is None
+    assert tab.session_state["_bridge_reads"] == 2
+
+
+@pytest.mark.parametrize("answer, expected", [
+    (None, None),                          # el navegador aún no respondió
+    ({"token": "abc.def"}, "abc.def"),     # el navegador tiene la cookie
+    ({"token": ""}, ""),                   # no hay cookie
+    ("inesperado", ""),                    # respuesta desconocida: se pide el inicio de sesión
+])
+def test_browser_bridge_answers(monkeypatch, answer, expected):
+    monkeypatch.setattr(session, "_bridge", lambda **kwargs: answer)
+    assert session.cookie_from_browser() == expected
+
+
+def test_a_broken_bridge_falls_back_to_the_login(monkeypatch):
+    def broken(**kwargs):
+        raise RuntimeError("sin componente")
+
+    monkeypatch.setattr(session, "_bridge", broken)
+    assert session.cookie_from_browser() == ""
+
+
+def test_the_bridge_page_ships_with_the_app():
+    page = (session._BRIDGE_DIR / "index.html").read_text(encoding="utf-8")
+    assert "streamlit:componentReady" in page and "streamlit:setComponentValue" in page
+    assert "cookie_name" in page
+
+
 # --- El puente de cookie, aislado ------------------------------------------------------------
 
 def _bridge_script():

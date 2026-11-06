@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Sesión</title>
+</head>
+<body style="margin:0">
+<script>
+// Puente mínimo de sesión (core/session.py, cookie_from_browser).
+// Streamlit Community Cloud filtra las cookies de la app antes de que lleguen al servidor:
+// allí st.context.cookies llega vacío aunque el navegador tenga la cookie de sesión. Este
+// componente la lee con JavaScript y se la entrega a Python una sola vez, como valor del
+// componente. No la envía a ningún otro lugar ni carga nada de Internet.
+(function () {
+  var answered = false;
+
+  function send(type, payload) {
+    var message = { isStreamlitMessage: true, type: type };
+    for (var key in payload) { message[key] = payload[key]; }
+    window.parent.postMessage(message, "*");
+  }
+
+  function readCookie(name) {
+    var pairs = document.cookie ? document.cookie.split(";") : [];
+    for (var i = 0; i < pairs.length; i++) {
+      var pair = pairs[i].replace(/^\s+/, "");
+      var cut = pair.indexOf("=");
+      if (cut > 0 && pair.slice(0, cut) === name) {
+        try { return decodeURIComponent(pair.slice(cut + 1)); } catch (error) { return ""; }
+      }
+    }
+    return "";
+  }
+
+  window.addEventListener("message", function (event) {
+    var data = event.data || {};
+    if (answered || event.source !== window.parent || data.type !== "streamlit:render") { return; }
+    answered = true;
+    var name = (data.args && data.args.cookie_name) || "";
+    send("streamlit:setFrameHeight", { height: 0 });
+    send("streamlit:setComponentValue", { value: { token: name ? readCookie(name) : "" }, dataType: "json" });
+  });
+
+  send("streamlit:componentReady", { apiVersion: 1 });
+})();
+</script>
+</body>
+</html>
