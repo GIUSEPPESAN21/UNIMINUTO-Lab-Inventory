@@ -141,6 +141,10 @@ def read(storage, request: dict, steps: list, code: str):
         after = state["points"][state["done"] + 1] if state["done"] + 1 < len(state["points"]) else None
         follow = f"Sigue: {hint(after)}." if after else f"Ruta completa. {next_step_text(storage, request)}"
         return True, f"Llegaste a {nxt['title']} · {state['done'] + 1}/{len(state['points'])}. {follow}", nxt
+    from core import reading      # diferido: reading depende de options
+
+    if reading.enabled(storage):
+        return False, reading.route_mismatch(code, nxt), None
     return False, f"Primero confirma la ruta: lee {hint(nxt)}. Se leyó {code}.", None
 
 

@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 
 from core import inventory_count as counting
-from core import excel_safe, nfc, permissions, traceability
+from core import excel_safe, nfc, permissions, reading, traceability
 from core.labels import ITEM_TYPE_ICONS, ITEM_TYPE_NAMES
 from core.ui import (
     badge_html, card, card_header, centered_columns, empty_state, feature_cards, guard_cap, more_button,
@@ -218,6 +218,7 @@ def _render_mark_form(storage, user: dict, session: dict, items: list) -> None:
                                           use_container_width=True)
     if not submitted:
         return
+    code = reading.prepare(storage, code)
     item = counting.resolve_code(code, items)
     if not (code or "").strip():
         st.warning("Escribe o escanea el código del producto.")

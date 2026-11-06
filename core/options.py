@@ -15,6 +15,8 @@ from core import permissions
 EVENT_LOG = "registro_eventos"               # M3: registro de eventos único y exportable
 NFC_AUDIT = "nfc_auditoria"                  # M4: contador/UID de NTAG21x, toques rechazados y salud de chips
 NFC_STRICT = "nfc_modo_estricto"             # M4: además, bloquea el toque con contador o UID anómalo
+ROBUST_READS = "lectura_robusta"             # M5: anti doble lectura, normalización y mensajes accionables
+DOUBLE_READ_WINDOW = "ventana_doble_lectura"  # M5: segundos (número, no interruptor; 1,5 por omisión)
 
 # clave -> (título, explicación) para Despacho → Ajustes.
 FLAGS = {
@@ -32,6 +34,11 @@ FLAGS = {
         "Modo estricto NFC",
         "Con la auditoría activa, además bloquea el toque cuando el contador no crece, el UID no es el del chip o "
         "falta el espejo de un chip que ya lo enviaba.",
+    ),
+    ROBUST_READS: (
+        "Lectura robusta (pistola, NFC y teclado)",
+        "Limpia lo que manda la pistola antes de validar (espacios, saltos de línea, prefijos y mayúsculas), "
+        "ignora la misma lectura repetida dentro de la ventana indicada y explica qué se leyó y qué se esperaba.",
     ),
 }
 

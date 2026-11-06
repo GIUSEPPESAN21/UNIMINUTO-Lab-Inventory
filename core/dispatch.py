@@ -681,7 +681,19 @@ def register_reading(storage, request_id: str, actor: dict, code: str, method: s
     user_id = actor.get("id")
     needed = int(request.get("quantity") or 0)
     current = len(picking.readings(user_id, request_id))      # 0 o 1: la etiqueta de la caja o del producto
-    code = str(code or "").strip()
+    from core import reading      # diferido: reading depende de options
+
+    robust = reading.enabled(storage)
+    code = reading.normalize_code(code) if robust else str(code or "").strip()
+    if robust and code:
+        window = reading.window_seconds(storage)
+        moment = now or datetime.now(timezone.utc)
+        if reading.is_double_read(picking.last_read(user_id, request_id), code, moment, window):
+            picking.add_duplicate(user_id, request_id, code, method, _stamp(now))
+            _log_read(storage, actor, request_id, code, method, picking.LOG_DUPLICATE, "doble", now)
+            seconds = f"{window:g}".replace(".", ",")
+            return True, f"Lectura repetida ignorada: {code} llegó dos veces en menos de {seconds} s.", current
+        picking.note_read(user_id, request_id, code, _stamp(now))
     if pick_route.enforced(storage):
         route = pick_route.read(storage, request, picking.route_steps(user_id, request_id), code)
         if route is not None:
@@ -697,7 +709,13 @@ def register_reading(storage, request_id: str, actor: dict, code: str, method: s
             return ok, message, current
     if method == METHOD_COUNT:
         return False, "El conteo es solo para confirmar las unidades que se sacan de la caja.", current
-    ok, message = validate_reading(request, code)
+    if robust and code:
+        ok = reading.same_code(request.get("item_id"), code)
+        message = "Lectura correcta." if ok else reading.product_mismatch(code, request)
+        if ok:
+            code = str(request.get("item_id") or code)    # se guarda el código tal como está en el inventario
+    else:
+        ok, message = validate_reading(request, code)
     if not ok:
         picking.add_failed(user_id, request_id, code, message, method, _stamp(now))
         _log_read(storage, actor, request_id, code, method, picking.LOG_REJECTED, "producto", now)
@@ -842,6 +860,9 @@ def complete_picking(storage, request_id: str, actor: dict, readings: list = Non
     log = _pending_log(storage, actor.get("id"), request_id)
     if log:
         details["read_log"] = log
+    duplicates = picking.duplicates(actor.get("id"), request_id) if from_store else []
+    if duplicates:
+        details["duplicate_reads"] = duplicates      # M5: lecturas repetidas que se ignoraron
     result = storage.transition_request(request_id, traceability.EVENT_ORDER_PICKED, actor, details)
     if result[0]:
         picking.clear(actor.get("id"), request_id)

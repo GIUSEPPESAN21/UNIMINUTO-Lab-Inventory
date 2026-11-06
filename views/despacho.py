@@ -13,7 +13,7 @@ import json
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import dispatch, event_log, live_data, loans, ludica, options, permissions, pick_route, picking, returns, service_requests, traceability
+from core import dispatch, event_log, live_data, loans, ludica, options, permissions, pick_route, picking, reading, returns, service_requests, traceability
 from core.ui import (
     card, card_header, empty_state, esc, guard_cap, page_header, persistent_tabs, section_title,
     stat_cards,
@@ -47,18 +47,22 @@ def _order_context(storage, request: dict, key: str, photo: bool = True) -> None
     location_guide.render_location_guide(item, parent, key_prefix=f"dispatch_guide_{key}")
 
 
-def _focus_reading_input(label: str) -> None:
+def _focus_reading_input(label: str, nonce: str = "") -> None:
     """Enfoca el campo del código: la pistola «teclea» donde esté el foco.
 
     Streamlit no tiene ``autofocus`` en ``text_input`` (1.65), así que se pide el
     foco desde un iframe de altura cero (mismo origen que la app, como el puente
-    de cookie de core.session)."""
+    de cookie de core.session). Con ``nonce`` (lectura robusta, M5) el iframe cambia
+    en cada recarga y el foco se vuelve a pedir tras CADA lectura: con el mismo
+    contenido Streamlit no vuelve a montar el iframe."""
     script = (
         "<script>const label = %s; const tries = [0, 150, 500];"
         "tries.forEach(ms => setTimeout(() => {"
         "const box = window.parent.document.querySelector('input[aria-label=' + JSON.stringify(label) + ']');"
         "if (box && window.parent.document.activeElement !== box) box.focus();}, ms));</script>"
     ) % json.dumps(label)
+    if nonce:
+        script += f"<!-- {json.dumps(str(nonce))} -->"
     components.html(script, height=0)
 
 
@@ -485,13 +489,21 @@ def _picking_panel(storage, user: dict) -> None:
         with st.form(f"pick_scan_{request_id}", clear_on_submit=True):
             code = st.text_input("Código leído", placeholder=request.get("item_id"))
             add = st.form_submit_button("Registrar lectura", type="primary", use_container_width=True)
-        _focus_reading_input("Código leído")
+        _focus_reading_input("Código leído", _focus_nonce(storage))
         if add:
             ok, message, _ = dispatch.register_reading(
                 storage, request_id, user, code, dispatch.typed_method(storage))
             _notice(ok, message)
             st.rerun()
         _manual_confirmation(storage, user, request)
+
+
+def _focus_nonce(storage) -> str:
+    """'' sin lectura robusta (igual que antes); con ella, un número nuevo en cada recarga del panel."""
+    if not reading.enabled(storage):
+        return ""
+    st.session_state["pick_focus_nonce"] = int(st.session_state.get("pick_focus_nonce", 0)) + 1
+    return str(st.session_state["pick_focus_nonce"])
 
 
 def _manual_confirmation(storage, user: dict, request: dict) -> None:
@@ -690,6 +702,15 @@ def _research_options(storage, user: dict) -> None:
             ok, message = options.set_enabled(storage, user, key, wanted)
             _notice(ok, message)
             st.rerun()
+        if key == options.ROBUST_READS and current:
+            saved = reading.window_seconds(storage)
+            low, high = reading.WINDOW_RANGE
+            window = st.number_input("Ventana anti doble lectura (segundos)", min_value=low, max_value=high,
+                                     value=float(saved), step=0.1, format="%.1f", key="double_read_window")
+            if st.button("Guardar ventana", key="double_read_window_save", disabled=window == saved):
+                ok, message = reading.set_window(storage, user, window)
+                _notice(ok, message)
+                st.rerun()
 
 
 FOCUS_KEY = "despacho_focus"       # pestaña que debe abrirse (la fija Inicio al pulsar una tarjeta de trabajo)

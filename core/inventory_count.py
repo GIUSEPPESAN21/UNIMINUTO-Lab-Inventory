@@ -237,7 +237,7 @@ def session_marks(storage, session_id: str) -> list:
                           "by": event.get("actor_name", ""), "by_id": event.get("actor_id", "")})
     for event in storage.get_trace_events(event_type=traceability.EVENT_COUNT_MARK):
         info = traceability.event_details(event)
-        if info.get("session") == session_id:
+        if info.get("session") == session_id and not info.get("duplicate"):
             try:
                 qty = parse_quantity(info.get("qty"))
             except ValueError:
@@ -247,6 +247,22 @@ def session_marks(storage, session_id: str) -> list:
                           "by": event.get("actor_name", ""), "by_id": event.get("actor_id", "")})
     aware_min = datetime.min.replace(tzinfo=timezone.utc)
     return sorted(marks, key=lambda mark: traceability.to_datetime(mark["at"]) or aware_min)
+
+
+def _mark_qty(event: dict):
+    try:
+        return parse_quantity(traceability.event_details(event).get("qty"))
+    except ValueError:
+        return None
+
+
+def _last_mark(storage, session_id: str, actor: dict):
+    """Última marca real (no repetida) de ``actor`` en ese conteo, o ``None``."""
+    marks = [event for event in storage.get_trace_events(user_id=(actor or {}).get("id", ""),
+                                                         event_type=traceability.EVENT_COUNT_MARK)
+             if traceability.event_details(event).get("session") == session_id
+             and not traceability.event_details(event).get("duplicate")]
+    return marks[-1] if marks else None
 
 
 def record_mark(storage, session: dict, actor: dict, code: str, qty=None, method: str = METHOD_CODE,
@@ -266,6 +282,21 @@ def record_mark(storage, session: dict, actor: dict, code: str, qty=None, method
         return False, str(exc), None
     if method not in METHOD_LABELS:
         method = METHOD_CODE
+    from core import reading      # diferido: reading depende de options
+
+    if reading.enabled(storage):
+        window = reading.window_seconds(storage)
+        last = _last_mark(storage, session["id"], actor)
+        if (last and reading.is_double_read({"code": last.get("item_id"), "at": last.get("created_at")}, code,
+                                            _now(now), window)
+                and _mark_qty(last) == qty):
+            details = {"session": session["id"], "qty": qty, "method": method,
+                       "item_name": (item or {}).get("name", ""), "duplicate": True}
+            event = storage.add_trace_event(_event(traceability.EVENT_COUNT_MARK, actor, details, item_id=code,
+                                                   now=now))
+            seconds = f"{window:g}".replace(".", ",")
+            return True, (f"Lectura repetida ignorada: «{(item or {}).get('name') or code}» llegó dos veces en menos "
+                          f"de {seconds} s."), event
     details = {"session": session["id"], "qty": qty, "method": method, "item_name": (item or {}).get("name", "")}
     event = storage.add_trace_event(_event(traceability.EVENT_COUNT_MARK, actor, details, item_id=code, now=now))
     name = (item or {}).get("name") or code
