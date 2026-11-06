@@ -382,7 +382,9 @@ def _continue_picking(storage, user: dict, request: dict, message: str) -> str:
 
 
 def _route_steps(route: dict, box_checked: bool = False) -> None:
-    """Ruta obligatoria: estantería, piso y contenedor se leen en orden; la caja es una casilla al final."""
+    """Ruta obligatoria: estantería, piso y contenedor se leen en orden; la caja es una casilla al final, salvo que
+    ``exigir_lectura_caja`` esté activo, en cuyo caso ya es un punto más de ``route["points"]`` que también se lee."""
+    box_is_checkpoint = any(point.get("key") == "caja" for point in route["points"])
     lines = []
     for number, point in enumerate(route["points"]):
         if number < route["done"]:
@@ -391,13 +393,16 @@ def _route_steps(route: dict, box_checked: bool = False) -> None:
             lines.append(f":material/arrow_forward: **{point['title']}** · lee `{point['label_code']}`")
         else:
             lines.append(f":gray[:material/radio_button_unchecked: {point['title']}]")
-    if route.get("box"):
+    if route.get("box") and not box_is_checkpoint:
         lines.append(f":gray[:material/check_box_outline_blank: {route['box']} · no se lee: marca la casilla al sacar "
                      "las unidades]")
     st.markdown("  \n".join(lines))
     if not route["complete"]:
-        st.caption("Lee en orden: estantería y piso (chip NFC o código de barras) y contenedor (chip NFC o barras). "
-                   "La caja no se lee: se confirma con una casilla.")
+        if box_is_checkpoint:
+            st.caption("Lee en orden: estantería, piso, contenedor y caja (chip NFC o código de barras).")
+        else:
+            st.caption("Lee en orden: estantería y piso (chip NFC o código de barras) y contenedor (chip NFC o barras). "
+                       "La caja no se lee: se confirma con una casilla.")
 
 
 @st.fragment(run_every=_DISPATCH_EVERY)
@@ -410,6 +415,7 @@ def _picking_progress(storage, user: dict, request_id: str, needed: int) -> None
     en una caja pide, en lugar de la casilla, leer una vez su etiqueta."""
     readings = dispatch.current_readings(user, request_id)
     route = dispatch.route_progress(storage, user, request_id)
+    box_is_checkpoint = any(point.get("key") == "caja" for point in route["points"])
     if route["required"] or route.get("box"):
         _route_steps(route)
     request = storage.get_service_request(request_id) or {}
@@ -420,12 +426,12 @@ def _picking_progress(storage, user: dict, request_id: str, needed: int) -> None
                     f"({dispatch.METHOD_LABELS.get(readings[0].get('method'), readings[0].get('method'))})")
     elif needs_label and route["complete"]:
         st.markdown(f":material/arrow_forward: **Etiqueta del producto** · lee `{request.get('item_id')}`")
-    elif route["complete"] and route.get("box"):
+    elif route["complete"] and route.get("box") and not box_is_checkpoint:
         st.success("Ruta leída. Abre la caja, saca las unidades y marca la casilla.", icon=":material/route:")
     ready = route["complete"] and (label_read or not needs_label)
     with st.form(f"count_units_{request_id}", clear_on_submit=False):
         box_ok = True
-        if route.get("box"):
+        if route.get("box") and not box_is_checkpoint:
             box_ok = st.checkbox(
                 f"Confirmo que abrí la {route['box']} y saqué las unidades de ahí ({user.get('full_name') or 'yo'})",
                 key=f"box_ok_{request_id}", disabled=not ready,
@@ -611,6 +617,18 @@ def _settings(storage, user: dict) -> None:
     wanted = st.toggle("Exigir la lectura de la ruta en el picking", value=route_on, key="pick_route_toggle")
     if st.button("Guardar ruta obligatoria", key="pick_route_save", type="primary", disabled=wanted == route_on):
         ok, message = pick_route.set_required(storage, user, wanted)
+        _notice(ok, message)
+        st.rerun()
+
+    box_read_on = pick_route.box_read_required(storage)
+    box_wanted = st.toggle(
+        "Exigir la lectura del código de la caja (en vez de la casilla)", value=box_read_on,
+        key="pick_route_box_toggle",
+        help="Activado, la caja se lee como un punto más de la ruta y una lectura de otra caja se rechaza. "
+             "La confirmación manual sigue existiendo, pero exige un motivo.")
+    if st.button("Guardar lectura de caja", key="pick_route_box_save", type="primary",
+                 disabled=box_wanted == box_read_on):
+        ok, message = pick_route.set_box_read_required(storage, user, box_wanted)
         _notice(ok, message)
         st.rerun()
 

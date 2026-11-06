@@ -749,13 +749,18 @@ def complete_picking(storage, request_id: str, actor: dict, readings: list = Non
     now = _stamp()
     label_read = None
     if from_store:
-        # Las unidades que se sacan de la caja no llevan código. Si el producto está en una caja, la caja no se lee:
-        # se marca la casilla de confirmación (quién retiró queda registrado). Si no hay caja, se lee una vez la
-        # etiqueta del producto. Cada unidad queda registrada con el método «conteo».
+        # Las unidades que se sacan de la caja no llevan código. Si el producto está en una caja y no se exige
+        # leerla (exigir_lectura_caja apagado), se marca la casilla de confirmación (queda registrado quién
+        # retiró); si se exige, la caja ya se leyó como un punto más de la ruta (ver pick_route.checkpoints). Si
+        # no hay caja, se lee una vez la etiqueta del producto. Cada unidad queda registrada con el método «conteo».
         stored = picking.readings(actor.get("id"), request_id)
         request = storage.get_service_request(request_id)
         box = pick_route.box_step(storage, (request or {}).get("item_id"))
-        if box is not None and not (extra_details or {}).get("box_confirmation"):
+        box_read = box is not None and pick_route.box_read_required(storage)
+        extra_details = dict(extra_details or {})
+        if box_read and "box_confirmation" not in extra_details:
+            extra_details["box_confirmation"] = box_confirmation(storage, request, actor, via="scan")
+        if box is not None and not box_read and "box_confirmation" not in extra_details:
             return False, (f"Marca la casilla de la {box['title']}: confirma que abriste la caja y sacaste "
                            "las unidades de ahí."), None
         if box is None and not stored:
@@ -870,6 +875,10 @@ def confirm_manual_picking(storage, request_id: str, actor: dict, authorized: bo
     permissions.require_cap(actor, permissions.CAP_PICK)
     if not authorized:
         return False, "Marca la casilla de autorización para confirmar sin leer el código.", None
+    note = _clean(note)
+    if pick_route.box_read_required(storage) and not note:
+        return False, ("Escribe el motivo de la confirmación manual: con la lectura de caja exigida, hace falta "
+                       "una razón."), None
     request = storage.get_service_request(request_id)
     events = storage.get_trace_events(request_id=request_id) if request else []
     if (not request or traceability.request_stage_key(request, events) != traceability.STAGE_CLAIMED
@@ -883,7 +892,7 @@ def confirm_manual_picking(storage, request_id: str, actor: dict, authorized: bo
     readings = [{"code": request.get("item_id"), "method": METHOD_MANUAL, "at": now} for _ in range(needed)]
     proof = {"manual_confirmation": {
         "operator_id": actor.get("id", ""), "operator_name": actor.get("full_name", ""),
-        "message": manual_confirmation_message(actor, request), "note": _clean(note), "at": now,
+        "message": manual_confirmation_message(actor, request), "note": note, "at": now,
     }}
     box_proof = box_confirmation(storage, request, actor, via="manual")
     if box_proof:
