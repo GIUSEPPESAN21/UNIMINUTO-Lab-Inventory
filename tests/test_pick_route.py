@@ -289,3 +289,36 @@ def test_the_count_method_cannot_be_used_to_fake_a_label_read(lab):
     assert dispatch.current_readings(OPERATOR, request_id) == []
     with pytest.raises(PermissionError):
         dispatch.confirm_units(lab, request_id, STUDENT, 1, box_confirmed=True)
+
+
+# --- exigir_lectura_caja con la ruta obligatoria apagada ----------------------------------------------------
+
+def test_box_read_required_still_applies_when_the_route_is_turned_off(lab):
+    """Sin ruta obligatoria, exigir_lectura_caja sigue exigiendo leer la caja (antes se registraba una «lectura»
+    de caja que nunca ocurrió)."""
+    assert pick_route.set_required(lab, ADMIN, False)[0]
+    assert pick_route.set_box_read_required(lab, ADMIN, True)[0]
+    assert [p["key"] for p in pick_route.checkpoints(lab, ITEM)] == ["caja"]
+    request_id = _claimed(lab, ITEM, 2)
+    ok, message, _ = dispatch.confirm_units(lab, request_id, OPERATOR, 2)
+    assert not ok and "Caja 02" in message                                   # sin leer la caja no avanza
+    ok, message, _ = _read(lab, request_id, "2-1-01-03-000")                 # otra caja del contenedor
+    assert not ok and BOX in message and "2-1-01-03-000" in message
+    assert _read(lab, request_id, BOX, "nfc")[0]
+    ok, message, event = dispatch.confirm_units(lab, request_id, OPERATOR, 2)
+    assert ok, message
+    proof = traceability.event_details(event)["box_confirmation"]
+    assert proof["via"] == "scan" and proof["read_code"] == BOX and proof["read_method"] == "nfc"
+    assert proof["read_at"]
+
+
+def test_route_off_and_box_read_off_keeps_the_checkbox_as_before(lab):
+    """Valor por defecto de exigir_lectura_caja (apagado) con la ruta apagada: nada que leer, la casilla manda."""
+    assert pick_route.set_required(lab, ADMIN, False)[0]
+    assert not pick_route.enforced(lab)
+    request_id = _claimed(lab, ITEM, 2)
+    ok, message, _ = dispatch.confirm_units(lab, request_id, OPERATOR, 2)
+    assert not ok and "casilla" in message
+    ok, message, event = dispatch.confirm_units(lab, request_id, OPERATOR, 2, box_confirmed=True)
+    assert ok, message
+    assert traceability.event_details(event)["box_confirmation"]["via"] == "checkbox"

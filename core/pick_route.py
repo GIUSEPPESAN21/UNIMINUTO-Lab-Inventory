@@ -49,6 +49,20 @@ def box_read_required(storage) -> bool:
     return value in _BOX_READ_ON
 
 
+def enforced(storage) -> bool:
+    """¿Hay algo de la ruta que leer? La ruta obligatoria o, aunque esté apagada, la lectura de la caja."""
+    return required(storage) or box_read_required(storage)
+
+
+def box_read_applies(storage, item_id: str) -> bool:
+    """True si la caja de ``item_id`` se debe LEER: hay caja, tiene etiqueta y ``exigir_lectura_caja`` está activo.
+    Una caja sin etiqueta sigue con su casilla."""
+    if not box_read_required(storage):
+        return False
+    box = box_step(storage, item_id)
+    return bool(box and box.get("label_code"))
+
+
 def set_box_read_required(storage, actor: dict, on: bool):
     permissions.require_cap(actor, permissions.CAP_DISPATCH_SETTINGS,
                             "Solo un administrador exige la lectura de la caja.")
@@ -86,6 +100,8 @@ def checkpoints(storage, item_id: str) -> list:
     no hay etiqueta que leer."""
     points = _route(storage, item_id)[:-1]
     if box_read_required(storage):
+        if not required(storage):     # ruta apagada: la caja se sigue leyendo (reemplaza su casilla)
+            return [point for point in points if point.get("key") == "caja" and point.get("label_code")]
         return [point for point in points if point.get("label_code")]
     return [point for point in points if point.get("label_code") and point.get("key") != "caja"]
 

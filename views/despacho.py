@@ -470,8 +470,11 @@ def _picking_panel(storage, user: dict) -> None:
         return
     needed = int(request.get("quantity") or 0)
     with st.container(border=True, key="dispatch_picking_panel"):
+        how = ("Lee estantería, piso, contenedor y caja; las unidades se cuentan"
+               if pick_route.box_read_applies(storage, request.get("item_id"))
+               else "Lee estantería, piso y contenedor; la caja se marca con una casilla y las unidades se cuentan")
         section_title(f"Picking · {request.get('item_name')}", icon=":material/barcode_scanner:",
-                      caption=f"Lee estantería, piso y contenedor; la caja se marca con una casilla y las unidades se cuentan ({needed} en total). "
+                      caption=f"{how} ({needed} en total). "
                           f"{dispatch.scenario_label(storage)}.")
         if str(request.get("description") or "").strip():
             st.info(f"Nota del cliente: {str(request['description']).strip()}", icon=":material/sticky_note_2:")
@@ -499,7 +502,9 @@ def _manual_confirmation(storage, user: dict, request: dict) -> None:
         st.caption(dispatch.manual_confirmation_message(user, request))
         authorized = st.checkbox("Autorizo esta confirmación manual", key=f"manual_auth_{request_id}",
                                  help="Queda registrada con tu nombre y se distingue de una lectura real.")
-        note = st.text_input("Nota (opcional)", key=f"manual_note_{request_id}",
+        reason_needed = pick_route.box_read_required(storage)
+        note = st.text_input("Motivo (obligatorio)" if reason_needed else "Nota (opcional)",
+                             key=f"manual_note_{request_id}",
                              placeholder="Por qué no se leyó el código")
         if st.button("Confirmar y completar picking", key=f"manual_done_{request_id}", type="primary",
                      disabled=not authorized, use_container_width=True):
