@@ -372,6 +372,74 @@ def _render_count_settings(storage, user: dict) -> None:
             st.rerun()
 
 
+RESUMED_KEY = "nfc_count_resumed"
+
+
+def _resume_focus(storage, user: dict, session: dict) -> None:
+    """M6: tras recargar la página (sesión nueva), vuelve una vez al último producto que esta persona verificó. El
+    estado del conteo está en la base, no en la memoria de la sesión."""
+    if st.session_state.get(RESUMED_KEY) == session["id"]:
+        return
+    st.session_state[RESUMED_KEY] = session["id"]
+    if st.session_state.get(COUNT_FOCUS_KEY):
+        return
+    point = counting.resume_point(storage, session, user)
+    if point:
+        st.session_state[COUNT_FOCUS_KEY] = {
+            "code": point["code"], "method": point["method"], "tone": "info",
+            "message": f"Conteo retomado: tu última lectura fue {point['code']} a las "
+                       f"{traceability.fmt_local(point['at'], time_only=True)}.",
+        }
+
+
+def _render_locations(storage, user: dict, session: dict, items: list) -> None:
+    """M6: avance por ubicación del alcance, terminar una ubicación y autorizar reconteos."""
+    marks = counting.session_marks(storage, session["id"])
+    states = counting.location_states(storage, session["id"])
+    progress = counting.location_progress(session, items, marks, states)
+    if not progress["rows"]:
+        return
+    section_title("Avance por ubicación", icon=":material/grid_view:",
+                  caption=f"{counting.describe_scope(session['scope'])}: ubicaciones contadas y pendientes.")
+    stat_cards([
+        {"label": "Ubicaciones", "value": progress["total"], "icon": "📍"},
+        {"label": "Contadas", "value": progress["done"], "icon": "✅", "tone": "success"},
+        {"label": "Pendientes", "value": progress["pending"], "icon": "⏳",
+         "tone": "warning" if progress["pending"] else "success"},
+    ])
+    st.progress(progress["ratio"], text=f"{progress['done']} de {progress['total']} ubicaciones contadas")
+    st.dataframe(pd.DataFrame([{
+        "Ubicación": row["location"], "Productos": row["items"], "Verificados": row["verified"],
+        "Estado": row["status"], "Contada por": row["done_by"], "Reconteos": row["recounts"],
+    } for row in progress["rows"]]), hide_index=True, use_container_width=True)
+    open_rows = [row for row in progress["rows"] if row["status"] != counting.STATUS_DONE]
+    done_rows = [row for row in progress["rows"] if row["status"] == counting.STATUS_DONE]
+    if open_rows:
+        with st.form("nfc_count_location_done"):
+            picked = st.selectbox("Ubicación terminada", range(len(open_rows)),
+                                  format_func=lambda index: open_rows[index]["location"])
+            submitted = st.form_submit_button(":material/task_alt: Marcar ubicación como contada",
+                                              use_container_width=True)
+        if submitted:
+            row = open_rows[picked]
+            ok, message, _ = counting.finish_location(storage, session, user, row["key"], row["location"])
+            _notice(ok, message)
+            st.rerun()
+    if done_rows and permissions.has_cap(user, permissions.CAP_APPROVE):
+        with st.expander(":material/restart_alt: Autorizar un reconteo (supervisor)"):
+            with st.form("nfc_count_recount"):
+                picked = st.selectbox("Ubicación contada", range(len(done_rows)),
+                                      format_func=lambda index: done_rows[index]["location"])
+                reason = st.text_input("Motivo del reconteo (obligatorio)", max_chars=300)
+                submitted = st.form_submit_button("Autorizar reconteo", use_container_width=True)
+            if submitted:
+                row = done_rows[picked]
+                ok, message, _ = counting.authorize_recount(storage, session, user, row["key"], row["location"],
+                                                            reason)
+                _notice(ok, message)
+                st.rerun()
+
+
 def _render_count(storage, user: dict) -> None:
     _show_notice()
     _render_count_settings(storage, user)
@@ -386,14 +454,19 @@ def _render_count(storage, user: dict) -> None:
     report = counting.progress(session, items, counting.session_marks(storage, session["id"]),
                                storage.get_availability_map())
     reveal_expected = not counting.blind_count_enabled(storage)
+    by_location = counting.by_location_enabled(storage)
     section_title(f"Conteo abierto: {session['name']}", icon=":material/fact_check:",
                   caption=f"{counting.describe_scope(session['scope'])} · abierto por {session['started_by'] or '—'} "
                           f"el {traceability.fmt_local(session['started_at'])}")
+    if by_location:
+        _resume_focus(storage, user, session)
     _render_focus(storage, user, session, items, report, reveal_expected=reveal_expected)
     st.caption(":material/nfc: Toca el chip NFC de cada producto con el teléfono: queda verificado aquí y esta "
                f"lista se actualiza sola cada {AUTO_REFRESH_SECONDS} s (también con los toques de otros teléfonos).")
     _render_mark_form(storage, user, session, items)
     _live_report(session["id"])
+    if by_location:
+        _render_locations(storage, user, session, items)
     _render_close(storage, user, session, report)
 
 

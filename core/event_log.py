@@ -56,6 +56,7 @@ _STAGE_EVENTS = traceability.DISPATCH_LIFECYCLE_EVENTS - {traceability.EVENT_ORD
 _OK_EVENTS = frozenset({
     traceability.EVENT_NFC_TAP, traceability.EVENT_PICKED_UP, traceability.EVENT_ROUTE_VERIFIED,
     traceability.EVENT_COUNT_STARTED, traceability.EVENT_COUNT_MARK, traceability.EVENT_COUNT_CLOSED,
+    traceability.EVENT_COUNT_LOCATION_DONE, traceability.EVENT_COUNT_RECOUNT_AUTHORIZED,
     *traceability.RETURN_EVENTS, *traceability.PIECE_EVENTS,
 })
 _REJECTED_EVENTS = frozenset({traceability.EVENT_NFC_TAP_REJECTED})   # eventos que son en sí un intento rechazado

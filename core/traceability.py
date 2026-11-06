@@ -220,6 +220,13 @@ EVENT_CAPABILITIES.update({
 EVENT_NFC_TAP_REJECTED = "nfc_tap_rejected"
 EVENT_TYPES = EVENT_TYPES + (EVENT_NFC_TAP_REJECTED,)
 EVENT_LABELS.update({EVENT_NFC_TAP_REJECTED: "Toque de chip NFC rechazado"})
+# Conteo por ubicación (core/inventory_count.py, opción conteo_por_ubicacion): una ubicación terminada no se vuelve
+# a contar en el mismo conteo salvo que un supervisor autorice el reconteo.
+EVENT_COUNT_LOCATION_DONE = "count_location_done"
+EVENT_COUNT_RECOUNT_AUTHORIZED = "count_recount_authorized"
+EVENT_TYPES = EVENT_TYPES + (EVENT_COUNT_LOCATION_DONE, EVENT_COUNT_RECOUNT_AUTHORIZED)
+EVENT_LABELS.update({EVENT_COUNT_LOCATION_DONE: "Ubicación contada",
+                     EVENT_COUNT_RECOUNT_AUTHORIZED: "Reconteo autorizado"})
 PHOTO_KIND_REGISTRO = "registro"
 PHOTO_KIND_ESTADO = "estado"
 PHOTO_KIND_INVENTARIO = "inventario"

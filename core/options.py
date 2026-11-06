@@ -17,6 +17,7 @@ NFC_AUDIT = "nfc_auditoria"                  # M4: contador/UID de NTAG21x, toqu
 NFC_STRICT = "nfc_modo_estricto"             # M4: además, bloquea el toque con contador o UID anómalo
 ROBUST_READS = "lectura_robusta"             # M5: anti doble lectura, normalización y mensajes accionables
 DOUBLE_READ_WINDOW = "ventana_doble_lectura"  # M5: segundos (número, no interruptor; 1,5 por omisión)
+COUNT_BY_LOCATION = "conteo_por_ubicacion"   # M6: continuidad y control del conteo por ubicación
 
 # clave -> (título, explicación) para Despacho → Ajustes.
 FLAGS = {
@@ -39,6 +40,11 @@ FLAGS = {
         "Lectura robusta (pistola, NFC y teclado)",
         "Limpia lo que manda la pistola antes de validar (espacios, saltos de línea, prefijos y mayúsculas), "
         "ignora la misma lectura repetida dentro de la ventana indicada y explica qué se leyó y qué se esperaba.",
+    ),
+    COUNT_BY_LOCATION: (
+        "Conteo por ubicación (inventario con el teléfono)",
+        "Muestra el avance por ubicación (contadas y pendientes), retoma el conteo tras recargar la página y no "
+        "deja contar dos veces una ubicación terminada salvo que un supervisor autorice el reconteo.",
     ),
 }
 

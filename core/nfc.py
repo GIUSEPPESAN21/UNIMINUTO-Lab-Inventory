@@ -631,6 +631,10 @@ def _apply_tap(storage, user: dict, code: str, item: dict, signed: bool, outcome
     manager = traceability.is_manager(user)
     session = inventory_count.open_session(storage) if manager else None
     if session:
+        blocked = inventory_count.location_blocked(storage, session, item)      # M6: '' con la opción apagada
+        if blocked:
+            return {**outcome, "tone": "warning", "target": TARGET_COUNT, "count_session": session["id"],
+                    "message": blocked}
         event, duplicate = record_tap(storage, user, code, item, signed, count_session=session["id"], now=now,
                                       extra=extra or None)
         message = f"«{name}» quedó verificado en el conteo «{session['name']}»"
