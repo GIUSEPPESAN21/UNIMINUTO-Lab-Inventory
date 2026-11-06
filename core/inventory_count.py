@@ -361,6 +361,61 @@ def set_blind_count(storage, actor: dict, on: bool):
     return True, message
 
 
+NO_PLACE = "Sin ubicación"
+
+
+def place_of(row: dict, names: dict = None) -> tuple:
+    """(clave, nombre) del lugar donde se cuenta un producto: su contenedor o, si no
+    tiene, la ubicación escrita. Clave "" = sin ubicación."""
+    parent = str((row or {}).get("parent_id") or "").strip()
+    if parent:
+        name = str((names or {}).get(parent) or "").strip()
+        return parent, (f"{name} ({parent})" if name else parent)
+    where = " ".join(str((row or {}).get("location") or "").split())
+    if where:
+        return f"ubicacion:{where.casefold()}", where
+    return "", NO_PLACE
+
+
+def summary_by_location(report: dict, names: dict = None) -> list:
+    """Esperado, contado y diferencia por ubicación a partir de ``progress()``.
+
+    ``expected``, ``counted`` y ``difference`` se calculan sobre los productos con
+    cantidad anotada (difference = counted - expected); ``expected_total`` es lo que
+    el sistema esperaba en el estante para TODOS los productos de esa ubicación."""
+    groups = {}
+    for row in (report or {}).get("rows") or []:
+        key, label = place_of(row, names)
+        group = groups.setdefault(key, {
+            "location": label, "items": 0, "verified": 0, "with_quantity": 0,
+            "expected": 0, "counted": 0, "difference": 0, "expected_total": 0,
+        })
+        available = int(row.get("available") or 0)
+        group["items"] += 1
+        group["expected_total"] += available
+        if row.get("verified"):
+            group["verified"] += 1
+        if row.get("counted") is not None:
+            group["with_quantity"] += 1
+            group["expected"] += available
+            group["counted"] += int(row["counted"])
+            group["difference"] += int(row["counted"]) - available
+    order = sorted(groups, key=lambda key: (key == "", code_order(groups[key]["location"])))
+    return [groups[key] for key in order]
+
+
+def _parent_names(storage, report: dict) -> dict:
+    names = {}
+    for row in (report or {}).get("rows") or []:
+        parent = str(row.get("parent_id") or "")
+        if parent and parent not in names:
+            try:
+                names[parent] = (storage.get_item(parent) or {}).get("name", "")
+            except Exception:  # un nombre que no se lee no impide cerrar
+                names[parent] = ""
+    return names
+
+
 def apply_adjustments(storage, session: dict, actor: dict, rows: list):
     """Ajusta la cantidad total de los productos elegidos para que el estante
     quede como se conto: total = contadas + unidades hoy en prestamo.
@@ -429,6 +484,14 @@ def close_session(storage, session: dict, actor: dict, report: dict, adjusted: l
         "adjusted": list(adjusted or [])[:MAX_LIST],
         "notes": " ".join(str(notes or "").split())[:500],
     }
+    if blind_count_enabled(storage):
+        # Conteo ciego: lo esperado no se mostró mientras se contaba; se congela aquí, al cerrar.
+        details["blind"] = True
+        details["by_location"] = summary_by_location(report, _parent_names(storage, report))[:MAX_LIST]
+        details["snapshot"] = [
+            [row["code"], row.get("available"), row.get("counted")]
+            for row in report.get("rows") or [] if row.get("counted") is not None
+        ][:MAX_LIST]
     event = storage.add_trace_event(_event(traceability.EVENT_COUNT_CLOSED, actor, details, now=now))
     message = (f"Conteo «{details['name']}» cerrado: {details['verified']} de {details['expected']} productos "
                f"verificados, {details['missing_total']} sin verificar")

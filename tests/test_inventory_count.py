@@ -278,3 +278,54 @@ def test_close_records_the_adjustments(lab):
     ok, message, event = counting.close_session(storage, session, master, _report(lab, session), adjusted)
     assert ok and "1 cantidad(es) ajustada(s)" in message
     assert traceability.event_details(event)["adjusted"] == adjusted
+
+
+# --- Conteo ciego: lo esperado se congela al cerrar, por ubicación ------------------
+
+LEGACY_CLOSE_KEYS = {"session", "name", "scope", "started_at", "started_by", "expected", "verified", "counted",
+                     "nfc", "missing_total", "missing", "differences", "extra", "adjusted", "notes"}
+
+
+def test_summary_by_location_groups_expected_counted_and_difference(lab):
+    storage, prof = lab["storage"], lab["prof"]
+    _, _, session = counting.start_session(storage, prof, "Todo", now=NOW)
+    counting.record_mark(storage, session, prof, "2-1-01-01-001", 4, now=NOW)      # esperado 5 → -1
+    counting.record_mark(storage, session, prof, "2-1-01-01-002", 2, now=NOW)      # esperado 2 → 0
+    counting.record_mark(storage, session, prof, "3-2-04-01-001", None, now=NOW)   # verificado sin cantidad
+    rows = counting.summary_by_location(_report(lab, session), {"2-1-01-00-000": "Electrónica"})
+    electronics = next(r for r in rows if r["location"] == "Electrónica (2-1-01-00-000)")
+    assert electronics == {"location": "Electrónica (2-1-01-00-000)", "items": 2, "verified": 2,
+                           "with_quantity": 2, "expected": 7, "counted": 6, "difference": -1,
+                           "expected_total": 7}
+    lego = next(r for r in rows if r["location"] == "3-2-04-00-000")
+    assert lego["verified"] == 1 and lego["with_quantity"] == 0 and lego["difference"] == 0
+    assert lego["expected"] == 0 and lego["expected_total"] == 40
+    assert rows[-1]["location"] == counting.NO_PLACE        # el microscopio no tiene contenedor ni ubicación
+
+
+def test_summary_by_location_of_an_empty_report():
+    assert counting.summary_by_location({}) == []
+    assert counting.summary_by_location(None) == []
+
+
+def test_blind_close_freezes_expected_by_location(lab):
+    storage, prof, master = lab["storage"], lab["prof"], lab["master"]
+    counting.set_blind_count(storage, master, True)
+    _, _, session = counting.start_session(storage, prof, "Ciego", now=NOW)
+    counting.record_mark(storage, session, prof, "2-1-01-01-001", 4, now=NOW)
+    ok, _, event = counting.close_session(storage, session, prof, _report(lab, session))
+    details = traceability.event_details(event)
+    assert ok and details["blind"] is True
+    place = next(r for r in details["by_location"] if r["location"].startswith("Electrónica"))
+    assert (place["expected"], place["counted"], place["difference"]) == (5, 4, -1)
+    assert details["snapshot"] == [["2-1-01-01-001", 5, 4]]
+    assert counting.closed_sessions(storage)[0]["by_location"] == details["by_location"]
+
+
+def test_close_with_blind_count_off_keeps_the_same_summary(lab):
+    """Valor por defecto (apagado): el resumen guardado tiene exactamente las mismas claves que antes."""
+    storage, prof = lab["storage"], lab["prof"]
+    _, _, session = counting.start_session(storage, prof, "Normal", now=NOW)
+    counting.record_mark(storage, session, prof, "2-1-01-01-001", 4, now=NOW)
+    ok, _, event = counting.close_session(storage, session, prof, _report(lab, session))
+    assert ok and set(traceability.event_details(event)) == LEGACY_CLOSE_KEYS

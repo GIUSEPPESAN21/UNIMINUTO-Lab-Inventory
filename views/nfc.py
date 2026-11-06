@@ -139,6 +139,16 @@ def _render_history(storage) -> None:
                 if row.get("adjusted"):
                     st.markdown("**Cantidades ajustadas**: " + ", ".join(
                         f"{adj.get('code')} ({adj.get('from')} → {adj.get('to')})" for adj in row["adjusted"]))
+                if row.get("by_location"):
+                    st.markdown("**Resumen por ubicación** (conteo ciego: lo esperado se fijó al cerrar)")
+                    st.dataframe(pd.DataFrame([{
+                        "Ubicación": place.get("location"), "Productos": place.get("items"),
+                        "Verificados": place.get("verified"), "Con cantidad": place.get("with_quantity"),
+                        "Esperado": place.get("expected"), "Contado": place.get("counted"),
+                        "Diferencia": place.get("difference"), "Esperado total": place.get("expected_total"),
+                    } for place in row["by_location"]]), hide_index=True, use_container_width=True)
+                    st.caption("Esperado, Contado y Diferencia suman los productos con cantidad anotada; "
+                               "«Esperado total» incluye todos los productos de la ubicación.")
                 if row.get("extra"):
                     st.caption("Verificados fuera del alcance: " + ", ".join(row["extra"]))
     more_button(len(sessions), "nfc_history", 6)
@@ -294,13 +304,22 @@ def _render_close(storage, user: dict, session: dict, report: dict) -> None:
                    "inventario no cambian, salvo los ajustes que un administrador marque y confirme aquí.")
         adjustable = counting.can_adjust(user)
         differences = [row for row in report["differences"] if row["counted"] is not None]
-        if differences and not adjustable:
+        blind = counting.blind_count_enabled(storage)
+        reveal = True
+        if blind:
+            # Conteo ciego: ni las diferencias ni lo esperado llegan al navegador mientras el conteo está abierto,
+            # salvo que el administrador lo pida para ajustar al cerrar.
+            st.caption(":material/visibility_off: Conteo ciego: lo esperado y las diferencias se guardan en el "
+                       "resumen al cerrar.")
+            reveal = adjustable and st.toggle("Mostrar lo esperado para ajustar cantidades al cerrar",
+                                              key="nfc_count_reveal_adjust")
+        if differences and not adjustable and not blind:
             st.info(f"Hay {len(differences)} diferencia(s) entre lo contado y el sistema. Quedarán en el resumen; "
                     "solo un administrador puede ajustar las cantidades.")
         with st.form("nfc_count_close"):
             edited = None
             confirm = False
-            if differences and adjustable:
+            if differences and adjustable and reveal:
                 st.markdown("**Ajustes de cantidad** (marca solo los que quieras aplicar)")
                 table = pd.DataFrame([{
                     "Aplicar": False, "Código": row["code"], "Producto": row["name"], "Contadas": row["counted"],
