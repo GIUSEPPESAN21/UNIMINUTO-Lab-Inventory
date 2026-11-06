@@ -311,7 +311,8 @@ def _emit_cookie(command: dict) -> None:
     max_age = "; Max-Age=0" if clear else ""
     html = f"""<script>
 const name={name_js}; const value={value_js};
-const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+// Este script corre en un iframe about:srcdoc: el protocolo real es el de la página de la app.
+const secure = window.parent.location.protocol === 'https:' ? '; Secure' : '';
 window.parent.document.cookie = `${{name}}=${{encodeURIComponent(value)}}; Path=/; SameSite=Lax${{secure}}{max_age}`;
 </script>"""
     components.html(html, width=0, height=0)

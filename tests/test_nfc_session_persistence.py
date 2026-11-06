@@ -271,3 +271,12 @@ def test_clearing_the_cookie_is_sent_once():
     assert len(writes) == 1 and "Max-Age=0" in writes[0]
     at.run()
     assert _cookie_writes(at) == []
+
+
+def test_secure_follows_the_app_page_not_the_srcdoc_frame():
+    """El script corre en un iframe about:srcdoc, cuyo protocolo nunca es https:; el de la página de la app sí."""
+    at = AppTest.from_function(_bridge_script)
+    at.session_state["step"] = "login"
+    at.run()
+    writes = _cookie_writes(at)
+    assert writes and all("window.parent.location.protocol === 'https:'" in write for write in writes)
