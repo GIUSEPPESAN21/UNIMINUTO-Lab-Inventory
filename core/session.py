@@ -13,6 +13,7 @@ import json
 import secrets
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 
 from core.config import safe_secret
 
@@ -219,6 +220,34 @@ def cookie_from_context() -> str:
         return ""
 
 
+_BRIDGE_DIR = Path(__file__).resolve().parent / "session_bridge"
+_BRIDGE_KEY = "session_cookie_bridge"
+RESTORE_DONE_KEY = "session_restore_done"   # esta pestaña ya intentó recuperar la sesión desde la cookie
+_bridge = None
+
+
+def cookie_from_browser():
+    """Lee la cookie de sesión en el navegador (JavaScript) y la devuelve a Python.
+
+    En Streamlit Community Cloud las cookies propias de la app no llegan al servidor:
+    ``st.context.cookies`` queda vacío aunque el navegador tenga la cookie, así que cada
+    pestaña nueva (cada toque de un chip NFC, cada F5) volvía a pedir el inicio de sesión.
+    Este puente (``core/session_bridge/index.html``) la lee en el navegador. Devuelve
+    ``None`` mientras el navegador no ha respondido (su respuesta provoca otra ejecución),
+    ``""`` si no hay cookie o el puente no está disponible, y el token si existe."""
+    global _bridge
+    try:
+        if _bridge is None:
+            import streamlit.components.v1 as components
+            _bridge = components.declare_component("session_bridge", path=str(_BRIDGE_DIR))
+        value = _bridge(cookie_name=COOKIE_NAME, key=_BRIDGE_KEY, default=None)
+    except Exception:  # sin puente se pide el inicio de sesión, como antes
+        return ""
+    if value is None:
+        return None
+    return str(value.get("token") or "") if isinstance(value, dict) else ""
+
+
 _COMMAND_KEY = "session_cookie_command"
 
 
@@ -282,7 +311,8 @@ def _emit_cookie(command: dict) -> None:
     max_age = "; Max-Age=0" if clear else ""
     html = f"""<script>
 const name={name_js}; const value={value_js};
-const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+// Este script corre en un iframe about:srcdoc: el protocolo real es el de la página de la app.
+const secure = window.parent.location.protocol === 'https:' ? '; Secure' : '';
 window.parent.document.cookie = `${{name}}=${{encodeURIComponent(value)}}; Path=/; SameSite=Lax${{secure}}{max_age}`;
 </script>"""
     components.html(html, width=0, height=0)

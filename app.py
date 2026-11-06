@@ -63,8 +63,13 @@ if "user" not in st.session_state:
 # Escribe/borra la cookie programada antes (al iniciar sesión, por ejemplo). Una escritura se repite aquí en
 # cada ejecución hasta que una termine completa: un st.switch_page posterior (toque NFC) no la pierde.
 session.render_cookie_command()
-if not st.session_state.user and session.enabled():
-    saved_token = session.cookie_from_context()
+if not st.session_state.user and session.enabled() and not st.session_state.get(session.RESTORE_DONE_KEY):
+    # Primero, la cookie que llega al servidor (local o servidor propio). En Streamlit Community Cloud no
+    # llega y se lee en el navegador: None = todavía no respondió; al responder la app se vuelve a ejecutar,
+    # recupera la sesión y sigue con el toque NFC pendiente. Mientras tanto se ve el acceso, como antes.
+    saved_token = session.cookie_from_context() or session.cookie_from_browser()
+    if saved_token is not None:
+        st.session_state[session.RESTORE_DONE_KEY] = True    # se intenta una sola vez por pestaña
     if saved_token:
         restored_user, restored_claims, restore_problem = session.verify_token(saved_token, storage)
         if restored_user and session.tab_closed(restored_claims):
