@@ -60,7 +60,8 @@ auth.ensure_master_seed(storage)
 if "user" not in st.session_state:
     st.session_state.user = None
 
-# Aplica la escritura/borrado programado en el render anterior.
+# Escribe/borra la cookie programada antes (al iniciar sesión, por ejemplo). Una escritura se repite aquí en
+# cada ejecución hasta que una termine completa: un st.switch_page posterior (toque NFC) no la pierde.
 session.render_cookie_command()
 if not st.session_state.user and session.enabled():
     saved_token = session.cookie_from_context()
@@ -231,6 +232,6 @@ nav = st.navigation(nav_sections)
 nfc_tap.handle_pending(storage, user, pages, nav)
 nfc_tap.render_tap_banner()
 nav.run()
-# Escribe en esta misma ejecución la cookie renovada (si la hay).
-session.render_cookie_command()
+# Ejecución completa: escribe la cookie programada en ella (renovación) y da por entregada la pendiente.
+session.finish_cookie_command()
 footer()
