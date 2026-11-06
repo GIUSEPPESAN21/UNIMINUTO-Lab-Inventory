@@ -35,6 +35,10 @@ from core.service_requests import STATUS_APPROVED, TYPE_PRODUCT
 
 QUERY_CODE = "nfc"          # parametro de la URL con el codigo
 QUERY_SIGNATURE = "s"       # parametro de la URL con la firma
+QUERY_KID = "k"             # M4: version de la clave con que se firmo (rotacion); sin k = NFC_SECRET de siempre
+QUERY_MIRROR = "m"          # M4: espejo ASCII de UID y contador que el NTAG21x escribe en cada lectura
+MIRROR_PLACEHOLDER = "0" * 14 + "x" + "0" * 6   # 21 caracteres que el chip reemplaza por UID 'x' contador
+MAX_KID_LENGTH = 16
 TAG_PAGE = "escanear"       # pagina a la que apunta la URL (si algo falla, se cae en Escanear)
 MAX_CODE_LENGTH = 64
 SIGNATURE_LENGTH = 10       # 10 caracteres Crockford = 50 bits
@@ -53,6 +57,22 @@ SIGNATURE_MESSAGES = {
     SIG_INVALID: "La firma de este chip no es válida (la URL se alteró o se grabó con otro NFC_SECRET): el "
                  "toque no se registró. Vuelve a grabarlo con la URL de Chips NFC → Grabar etiquetas.",
 }
+SIG_UNKNOWN_KEY = "unknown_key"     # M4: la URL trae una version de clave (k) que no esta en NFC_KEYS
+SIGNATURE_MESSAGES[SIG_UNKNOWN_KEY] = (
+    "Este chip se firmó con una versión de clave (k) que la app no tiene configurada en NFC_KEYS: el toque no "
+    "se registró. Revisa los Secrets o vuelve a grabar el chip.")
+
+# M4: anomalias del espejo NTAG21x (UID y contador de lecturas).
+ANOMALY_COUNTER = "counter_not_increasing"   # el contador no crecio: URL copiada o repetida
+ANOMALY_UID = "uid_changed"                  # otro UID para el mismo codigo: chip duplicado
+ANOMALY_MISSING = "mirror_missing"           # un chip que ya enviaba espejo llego sin el
+ANOMALY_LABELS = {
+    ANOMALY_COUNTER: "el contador de lecturas del chip no aumentó (posible URL copiada o repetida)",
+    ANOMALY_UID: "el UID no es el del chip registrado (posible chip duplicado)",
+    ANOMALY_MISSING: "la URL llegó sin el contador que este chip siempre envía (posible URL editada)",
+}
+REJECT_ANOMALY = "anomaly"                   # motivo de un toque bloqueado por el modo estricto
+STALE_DAYS = 30                              # «sin lectura reciente» en la salud de chips
 
 # Capacidad NDEF util (bytes) de los chips NTAG mas comunes.
 CHIP_CAPACITY = {"NTAG213": 137, "NTAG215": 496, "NTAG216": 868}
@@ -78,6 +98,47 @@ NO_TAG_LABEL = "Sin chip"
 def nfc_secret() -> str:
     """Secreto para firmar las URL de los chips (vacio = sin firma)."""
     return str(safe_secret("NFC_SECRET", "") or "").strip()
+
+
+def nfc_keys() -> dict:
+    """M4: claves versionadas de los Secrets (tabla ``[NFC_KEYS]``, version -> secreto) para rotar la clave sin
+    invalidar los chips ya grabados. Vacio = sin rotacion. Las claves nunca estan en el codigo."""
+    raw = safe_secret("NFC_KEYS", None)
+    try:
+        pairs = dict(raw or {}).items()
+    except (TypeError, ValueError):
+        return {}
+    keys = {}
+    for kid, secret in pairs:
+        kid, secret = str(kid or "").strip(), str(secret or "").strip()
+        if kid and secret and len(kid) <= MAX_KID_LENGTH:
+            keys[kid] = secret
+    return keys
+
+
+def active_kid() -> str:
+    """M4: version de clave para grabar chips NUEVOS (Secret ``NFC_KID``). '' = NFC_SECRET sin ``k``, como antes."""
+    kid = str(safe_secret("NFC_KID", "") or "").strip()
+    return kid if kid in nfc_keys() else ""
+
+
+def signing_key() -> tuple:
+    """(kid, secreto) con que se firman los chips nuevos: la clave activa o, sin rotacion, NFC_SECRET."""
+    kid = active_kid()
+    return (kid, nfc_keys()[kid]) if kid else ("", nfc_secret())
+
+
+def audit_enabled(storage) -> bool:
+    from core import options
+
+    return options.enabled(storage, options.NFC_AUDIT)
+
+
+def strict_enabled(storage) -> bool:
+    """El modo estricto solo actua con la auditoria activa."""
+    from core import options
+
+    return audit_enabled(storage) and options.enabled(storage, options.NFC_STRICT)
 
 
 def _clean_base(value) -> str:
@@ -151,15 +212,27 @@ def validate_tag_code(code) -> str:
     return code
 
 
-def build_tag_url(code, base_url: str, secret: str = "") -> str:
-    """URL que se graba en el chip: <base>/escanear?nfc=<codigo>[&s=<firma>]."""
+def build_tag_url(code, base_url: str, secret: str = "", kid: str = "", mirror: bool = False) -> str:
+    """URL que se graba en el chip: <base>/escanear?nfc=<codigo>[&s=<firma>].
+
+    M4 (opcional, por omision no cambia nada): ``kid`` agrega ``&k=<version>`` de la clave con que se firmo, y
+    ``mirror`` agrega ``&m=`` con 21 caracteres que el NTAG21x reemplaza por su UID y su contador de lecturas."""
     code = validate_tag_code(code)
     base = _clean_base(base_url)
     if not base:
         raise ValueError("Falta la dirección pública de la app: configura APP_URL en los Secrets.")
     url = f"{base}/{TAG_PAGE}?{QUERY_CODE}={quote(code, safe='')}"
     signature = sign_code(code, secret)
-    return f"{url}&{QUERY_SIGNATURE}={signature}" if signature else url
+    if signature:
+        url = f"{url}&{QUERY_SIGNATURE}={signature}"
+        if kid:
+            url = f"{url}&{QUERY_KID}={quote(str(kid), safe='')}"
+    if mirror:
+        # POR PROBAR: con chips NTAG213/215/216 reales. Al grabar (p. ej. con NXP TagWriter) hay que activar el
+        # espejo de UID y de contador (MIRROR_CONF = UID + contador, NFC_CNT_EN = 1) apuntando a estos 21
+        # caracteres; si no se activa, llegan los ceros y la app lo trata como «espejo sin configurar».
+        url = f"{url}&{QUERY_MIRROR}={MIRROR_PLACEHOLDER}"
+    return url
 
 
 def ndef_size(url: str) -> int:
@@ -199,7 +272,68 @@ def parse_tap(params):
     elif len(code) > MAX_CODE_LENGTH or not code.isprintable() or re.search(r"\s", code):
         error = "El chip NFC trae un código no válido."
         code = ""
-    return {"code": code, "signature": signature, "error": error}
+    tap = {"code": code, "signature": signature, "error": error}
+    # M4: solo si la URL los trae (las URL de siempre devuelven exactamente las tres claves de arriba).
+    if QUERY_KID in params:
+        tap["kid"] = _first(params.get(QUERY_KID)).strip()[:MAX_KID_LENGTH]
+    if QUERY_MIRROR in params:
+        tap["mirror"] = _first(params.get(QUERY_MIRROR)).strip()[:32]
+    return tap
+
+
+# --- M4: espejo ASCII del NTAG21x (UID y contador de lecturas) -------------------------------
+#
+# Con el espejo activo, el chip escribe en la URL, en cada lectura, su UID (7 bytes = 14 hex) y su
+# contador de lecturas NFC (3 bytes = 6 hex) separados por «x». El espejo NO va firmado: sirve para
+# detectar URLs copiadas o repetidas y chips duplicados, no para probar la originalidad del chip.
+# POR PROBAR: la firma de originalidad de NXP (READ_SIG, ECC) no se puede leer desde el navegador del
+# celular (no hay acceso a comandos NFC de bajo nivel); no se simula aqui.
+
+_MIRROR_RE = re.compile(r"^(?:([0-9A-Fa-f]{14})x([0-9A-Fa-f]{6})|([0-9A-Fa-f]{6})|([0-9A-Fa-f]{14}))$")
+
+
+def parse_mirror(value) -> dict:
+    """``{"uid", "counter", "configured"}`` desde el espejo (UID 'x' contador, o solo uno de los dos); ``{}`` si
+    no hay espejo o no tiene ese formato. Los ceros del molde = el chip no tiene el espejo activado."""
+    match = _MIRROR_RE.match(str(value or "").strip())
+    if not match:
+        return {}
+    uid = (match.group(1) or match.group(4) or "").upper()
+    counter_hex = match.group(2) or match.group(3) or ""
+    counter = int(counter_hex, 16) if counter_hex else None
+    return {"uid": uid, "counter": counter, "configured": bool(uid.strip("0")) or bool(counter)}
+
+
+def mirror_anomalies(previous_taps: list, mirror: dict) -> list:
+    """Anomalias de un toque frente a los toques ACEPTADOS anteriores del mismo chip (en orden de hora).
+
+    Un chip sin historial de espejo no tiene contra que compararse. Uno que ya envio espejo debe llegar con el
+    mismo UID y con un contador mayor que el ultimo visto."""
+    seen = []
+    for tap in previous_taps or []:
+        item = traceability.event_details(tap).get("mirror")
+        if isinstance(item, dict) and item.get("configured"):
+            seen.append(item)
+    if not seen:
+        return []
+    if not mirror or not mirror.get("configured"):
+        return [ANOMALY_MISSING]
+    anomalies = []
+    uids = {item.get("uid") for item in seen if item.get("uid")}
+    if mirror.get("uid") and uids and mirror["uid"] not in uids:
+        anomalies.append(ANOMALY_UID)
+    same_chip = [item for item in seen if not mirror.get("uid") or item.get("uid") == mirror.get("uid")]
+    counters = [item["counter"] for item in same_chip if isinstance(item.get("counter"), int)]
+    if isinstance(mirror.get("counter"), int) and counters and mirror["counter"] <= max(counters):
+        anomalies.append(ANOMALY_COUNTER)
+    return anomalies
+
+
+def anomaly_text(anomalies: list, blocked: bool = False) -> str:
+    reasons = "; ".join(ANOMALY_LABELS.get(kind, kind) for kind in anomalies or [])
+    if blocked:
+        return f"Toque bloqueado (modo estricto): {reasons}. Quedó registrado para revisión."
+    return f"Alerta registrada: {reasons}."
 
 
 # ---------------------------------------------------------------------------
@@ -258,16 +392,17 @@ def arrival_message(storage, item: dict) -> str:
 
 
 def record_tap(storage, user: dict, code: str, item: dict = None, signed: bool = False,
-               count_session: str = "", now=None):
+               count_session: str = "", now=None, extra: dict = None):
     """Guarda UN evento `nfc_tap` y devuelve (evento, repetido).
 
     Si la misma persona toco el mismo chip hace menos de DEDUP_SECONDS (en el
     mismo contexto), no se escribe otra vez: un doble toque o una recarga no
-    cuentan doble."""
+    cuentan doble. ``extra`` (M4: espejo y anomalias) va en los detalles; un toque
+    con anomalias se escribe siempre (la alerta no se pierde)."""
     now = _now(now)
     previous = storage.get_trace_events(user_id=(user or {}).get("id", ""), item_id=code,
                                         event_type=traceability.EVENT_NFC_TAP)
-    if previous:
+    if previous and not (extra or {}).get("anomalies"):
         last = previous[-1]
         when = traceability.to_datetime(last.get("created_at"))
         same_context = traceability.event_details(last).get("count_session", "") == (count_session or "")
@@ -278,6 +413,8 @@ def record_tap(storage, user: dict, code: str, item: dict = None, signed: bool =
         details["arrival"] = arrival_kind(item)
     if count_session:
         details["count_session"] = count_session
+    if extra:
+        details.update(extra)
     event = storage.add_trace_event({
         "event_type": traceability.EVENT_NFC_TAP, "request_id": "", "item_id": code, "loan_id": "",
         "user_id": (user or {}).get("id", ""), **_actor_fields(user), "receipt": "",
@@ -407,45 +544,104 @@ def merge_user_taps(storage, user: dict, request: dict, route: dict):
 # Que hacer con un toque (lo decide la logica; la vista solo navega)
 # ---------------------------------------------------------------------------
 
-def handle_tap(storage, user: dict, code: str, signature: str = "", secret: str = None, now=None) -> dict:
+def record_rejected(storage, user: dict, code: str, reason: str, extra: dict = None, now=None):
+    """M4: guarda un toque RECHAZADO (`nfc_tap_rejected`) y devuelve el evento, o ``None`` si es la misma persona
+    repitiendo el mismo rechazo hace menos de DEDUP_SECONDS (una recarga no ensucia la auditoria)."""
+    now = _now(now)
+    code = str(code or "")[:MAX_CODE_LENGTH]
+    previous = storage.get_trace_events(user_id=(user or {}).get("id", ""), item_id=code,
+                                        event_type=traceability.EVENT_NFC_TAP_REJECTED)
+    if previous:
+        last = previous[-1]
+        when = traceability.to_datetime(last.get("created_at"))
+        if (when and traceability.event_details(last).get("reason") == reason
+                and 0 <= (now - when).total_seconds() < DEDUP_SECONDS):
+            return None
+    details = {"code": code, "reason": reason, **(extra or {})}
+    return storage.add_trace_event({
+        "event_type": traceability.EVENT_NFC_TAP_REJECTED, "request_id": "", "item_id": code, "loan_id": "",
+        "user_id": (user or {}).get("id", ""), **_actor_fields(user), "receipt": "",
+        "details": json.dumps(details, ensure_ascii=False), "created_at": now.isoformat(),
+    })
+
+
+def _signature_status(code: str, signature: str, secret, kid: str) -> str:
+    if kid:      # M4: la URL dice con que version de clave se firmo
+        key = nfc_keys().get(kid)
+        return SIG_UNKNOWN_KEY if key is None else check_signature(code, signature, key)
+    return check_signature(code, signature, nfc_secret() if secret is None else secret)
+
+
+def handle_tap(storage, user: dict, code: str, signature: str = "", secret: str = None, now=None,
+               kid: str = "", mirror: str = "") -> dict:
     """Procesa el toque de `user` sobre el chip de `code`.
 
     Devuelve {"ok", "tone", "message", "target", "code", "item", "event",
     "duplicate", "request_id", "count_session", "signature"}. `target` es la
     pagina a mostrar: TARGET_COUNT (profesor/maestro con un conteo abierto),
     TARGET_ROUTE (estudiante con una ruta que pasa por esa etiqueta) o TARGET_SCAN.
-    Solo se guarda el toque si la firma es aceptada y el codigo existe."""
-    secret = nfc_secret() if secret is None else secret
+    Solo se guarda el toque si la firma es aceptada y el codigo existe.
+
+    M4: ``kid`` elige la clave versionada (NFC_KEYS) con que se verifica la firma. Con ``nfc_auditoria`` activo
+    se registran los toques rechazados y se revisa el espejo ``mirror`` (UID y contador); con
+    ``nfc_modo_estricto`` ademas se bloquea el toque anomalo. Apagado, el espejo se ignora como siempre."""
     code = str(code or "").strip()
-    status = check_signature(code, signature, secret)
+    status = _signature_status(code, signature, secret, kid)
     outcome = {"ok": False, "tone": "warning", "message": "", "target": TARGET_SCAN, "code": code,
                "item": None, "event": None, "duplicate": False, "request_id": "", "count_session": "",
                "signature": status}
     if not code:
         return {**outcome, "message": "El chip NFC no trae ningún código."}
+    audit = audit_enabled(storage)
     if not signature_accepted(status):
+        if audit:
+            record_rejected(storage, user, code, status, {"kid": kid} if kid else None, now)
         return {**outcome, "message": SIGNATURE_MESSAGES[status]}
     item = storage.get_item(code)
     if not item or item.get("status") == "retired":
         return {**outcome, "message": f"El chip apunta a «{code}», que no está registrado en el inventario."}
     outcome["item"] = item
-    signed = status == SIG_VALID
+    extra, anomalies = {}, []
+    if audit:
+        parsed = parse_mirror(mirror)
+        if parsed:
+            extra["mirror"] = parsed
+        if kid:
+            extra["kid"] = kid
+        anomalies = mirror_anomalies(
+            storage.get_trace_events(item_id=code, event_type=traceability.EVENT_NFC_TAP), parsed)
+        if anomalies:
+            extra["anomalies"] = anomalies
+            if strict_enabled(storage):
+                event = record_rejected(storage, user, code, REJECT_ANOMALY, extra, now)
+                return {**outcome, "tone": "danger", "event": event, "anomalies": anomalies,
+                        "message": anomaly_text(anomalies, blocked=True)}
+    result = _apply_tap(storage, user, code, item, status == SIG_VALID, outcome, now, extra)
+    if anomalies:
+        result = {**result, "tone": "warning", "anomalies": anomalies,
+                  "message": f"{result['message']} {anomaly_text(anomalies)}"}
+    return result
+
+
+def _apply_tap(storage, user: dict, code: str, item: dict, signed: bool, outcome: dict, now, extra: dict) -> dict:
+    """Registra un toque aceptado y decide a donde lleva (conteo, ruta o Escanear)."""
     name = item.get("name") or code
     repeat = " (ya lo habías tocado hace un momento: cuenta una sola vez)"
 
     manager = traceability.is_manager(user)
     session = inventory_count.open_session(storage) if manager else None
     if session:
-        event, duplicate = record_tap(storage, user, code, item, signed, count_session=session["id"], now=now)
+        event, duplicate = record_tap(storage, user, code, item, signed, count_session=session["id"], now=now,
+                                      extra=extra or None)
         message = f"«{name}» quedó verificado en el conteo «{session['name']}»"
         return {**outcome, "ok": True, "tone": "success", "target": TARGET_COUNT, "event": event,
                 "duplicate": duplicate, "count_session": session["id"],
                 "message": message + (repeat if duplicate else "") + "."}
 
     routes = [] if manager else requests_for_code(storage, user, code)
-    event, duplicate = record_tap(storage, user, code, item, signed, now=now)
+    event, duplicate = record_tap(storage, user, code, item, signed, now=now, extra=extra or None)
     arrival = arrival_message(storage, item)
-    outcome.update(ok=True, event=event, duplicate=duplicate, arrival=arrival_kind(item))
+    outcome = {**outcome, "ok": True, "event": event, "duplicate": duplicate, "arrival": arrival_kind(item)}
     if routes:
         request = routes[0]
         message = ((arrival + ". " if arrival else "")
@@ -525,3 +721,79 @@ def load_registry(storage) -> dict:
 
 def tag_status_label(entry) -> str:
     return TAG_STATUS_LABELS.get((entry or {}).get("status"), NO_TAG_LABEL)
+
+
+# ---------------------------------------------------------------------------
+# M4: salud de los chips (solo administrador, con nfc_auditoria)
+# ---------------------------------------------------------------------------
+
+_AWARE_MIN = datetime.min.replace(tzinfo=timezone.utc)
+_ANOMALY_COLUMNS = {ANOMALY_COUNTER: "counter_alerts", ANOMALY_UID: "uid_alerts", ANOMALY_MISSING: "missing_mirror"}
+
+
+def _count_anomalies(entry: dict, anomalies) -> None:
+    for kind in anomalies if isinstance(anomalies, list) else []:
+        column = _ANOMALY_COLUMNS.get(kind)
+        if column:
+            entry[column] += 1
+
+
+def health_rows(registry: dict, taps: list, rejected: list, now=None, stale_days: int = STALE_DAYS) -> list:
+    """Una fila por chip (grabado, tocado o con toques rechazados): toques, último toque, firmas inválidas,
+    claves desconocidas, alertas de contador y de UID, UID distintos (chip duplicado), toques bloqueados y si un
+    chip registrado lleva ``stale_days`` días o más sin leerse."""
+    moment = _now(now)
+    rows = {}
+
+    def row(code: str) -> dict:
+        return rows.setdefault(code, {
+            "code": code, "status": tag_status_label((registry or {}).get(code)), "taps": 0, "last_tap_at": "",
+            "invalid_signature": 0, "unknown_key": 0, "counter_alerts": 0, "uid_alerts": 0, "missing_mirror": 0,
+            "blocked": 0, "uids": set(), "registered": code in (registry or {}),
+        })
+
+    for code in registry or {}:
+        row(code)
+    for tap in taps or []:
+        code = tap_code(tap)
+        if not code:
+            continue
+        entry = row(code)
+        entry["taps"] += 1
+        stamp = tap.get("created_at") or ""
+        if (traceability.to_datetime(stamp) or _AWARE_MIN) > (traceability.to_datetime(entry["last_tap_at"]) or _AWARE_MIN):
+            entry["last_tap_at"] = stamp
+        details = traceability.event_details(tap)
+        mirror = details.get("mirror")
+        if isinstance(mirror, dict) and mirror.get("configured") and mirror.get("uid"):
+            entry["uids"].add(mirror["uid"])
+        _count_anomalies(entry, details.get("anomalies"))
+    for event in rejected or []:
+        details = traceability.event_details(event)
+        code = str(event.get("item_id") or details.get("code") or "")
+        if not code:
+            continue
+        entry = row(code)
+        reason = details.get("reason")
+        if reason in (SIG_INVALID, SIG_MISSING):
+            entry["invalid_signature"] += 1
+        elif reason == SIG_UNKNOWN_KEY:
+            entry["unknown_key"] += 1
+        elif reason == REJECT_ANOMALY:
+            entry["blocked"] += 1
+            _count_anomalies(entry, details.get("anomalies"))
+    result = []
+    for entry in rows.values():
+        last = traceability.to_datetime(entry["last_tap_at"])
+        entry["stale"] = bool(entry["registered"]) and (last is None or (moment - last).days >= stale_days)
+        entry["distinct_uids"] = len(entry.pop("uids"))
+        entry["duplicated"] = entry["distinct_uids"] > 1 or entry["uid_alerts"] > 0
+        result.append(entry)
+    return sorted(result, key=lambda entry: inventory_count.code_order(entry["code"]))
+
+
+def chip_health(storage, now=None, stale_days: int = STALE_DAYS) -> list:
+    """``health_rows`` con los datos de la base (solo lectura)."""
+    return health_rows(load_registry(storage),
+                       storage.get_trace_events(event_type=traceability.EVENT_NFC_TAP),
+                       storage.get_trace_events(event_type=traceability.EVENT_NFC_TAP_REJECTED), now, stale_days)

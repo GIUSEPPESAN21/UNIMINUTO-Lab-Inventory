@@ -215,6 +215,11 @@ EVENT_CAPABILITIES.update({
     EVENT_RETURN_VERIFIED: permissions.CAP_VERIFY_RETURN,
     EVENT_RETURN_STORED: permissions.CAP_STORE_RETURN,
 })
+# Toque de chip NFC rechazado (core/nfc.py, opción nfc_auditoria): firma inválida, clave desconocida o, en modo
+# estricto, contador/UID anómalo. No cambia ninguna etapa; sirve para la salud de los chips y la auditoría.
+EVENT_NFC_TAP_REJECTED = "nfc_tap_rejected"
+EVENT_TYPES = EVENT_TYPES + (EVENT_NFC_TAP_REJECTED,)
+EVENT_LABELS.update({EVENT_NFC_TAP_REJECTED: "Toque de chip NFC rechazado"})
 PHOTO_KIND_REGISTRO = "registro"
 PHOTO_KIND_ESTADO = "estado"
 PHOTO_KIND_INVENTARIO = "inventario"

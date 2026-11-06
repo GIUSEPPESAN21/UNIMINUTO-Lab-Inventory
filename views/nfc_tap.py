@@ -27,7 +27,7 @@ _FEEDBACK = {"success": st.success, "warning": st.warning, "info": st.info, "dan
 
 
 def _clear_query() -> None:
-    for key in (nfc.QUERY_CODE, nfc.QUERY_SIGNATURE):
+    for key in (nfc.QUERY_CODE, nfc.QUERY_SIGNATURE, nfc.QUERY_KID, nfc.QUERY_MIRROR):
         try:
             st.query_params.pop(key, None)
         except Exception:  # la URL nunca debe romper la pagina
@@ -104,7 +104,8 @@ def handle_pending(storage, user: dict, pages: dict, current_page=None) -> None:
         outcome = {"tone": "warning", "message": tap["error"], "target": nfc.TARGET_SCAN, "code": ""}
     else:
         try:
-            outcome = nfc.handle_tap(storage, user, tap["code"], tap.get("signature", ""))
+            outcome = nfc.handle_tap(storage, user, tap["code"], tap.get("signature", ""),
+                                     kid=tap.get("kid", ""), mirror=tap.get("mirror", ""))
         except Exception as exc:  # E/S o red: el toque no se pierde en silencio
             outcome = {"tone": "danger", "target": nfc.TARGET_SCAN, "code": tap["code"],
                        "message": f"No se pudo registrar el toque del chip NFC ({exc}). Inténtalo de nuevo."}

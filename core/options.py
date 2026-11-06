@@ -13,6 +13,8 @@ Las dos opciones anteriores siguen en sus módulos: ``conteo_ciego``
 from core import permissions
 
 EVENT_LOG = "registro_eventos"               # M3: registro de eventos único y exportable
+NFC_AUDIT = "nfc_auditoria"                  # M4: contador/UID de NTAG21x, toques rechazados y salud de chips
+NFC_STRICT = "nfc_modo_estricto"             # M4: además, bloquea el toque con contador o UID anómalo
 
 # clave -> (título, explicación) para Despacho → Ajustes.
 FLAGS = {
@@ -20,6 +22,16 @@ FLAGS = {
         "Registro de eventos único (lúdica)",
         "Sella cada evento con la sesión y el escenario activos, guarda cada lectura del picking (correcta, "
         "incorrecta, repetida o deshecha) y permite exportar el registro por sesión.",
+    ),
+    NFC_AUDIT: (
+        "Auditoría de chips NFC",
+        "Registra los toques rechazados (firma inválida o clave desconocida), revisa el contador y el UID que "
+        "envían los NTAG21x grabados con espejo y muestra la salud de los chips (solo administrador).",
+    ),
+    NFC_STRICT: (
+        "Modo estricto NFC",
+        "Con la auditoría activa, además bloquea el toque cuando el contador no crece, el UID no es el del chip o "
+        "falta el espejo de un chip que ya lo enviaba.",
     ),
 }
 

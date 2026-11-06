@@ -58,7 +58,7 @@ _OK_EVENTS = frozenset({
     traceability.EVENT_COUNT_STARTED, traceability.EVENT_COUNT_MARK, traceability.EVENT_COUNT_CLOSED,
     *traceability.RETURN_EVENTS, *traceability.PIECE_EVENTS,
 })
-_REJECTED_EVENTS = frozenset()       # tipos de evento que son en sí un intento rechazado (los agrega M4)
+_REJECTED_EVENTS = frozenset({traceability.EVENT_NFC_TAP_REJECTED})   # eventos que son en sí un intento rechazado
 _AWARE_MIN = datetime.min.replace(tzinfo=timezone.utc)
 
 

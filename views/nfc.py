@@ -446,22 +446,25 @@ def _render_config_status(base: str) -> None:
             st.markdown(f"{badge_html('Falta la dirección', 'danger', '⛔')} **APP_URL**", unsafe_allow_html=True)
             st.caption("No se pudo saber la dirección de la app: configura APP_URL en los Secrets.")
     with right, st.container(border=True):
-        if nfc.nfc_secret():
+        if nfc.nfc_secret() or nfc.active_kid():
             st.markdown(f"{badge_html('Firma activa', 'success', '🔏')} **NFC_SECRET**", unsafe_allow_html=True)
             st.caption("Cada URL lleva `&s=…` y la app rechaza las URL inventadas o alteradas.")
+            if nfc.active_kid():
+                st.caption(f"Los chips nuevos se firman con la versión de clave `k={nfc.active_kid()}` (NFC_KEYS); "
+                           "los grabados antes siguen siendo válidos mientras su clave esté en los Secrets.")
         else:
             st.markdown(f"{badge_html('Sin firma', 'warning', '🔓')} **NFC_SECRET**", unsafe_allow_html=True)
             st.caption("Cualquiera que conozca un código podría abrir su URL a mano. Configura NFC_SECRET en los "
                        "Secrets **antes** de grabar los chips.")
 
 
-def _tag_rows(items: list, registry: dict, base: str, secret: str) -> list:
+def _tag_rows(items: list, registry: dict, base: str, secret: str, kid: str = "", mirror: bool = False) -> list:
     rows = []
     for item in sorted(items, key=lambda row: counting.code_order(row.get("id"))):
         code = str(item.get("id") or "")
         entry = registry.get(code)
         try:
-            url = nfc.build_tag_url(code, base, secret)
+            url = nfc.build_tag_url(code, base, secret, kid=kid, mirror=mirror)
             problem = ""
         except ValueError as exc:
             url, problem = "", str(exc)
@@ -531,6 +534,14 @@ def _tag_card(storage, user: dict, row: dict) -> None:
 def _render_tags(storage, user: dict, rows: list, base: str) -> None:
     _show_notice(TAG_NOTICE_KEY)
     _render_config_status(base)
+    if nfc.audit_enabled(storage):
+        st.toggle("Agregar a las URL el espejo de UID y contador (NTAG213/215/216)", key="nfc_mirror_urls",
+                  help="La URL termina en &m= y 21 caracteres que el chip reemplaza en cada lectura por su UID y "
+                       "su contador. Así la app detecta URL copiadas o repetidas y chips duplicados.")
+        if st.session_state.get("nfc_mirror_urls"):
+            st.caption(":material/info: Al grabar con NXP TagWriter, activa el espejo de UID y de contador sobre los "
+                       f"21 caracteres `{nfc.MIRROR_PLACEHOLDER}`. Si no se activa, el chip envía los ceros y no hay "
+                       "contador que revisar. Pruébalo con un chip antes de grabar todos.")
     with st.expander(":material/menu_book: Cómo grabar y probar un chip NFC", expanded=False):
         st.markdown(_GUIDE)
     if not rows:
@@ -611,6 +622,37 @@ def _render_taps(storage) -> None:
     more_button(len(rows), "nfc_taps", 25)
 
 
+def _render_health(storage) -> None:
+    """Salud de los chips (M4, solo administrador): se calcula con la base, sin escribir nada."""
+    rows = nfc.chip_health(storage)
+    if not rows:
+        empty_state("Sin datos de chips", "Aquí aparecen los chips grabados, tocados o con toques rechazados.",
+                    icon=":material/nfc:")
+        return
+    alert_keys = ("invalid_signature", "unknown_key", "counter_alerts", "uid_alerts", "missing_mirror", "blocked")
+    flagged = {row["code"] for row in rows if row["duplicated"] or any(row[key] for key in alert_keys)}
+    stale = {row["code"] for row in rows if row["stale"]}
+    stat_cards([
+        {"label": "Chips leídos", "value": len([row for row in rows if row["taps"]]), "icon": "📲", "tone": "success"},
+        {"label": "Con alertas", "value": len(flagged), "icon": "⚠️", "tone": "danger" if flagged else "neutral"},
+        {"label": f"Sin lectura en {nfc.STALE_DAYS} días", "value": len(stale), "icon": "⏳",
+         "tone": "warning" if stale else "neutral"},
+    ])
+    if st.toggle("Solo chips con alertas o sin lectura reciente", key="nfc_health_flagged"):
+        rows = [row for row in rows if row["code"] in flagged | stale]
+    st.dataframe(pd.DataFrame([{
+        "Código": row["code"], "Chip": row["status"], "Toques": row["taps"],
+        "Último toque": traceability.fmt_local(row["last_tap_at"]),
+        "Firma inválida": row["invalid_signature"], "Clave desconocida": row["unknown_key"],
+        "Contador anómalo": row["counter_alerts"], "UID distinto": row["uid_alerts"],
+        "Sin espejo": row["missing_mirror"], "UID vistos": row["distinct_uids"],
+        "Duplicado": "Sí" if row["duplicated"] else "", "Bloqueados": row["blocked"],
+        "Sin lectura reciente": "Sí" if row["stale"] else "",
+    } for row in rows[:MAX_TABLE_ROWS]]), hide_index=True, use_container_width=True)
+    st.caption("El contador y el UID solo se revisan en chips grabados con el espejo. La firma de originalidad de "
+               "NXP no se puede leer desde el navegador del teléfono y no se revisa.")
+
+
 def render():
     storage = st.session_state.storage
     user = st.session_state.user
@@ -619,15 +661,22 @@ def render():
     page_header("Chips NFC", icon=":material/nfc:",
                 subtitle="Inventario con el teléfono, grabación de chips y toques registrados")
     base = nfc.app_base_url(st.context.url)
-    rows = _tag_rows(storage.get_all_items(), nfc.load_registry(storage), base, nfc.nfc_secret())
+    kid, secret = nfc.signing_key()
+    mirror = nfc.audit_enabled(storage) and bool(st.session_state.get("nfc_mirror_urls"))
+    rows = _tag_rows(storage.get_all_items(), nfc.load_registry(storage), base, secret, kid, mirror)
     _overview(rows)
-    tab_count, tab_tags, tab_taps = persistent_tabs([
-        ":material/fact_check: Inventario con el teléfono", ":material/nfc: Chips",
-        ":material/history: Toques recientes",
-    ], "nfc")
-    with tab_count:
+    titles = [":material/fact_check: Inventario con el teléfono", ":material/nfc: Chips",
+              ":material/history: Toques recientes"]
+    health = nfc.audit_enabled(storage) and permissions.has_cap(user, permissions.CAP_DISPATCH_SETTINGS)
+    if health:
+        titles.append(":material/health_and_safety: Salud de chips")
+    tabs = persistent_tabs(titles, "nfc")
+    with tabs[0]:
         _render_count(storage, user)
-    with tab_tags:
+    with tabs[1]:
         _render_tags(storage, user, rows, base)
-    with tab_taps:
+    with tabs[2]:
         _render_taps(storage)
+    if health:
+        with tabs[3]:
+            _render_health(storage)
