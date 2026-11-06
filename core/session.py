@@ -219,24 +219,61 @@ def cookie_from_context() -> str:
         return ""
 
 
+_COMMAND_KEY = "session_cookie_command"
+
+
 def queue_cookie(token: str = "", clear: bool = False) -> None:
-    """Programa escritura/borrado para el siguiente render de la misma sesión."""
+    """Programa escribir o borrar la cookie de sesión.
+
+    La ESCRITURA se vuelve a emitir al inicio de cada ejecución hasta que una
+    ejecución termina completa (``finish_cookie_command``). Si la ejecución que la
+    emite sigue con ``st.switch_page`` o ``st.rerun``, Streamlit descarta lo que el
+    navegador todavía no recibió: antes eso pasaba justo después de iniciar sesión
+    desde un toque NFC (el toque lleva al conteo, al despacho o a la ruta), la
+    cookie nunca llegaba y cada toque siguiente, que abre una pestaña nueva, volvía
+    a pedir el inicio de sesión. El BORRADO se emite una sola vez, como antes: la
+    revocación en el servidor ya invalida el token."""
     try:
         import streamlit as st
-        st.session_state.session_cookie_command = {"token": token, "clear": bool(clear)}
+        st.session_state[_COMMAND_KEY] = {"token": token, "clear": bool(clear), "emitted": False}
     except Exception:
         pass
 
 
 def render_cookie_command() -> None:
-    """Ejecuta el puente mínimo de cookie. No transmite el token a terceros."""
+    """Inicio de cada ejecución: emite la orden pendiente. Una escritura sigue pendiente hasta que una ejecución
+    completa la confirme; un borrado sale una sola vez."""
     try:
         import streamlit as st
-        import streamlit.components.v1 as components
-        command = st.session_state.pop("session_cookie_command", None)
+        command = st.session_state.get(_COMMAND_KEY)
     except Exception:
         return
     if not command:
+        return
+    if command.get("clear"):
+        st.session_state.pop(_COMMAND_KEY, None)
+    else:
+        command["emitted"] = True
+    _emit_cookie(command)
+
+
+def finish_cookie_command() -> None:
+    """Final de una ejecución completa: emite la orden programada durante ella (renovación, cambio de
+    contraseña) y da por entregada la pendiente, porque lo emitido en esta ejecución ya quedó en pantalla."""
+    try:
+        import streamlit as st
+        command = st.session_state.pop(_COMMAND_KEY, None)
+    except Exception:
+        return
+    if command and not command.get("emitted"):
+        _emit_cookie(command)
+
+
+def _emit_cookie(command: dict) -> None:
+    """Puente mínimo de cookie. No transmite el token a terceros."""
+    try:
+        import streamlit.components.v1 as components
+    except Exception:
         return
     token = str(command.get("token") or "")
     clear = bool(command.get("clear"))
