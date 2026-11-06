@@ -244,6 +244,32 @@ def test_adjustment_sets_total_to_counted_plus_on_loan(lab):
     assert fake.items["2-1-01-01-002"]["quantity"] == 2
 
 
+# --- Conteo ciego -----------------------------------------------------------------
+
+def test_blind_count_is_off_by_default_and_only_the_admin_toggles_it(lab):
+    storage = lab["storage"]
+    assert not counting.blind_count_enabled(storage)
+    with pytest.raises(PermissionError):
+        counting.set_blind_count(storage, lab["prof"], True)
+    assert not counting.blind_count_enabled(storage)      # el intento rechazado no cambia nada
+    ok, message = counting.set_blind_count(storage, lab["master"], True)
+    assert ok and "activado" in message and counting.blind_count_enabled(storage)
+    ok, message = counting.set_blind_count(storage, lab["master"], False)
+    assert ok and "desactivado" in message and not counting.blind_count_enabled(storage)
+
+
+def test_blind_count_off_by_default_leaves_progress_unchanged(lab):
+    """Con el ajuste en su valor por defecto (apagado), progress() no cambia de forma: available,
+    quantity y difference siguen presentes, igual que antes de esta mejora."""
+    storage, prof = lab["storage"], lab["prof"]
+    _, _, session = counting.start_session(storage, prof, "Todo", now=NOW)
+    counting.record_mark(storage, session, prof, "2-1-01-01-001", 5, now=NOW)
+    report = _report(lab, session)
+    row = next(r for r in report["rows"] if r["code"] == "2-1-01-01-001")
+    assert row["available"] == 5 and row["quantity"] == 5 and row["difference"] == 0
+    assert not counting.blind_count_enabled(storage)
+
+
 def test_close_records_the_adjustments(lab):
     storage, master = lab["storage"], lab["master"]
     _, _, session = counting.start_session(storage, master, "Todo", now=NOW)

@@ -159,7 +159,8 @@ def _focus_mark_form(storage, user: dict, session: dict, item: dict, method: str
         st.rerun()
 
 
-def _render_focus(storage, user: dict, session: dict, items: list, report: dict) -> None:
+def _render_focus(storage, user: dict, session: dict, items: list, report: dict,
+                  reveal_expected: bool = True) -> None:
     """El producto que se acaba de tocar o marcar: estado y cantidad contada."""
     focus = st.session_state.get(COUNT_FOCUS_KEY)
     if not focus:
@@ -185,8 +186,11 @@ def _render_focus(storage, user: dict, session: dict, items: list, report: dict)
                 st.caption("Este producto no está en el alcance del conteo; quedó registrado como «fuera del alcance».")
             else:
                 counted = "—" if row["counted"] is None else row["counted"]
-                st.caption(f"Debería haber {row['available']} en el estante · {row['on_loan']} en préstamo · "
-                           f"total {row['quantity']} · contadas: {counted}")
+                if reveal_expected:
+                    st.caption(f"Debería haber {row['available']} en el estante · {row['on_loan']} en préstamo · "
+                               f"total {row['quantity']} · contadas: {counted}")
+                else:
+                    st.caption(f"Contadas: {counted} (conteo ciego: la cantidad esperada se muestra al cerrar el conteo)")
             _focus_mark_form(storage, user, session, item, focus.get("method") or counting.METHOD_CODE)
         if st.button("Listo", key="nfc_count_focus_done", icon=":material/check:"):
             st.session_state.pop(COUNT_FOCUS_KEY, None)
@@ -220,38 +224,46 @@ def _render_mark_form(storage, user: dict, session: dict, items: list) -> None:
         st.rerun()
 
 
-def _report_table(rows: list, verified: bool) -> pd.DataFrame:
+def _report_table(rows: list, verified: bool, reveal_expected: bool = True) -> pd.DataFrame:
     data = []
     for row in rows[:MAX_TABLE_ROWS]:
-        entry = {"Código": row["code"], "Producto": row["name"], "Ubicación": row["location"],
-                 "En el estante (sistema)": row["available"]}
+        entry = {"Código": row["code"], "Producto": row["name"], "Ubicación": row["location"]}
+        if reveal_expected:
+            entry["En el estante (sistema)"] = row["available"]
         if verified:
-            entry.update({
-                "Contadas": row["counted"], "Diferencia": row["difference"], "Cómo": _methods_text(row["methods"]),
-                "Hora": traceability.fmt_local(row["at"], time_only=True), "Por": row["by"],
-            })
+            entry["Contadas"] = row["counted"]
+            if reveal_expected:
+                entry["Diferencia"] = row["difference"]
+            entry.update({"Cómo": _methods_text(row["methods"]),
+                         "Hora": traceability.fmt_local(row["at"], time_only=True), "Por": row["by"]})
         data.append(entry)
     return pd.DataFrame(data)
 
 
-def _render_report(report: dict) -> None:
+def _render_report(report: dict, reveal_expected: bool = True) -> None:
     percent = round(100 * report["ratio"])
-    stat_cards([
+    cards = [
         {"label": "Productos esperados", "value": report["total"], "icon": "📦"},
         {"label": "Verificados", "value": report["verified_count"], "icon": "✅", "tone": "success",
          "help": f"{percent} % · {report['nfc_count']} con chip NFC"},
         {"label": "Faltan", "value": report["missing_count"], "icon": "⏳",
          "tone": "warning" if report["missing_count"] else "success"},
-        {"label": "Con diferencia", "value": report["difference_count"], "icon": "⚠️",
-         "tone": "danger" if report["difference_count"] else "neutral", "help": "Contadas ≠ sistema"},
-    ])
+    ]
+    if reveal_expected:
+        cards.append({"label": "Con diferencia", "value": report["difference_count"], "icon": "⚠️",
+                      "tone": "danger" if report["difference_count"] else "neutral", "help": "Contadas ≠ sistema"})
+    stat_cards(cards)
     st.progress(report["ratio"], text=f"{report['verified_count']} de {report['total']} verificados ({percent} %)")
+    if not reveal_expected:
+        st.caption(":material/visibility_off: Conteo ciego activo: la cantidad esperada se muestra al cerrar el conteo.")
     if report["missing"]:
         with st.expander(f":material/pending: Faltan por verificar ({report['missing_count']})", expanded=True):
-            st.dataframe(_report_table(report["missing"], verified=False), hide_index=True, use_container_width=True)
+            st.dataframe(_report_table(report["missing"], verified=False, reveal_expected=reveal_expected),
+                        hide_index=True, use_container_width=True)
     if report["verified"]:
         with st.expander(f":material/task_alt: Verificados ({report['verified_count']})"):
-            st.dataframe(_report_table(report["verified"], verified=True), hide_index=True, use_container_width=True)
+            st.dataframe(_report_table(report["verified"], verified=True, reveal_expected=reveal_expected),
+                        hide_index=True, use_container_width=True)
     if report["extra"]:
         with st.expander(f":material/help: Verificados fuera del alcance ({len(report['extra'])})"):
             st.dataframe(pd.DataFrame([{
@@ -273,7 +285,7 @@ def _live_report(session_id: str) -> None:
         return
     report = counting.progress(session, storage.get_all_items(), counting.session_marks(storage, session_id),
                                storage.get_availability_map())
-    _render_report(report)
+    _render_report(report, reveal_expected=not counting.blind_count_enabled(storage))
 
 
 def _render_close(storage, user: dict, session: dict, report: dict) -> None:
@@ -322,8 +334,27 @@ def _render_close(storage, user: dict, session: dict, report: dict) -> None:
         st.rerun()
 
 
+def _render_count_settings(storage, user: dict) -> None:
+    """Conteo ciego (solo administrador): no es parte del flujo diario de conteo."""
+    if not counting.can_adjust(user):
+        return
+    with st.expander(":material/settings: Ajustes del conteo"):
+        current = counting.blind_count_enabled(storage)
+        wanted = st.toggle(
+            "Conteo ciego: no mostrar la cantidad esperada mientras el conteo está abierto",
+            value=current, key="blind_count_toggle",
+            help="Quien cuenta no ve cuánto «debería haber»; el administrador lo ve en el resumen al cerrar.",
+        )
+        if st.button("Guardar ajuste de conteo", key="blind_count_save", type="primary",
+                     disabled=wanted == current):
+            ok, message = counting.set_blind_count(storage, user, wanted)
+            _notice(ok, message)
+            st.rerun()
+
+
 def _render_count(storage, user: dict) -> None:
     _show_notice()
+    _render_count_settings(storage, user)
     session = counting.open_session(storage)
     if not session:
         st.session_state.pop(COUNT_FOCUS_KEY, None)
@@ -334,10 +365,11 @@ def _render_count(storage, user: dict) -> None:
     items = storage.get_all_items()
     report = counting.progress(session, items, counting.session_marks(storage, session["id"]),
                                storage.get_availability_map())
+    reveal_expected = not counting.blind_count_enabled(storage)
     section_title(f"Conteo abierto: {session['name']}", icon=":material/fact_check:",
                   caption=f"{counting.describe_scope(session['scope'])} · abierto por {session['started_by'] or '—'} "
                           f"el {traceability.fmt_local(session['started_at'])}")
-    _render_focus(storage, user, session, items, report)
+    _render_focus(storage, user, session, items, report, reveal_expected=reveal_expected)
     st.caption(":material/nfc: Toca el chip NFC de cada producto con el teléfono: queda verificado aquí y esta "
                f"lista se actualiza sola cada {AUTO_REFRESH_SECONDS} s (también con los toques de otros teléfonos).")
     _render_mark_form(storage, user, session, items)

@@ -38,6 +38,12 @@ METHOD_LABELS = {METHOD_NFC: "Chip NFC", METHOD_CODE: "Código"}
 
 MAX_LIST = 500  # tope de codigos guardados por lista en el resumen (la celda del Excel es finita)
 
+# Conteo ciego (v1.23, apagado por omision): mientras el conteo esta abierto, quien
+# cuenta no ve cuanto "deberia haber" (evita que ajuste el conteo a lo esperado).
+# El resumen al cerrar siempre muestra esperado, contado y diferencia: ver close_session.
+SETTING_BLIND_COUNT = "conteo_ciego"
+_BLIND_ON = {"1", "true", "si", "sí", "yes", "on", "activado"}
+
 
 # ---------------------------------------------------------------------------
 # Utilidades
@@ -335,6 +341,24 @@ def progress(session: dict, items: list, marks: list, availability: dict) -> dic
 
 def can_adjust(actor: dict) -> bool:
     return permissions.has_cap(actor, permissions.CAP_ADJUST_COUNTS)
+
+
+def blind_count_enabled(storage) -> bool:
+    """¿El conteo ciego está activo? No por omisión; un ajuste ilegible nunca lo activa."""
+    try:
+        value = str(storage.get_setting(SETTING_BLIND_COUNT, "0") or "").strip().lower()
+    except Exception:
+        value = "0"
+    return value in _BLIND_ON
+
+
+def set_blind_count(storage, actor: dict, on: bool):
+    """Activa o apaga el conteo ciego (solo administrador). Devuelve (ok, mensaje)."""
+    permissions.require_cap(actor, permissions.CAP_ADJUST_COUNTS, "Solo un administrador activa el conteo ciego.")
+    storage.set_setting(SETTING_BLIND_COUNT, "1" if on else "0", (actor or {}).get("institutional_email", ""))
+    message = ("Conteo ciego activado: mientras el conteo esté abierto no se muestra la cantidad esperada."
+               if on else "Conteo ciego desactivado: vuelve a mostrarse la cantidad esperada durante el conteo.")
+    return True, message
 
 
 def apply_adjustments(storage, session: dict, actor: dict, rows: list):
