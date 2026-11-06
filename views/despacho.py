@@ -13,7 +13,7 @@ import json
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import dispatch, live_data, loans, ludica, permissions, pick_route, picking, returns, service_requests, traceability
+from core import dispatch, event_log, live_data, loans, ludica, options, permissions, pick_route, picking, returns, service_requests, traceability
 from core.ui import (
     card, card_header, empty_state, esc, guard_cap, page_header, persistent_tabs, section_title,
     stat_cards,
@@ -448,11 +448,11 @@ def _picking_progress(storage, user: dict, request_id: str, needed: int) -> None
     c1, c2 = st.columns(2)
     if c1.button("Deshacer última", disabled=not (readings or route["done"]), key=f"undo_pick_{request_id}",
                  use_container_width=True):
-        dispatch.undo_reading(user, request_id)
+        dispatch.undo_reading(user, request_id, storage)
         st.rerun()
     if c2.button("Cerrar panel", key=f"close_pick_{request_id}", use_container_width=True,
                  help="Descarta las lecturas de este panel; el pedido sigue tomado."):
-        dispatch.abandon_picking(user, request_id)
+        dispatch.abandon_picking(user, request_id, storage)
         st.rerun()
 
 
@@ -574,12 +574,37 @@ def _reports(storage, user: dict) -> None:
     # Los CSV se generan al pulsar el botón (con miles de eventos tardaban segundos en cada recarga).
     st.download_button("Descargar tiempos CSV", lambda: dispatch.dispatch_csv(storage, user),
                        "tiempos-despacho.csv", "text/csv", use_container_width=True)
+    if event_log.enabled(storage):
+        _event_log_section(storage, user)
+        return
     st.download_button(
         "Descargar eventos de la lúdica (CSV sin datos personales)", lambda: ludica.events_csv(storage, user),
         f"eventos-{ludica.session_id(storage)}.csv", "text/csv", use_container_width=True,
         help="Columnas: sesion_id, timestamp, estacion, tipo_evento, item_codigo, transaccion_id, "
              "usuario_sim, resultado_sistema. Los identificadores van seudonimizados.",
     )
+
+
+def _event_log_section(storage, user: dict) -> None:
+    """Registro de eventos único (M3), por sesión. La hora se guarda en UTC y aquí se muestra en Bogotá."""
+    section_title("Registro de eventos", icon=":material/receipt_long:",
+                  caption="Una fila por hecho (lecturas, reintentos, confirmaciones manuales, cambios de etapa, "
+                          "devoluciones y conteos), ordenadas por la hora del servidor.")
+    current = ludica.session_id(storage)
+    choices = ["Todas"] + sorted(set(event_log.sessions(storage)) | {current})
+    picked = st.selectbox("Sesión de la lúdica", choices, index=choices.index(current), key="event_log_session")
+    session = None if picked == "Todas" else picked
+    st.download_button(
+        "Descargar registro de eventos (CSV sin datos personales)",
+        lambda: event_log.csv_bytes(storage, user, session),
+        f"registro-{picked if session else 'todas'}.csv", "text/csv", use_container_width=True,
+        help="Columnas: " + ", ".join(event_log.COLUMNS) + ". La hora va en UTC (ISO 8601).",
+    )
+    if st.toggle("Ver los últimos eventos", key="event_log_preview"):
+        rows = event_log.rows(storage, session)
+        st.caption(f"{len(rows)} evento(s) · se muestran los 200 más recientes · hora en {event_log.ZONE_LABEL}.")
+        st.dataframe([{"Hora": event_log.bogota_text(row["timestamp"]), **row} for row in rows[-200:]],
+                     use_container_width=True, hide_index=True)
 
 
 def _settings(storage, user: dict) -> None:
@@ -651,6 +676,20 @@ def _settings(storage, user: dict) -> None:
         ok, message = loans.set_self_checkout_mode(storage, user, mode)
         _notice(ok, message)
         st.rerun()
+    _research_options(storage, user)
+
+
+def _research_options(storage, user: dict) -> None:
+    """Mejoras opcionales: todas apagadas por omisión (la app funciona como antes) y cada cambio queda registrado."""
+    section_title("Mejoras opcionales para la investigación", icon=":material/science:",
+                  caption="Apagadas por omisión: así la app se comporta como antes. Solo el administrador las cambia.")
+    for key, (title, help_text) in options.FLAGS.items():
+        current = options.enabled(storage, key)
+        wanted = st.toggle(title, value=current, key=f"option_toggle_{key}", help=help_text)
+        if st.button("Guardar", key=f"option_save_{key}", type="primary", disabled=wanted == current):
+            ok, message = options.set_enabled(storage, user, key, wanted)
+            _notice(ok, message)
+            st.rerun()
 
 
 FOCUS_KEY = "despacho_focus"       # pestaña que debe abrirse (la fija Inicio al pulsar una tarjeta de trabajo)

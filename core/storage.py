@@ -69,6 +69,9 @@ SHEET_COLUMNS = {
         "email_error", "created_at", "updated_at",
         # Pedido de varios productos: todas sus líneas comparten este código (vacío = pedido de un solo producto).
         "order_id",
+        # Registro de eventos (core/event_log.py, opción registro_eventos): sesión de la lúdica y escenario
+        # activos al crear la solicitud. Vacíos con la opción apagada; las bases antiguas los completan al cargar.
+        "ludica_session", "scenario",
     ],
     "item_history": [
         "id", "item_id", "timestamp", "type", "quantity_change",
@@ -85,6 +88,9 @@ SHEET_COLUMNS = {
         "id", "event_type", "request_id", "seq", "item_id", "loan_id",
         "user_id", "owner_id", "actor_id", "actor_name", "actor_email",
         "actor_role", "receipt", "details", "created_at",
+        # Sello del registro de eventos (core/event_log.py): sesión de la lúdica y escenario (A/B/C) activos
+        # al escribir el evento. Vacíos con registro_eventos apagado.
+        "ludica_session", "scenario",
     ],
     # Registro de correos automaticos (core/email_events.py): que se envio, a
     # quien y si el servidor lo acepto. Se conservan los ultimos
@@ -2214,10 +2220,11 @@ class LabStorage:
 
     def create_service_requests(self, rows: list, user: dict, order_id: str = "") -> list:
         """Crea varias solicitudes en UNA escritura (un pedido de varios productos: todo o nada)."""
+        stamp = _event_stamp(self)       # se lee ANTES del bloqueo de escritura
         with _db_write():
             dfs = _read_excel()
             now = _now_str()
-            created = [self._service_request_row(data, user, now, order_id) for data in rows]
+            created = [{**self._service_request_row(data, user, now, order_id), **stamp} for data in rows]
             dfs["service_requests"] = pd.concat(
                 [dfs["service_requests"], pd.DataFrame(created)], ignore_index=True
             )
@@ -2289,6 +2296,7 @@ class LabStorage:
 
         actor = dict(actor or {})
         now = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+        stamp = _event_stamp(self)       # se lee ANTES del bloqueo de escritura
         with _db_write():
             dfs = _read_excel()
             requests = dfs["service_requests"]
@@ -2327,7 +2335,7 @@ class LabStorage:
                     "actor_email": actor.get("institutional_email", ""),
                     "actor_role": actor.get("role", ""), "receipt": "",
                     "details": json.dumps(payload, ensure_ascii=False, default=str),
-                    "created_at": now,
+                    "created_at": now, **stamp,
                 })
                 next_seq += 1
                 return row
@@ -2587,9 +2595,12 @@ class LabStorage:
 
     def add_trace_event(self, event: dict) -> dict:
         """Append-only. Asigna ``seq`` por solicitud dentro del bloqueo."""
+        stamp = _event_stamp(self)       # se lee ANTES del bloqueo de escritura
         with _db_write():
             dfs = _read_excel()
             payload = dict(event or {})
+            for key, value in stamp.items():
+                payload.setdefault(key, value)
             payload.setdefault("owner_id", payload.get("user_id", ""))
             payload.setdefault("user_id", payload.get("owner_id", ""))
             request_id = str(payload.get("request_id") or "")
@@ -2872,6 +2883,16 @@ def _admin_audit_row(actor: dict, event_type: str, details: dict) -> dict:
         "actor_email": actor.get("institutional_email", ""), "actor_role": actor.get("role", ""),
         "details": json.dumps(details, ensure_ascii=False),
     })
+
+
+def _event_stamp(storage) -> dict:
+    """Sello del registro de eventos (core/event_log.py): ``{}`` con la opción apagada. Nunca impide escribir."""
+    try:
+        from core import event_log   # diferido: event_log depende de módulos que importan este
+
+        return event_log.stamp_fields(storage)
+    except Exception:
+        return {}
 
 
 def _trace_event_row(event: dict) -> dict:

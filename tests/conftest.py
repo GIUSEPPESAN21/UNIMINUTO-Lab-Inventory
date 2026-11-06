@@ -233,6 +233,9 @@ class FakeStorage:
         return self.create_service_requests([data], user)[0]
 
     def create_service_requests(self, rows, user, order_id=""):
+        from core import event_log
+
+        stamp = event_log.stamp_fields(self)
         created = []
         for data in rows:
             row = {
@@ -241,6 +244,7 @@ class FakeStorage:
                 "requester_email": user.get("institutional_email", ""),
                 "status": "pending", "reviewed_by": "", "review_notes": "",
                 "email_notified": False, "email_error": "", "order_id": order_id or data.get("order_id", ""),
+                **stamp,
             }
             self.service_requests[row["id"]] = row
             created.append(dict(row))
@@ -292,12 +296,15 @@ class FakeStorage:
 
     # --- trazabilidad ---
     def add_trace_event(self, event):
+        from core import event_log
+
         columns = (
             "event_type", "request_id", "seq", "item_id", "loan_id", "user_id", "owner_id",
             "actor_id", "actor_name", "actor_email", "actor_role", "receipt", "details",
-            "created_at",
+            "created_at", "ludica_session", "scenario",
         )
         row = {column: "" for column in columns}
+        row.update(event_log.stamp_fields(self))           # mismo sello que LabStorage (M3)
         row.update({key: value for key, value in event.items() if key in columns})
         row["owner_id"] = row["owner_id"] or row["user_id"]
         if row["request_id"] and not row["seq"]:
@@ -376,6 +383,14 @@ class FakeStorage:
 
     def get_item_history(self, item_id):
         return [dict(row) for row in self.history if row.get("item_id") == item_id]
+
+    def get_events_index(self):
+        """Mismo contrato que LabStorage.get_events_index: request_id -> eventos en orden."""
+        index = {}
+        for row in self.get_trace_events():
+            if row.get("request_id"):
+                index.setdefault(row["request_id"], []).append(row)
+        return index
 
 
 @pytest.fixture
