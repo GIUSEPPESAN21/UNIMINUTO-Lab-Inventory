@@ -6,6 +6,7 @@ Se usa un GitHub simulado que imita la semantica de la API de contenidos: GET
 devuelve sha/contenido (o 404), PUT exige el sha vigente (409 si esta obsoleto)."""
 
 import base64
+import glob
 import hashlib
 import os
 import threading
@@ -296,7 +297,7 @@ def test_failed_write_leaves_previous_excel_intact(github, monkeypatch):
             _add(db, "LAB-002")
 
     assert _local_bytes() == before                         # nunca un archivo a medias
-    assert not os.path.exists(f"{sm.EXCEL_PATH}.tmp")       # sin basura temporal
+    assert not glob.glob(f"{sm.EXCEL_PATH}.*.tmp")           # sin basura temporal (nombre unico por escritura)
 
 
 def test_describe_and_request_helper_surface_final_network_error(monkeypatch):
