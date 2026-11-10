@@ -66,7 +66,7 @@ def render():
                     )
                     public = auth.public_user(updated)
                     st.session_state.user = public
-                    token, claims = session.issue_token(public)
+                    token, claims = session.issue_token(public, storage=storage)
                     st.session_state.session_token = token
                     st.session_state.session_claims = claims
                     if token:
@@ -119,7 +119,7 @@ def render_forced_password_change():
                 else:
                     st.session_state.user = updated
                     st.session_state.login_at = changed_at
-                    token, claims = session.issue_token(updated)
+                    token, claims = session.issue_token(updated, storage=storage)
                     st.session_state.session_token = token
                     st.session_state.session_claims = claims
                     if token:

@@ -175,12 +175,13 @@ def render():
                             else:
                                 st.session_state.user = user
                                 st.session_state.login_at = datetime.now(timezone.utc)
-                                token, claims = session.issue_token(user)
+                                token, claims = session.issue_token(user, storage=storage)
                                 st.session_state.session_token = token
                                 st.session_state.session_claims = claims
                                 if token:
                                     session.queue_cookie(
-                                        token, persistent=options.enabled(storage, options.NFC_SESSION_PERSISTENT)
+                                        token, persistent=options.enabled(storage, options.NFC_SESSION_PERSISTENT),
+                                        storage=storage,
                                     )
                                 session.audit(storage, "session_login", user)
                                 st.rerun()

@@ -143,10 +143,11 @@ if session.enabled():
     # auto-actualización nunca cuenta como actividad. Se reescribe la cookie a
     # lo sumo una vez por minuto y nunca se escribe en el Excel.
     if session.needs_rotation(session_claims):
-        rotated, claims = session.issue_token(session_user, claims=session_claims)
+        rotated, claims = session.issue_token(session_user, claims=session_claims, storage=storage)
         st.session_state.session_token = rotated
         st.session_state.session_claims = claims
-        session.queue_cookie(rotated, persistent=options.enabled(storage, options.NFC_SESSION_PERSISTENT))
+        session.queue_cookie(rotated, persistent=options.enabled(storage, options.NFC_SESSION_PERSISTENT),
+                              storage=storage)
     else:
         st.session_state.session_claims = session_claims
 user = session_user

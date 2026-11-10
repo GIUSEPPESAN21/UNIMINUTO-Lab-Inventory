@@ -229,12 +229,94 @@ def _cookie_bridge_script():
         st.session_state.step = ""
         session.queue_cookie(clear=True, persistent=True)  # un borrado siempre es Max-Age=0, aunque pida persistent
         st.rerun()
+    if step == "persistent_with_storage":
+        # Como app.py/views/login.py: pasa `storage` para que el Max-Age respete lo que el
+        # administrador haya guardado en Ajustes (ver test_max_hours_option de mas abajo).
+        st.session_state.step = ""
+        session.queue_cookie("token-de-prueba", persistent=True, storage=st.session_state.get("storage"))
+        st.rerun()
     session.finish_cookie_command()
 
 
 def _cookie_writes(at) -> list:
     return [element.proto.srcdoc for element in at.get("iframe")
             if session.COOKIE_NAME in getattr(element.proto, "srcdoc", "")]
+
+
+# --- Duracion maxima de la sesion configurable desde Ajustes (auditoria del PR, punto 3) --------
+#
+# Antes de este cambio, `max_hours()` solo leia el Secret SESSION_MAX_HOURS (o 12h si no estaba
+# puesto): un administrador NO podia ajustarlo desde Despacho -> Ajustes como las demas opciones
+# numericas (p. ej. options.DOUBLE_READ_WINDOW en core/reading.py). `session.max_hours(storage)` y
+# `session.set_max_hours(...)` siguen el mismo patron (options.number/options.set_number) y, sin
+# `storage` o sin nada guardado todavia, se comportan exactamente como antes.
+
+ADMIN_FOR_SETTINGS = {"id": "m1", "full_name": "Administradora", "role": "maestro",
+                      "institutional_email": "admin@uniminuto.edu.co"}
+NON_ADMIN_FOR_SETTINGS = {"id": "f1", "full_name": "Profesor", "role": "profesor",
+                          "institutional_email": "prof@uniminuto.edu.co"}
+
+
+def test_max_hours_without_storage_still_only_uses_the_secret(secrets):
+    """Las llamadas de antes de este cambio (sin storage) no se ven afectadas."""
+    assert session.max_hours() == session.DEFAULT_MAX_HOURS
+    secrets["SESSION_MAX_HOURS"] = 5
+    assert session.max_hours() == 5
+
+
+def test_max_hours_with_storage_but_nothing_saved_yet_matches_the_old_default(secrets, storage):
+    """Activar/usar la opcion con `storage` pero SIN que un administrador haya guardado nada en
+    Ajustes todavia no cambia nada: sigue el mismo valor de siempre (Secret o 12h)."""
+    assert session.max_hours(storage) == session.DEFAULT_MAX_HOURS
+    secrets["SESSION_MAX_HOURS"] = 6
+    assert session.max_hours(storage) == 6
+
+
+def test_only_an_administrator_can_save_a_new_max_hours(secrets, storage):
+    with pytest.raises(PermissionError):
+        session.set_max_hours(storage, NON_ADMIN_FOR_SETTINGS, 8)
+    assert session.max_hours(storage) == session.DEFAULT_MAX_HOURS   # el intento no cambio nada
+
+
+def test_max_hours_rejects_a_value_outside_max_hours_range(secrets, storage):
+    low, high = session.MAX_HOURS_RANGE
+    ok, message = session.set_max_hours(storage, ADMIN_FOR_SETTINGS, high + 1)
+    assert not ok and message
+    assert session.max_hours(storage) == session.DEFAULT_MAX_HOURS   # sigue el valor de siempre
+    ok, message = session.set_max_hours(storage, ADMIN_FOR_SETTINGS, low - 1)
+    assert not ok
+
+
+def test_an_administrator_can_save_a_shorter_max_hours_for_a_shared_lab_computer(secrets, storage):
+    """El caso que motiva el cambio: un turno de laboratorio (equipos compartidos) es mas corto
+    que las 12h de omision."""
+    ok, message = session.set_max_hours(storage, ADMIN_FOR_SETTINGS, 8)
+    assert ok and message
+    assert session.max_hours(storage) == 8
+    assert session.max_hours() == session.DEFAULT_MAX_HOURS   # sin storage, el valor de siempre
+
+
+def test_the_saved_max_hours_changes_the_absolute_expiration_of_new_tokens(secrets, storage, sample_user):
+    session.set_max_hours(storage, ADMIN_FOR_SETTINGS, 8)
+    token, claims = session.issue_token(sample_user, now=_dt(NOW), storage=storage)
+    assert token
+    assert claims["exp"] == claims["iat"] + 8 * 3600
+    # Y verify_token rechaza mas alla de esas 8h (no de las 12h de omision).
+    restored, _, reason = session.verify_token(
+        token, _VerifyStorage(sample_user), now=_dt(NOW + 8 * 3600 + 1)
+    )
+    assert restored is None and "duración máxima" in reason
+
+
+def test_the_saved_max_hours_changes_the_persistent_cookie_max_age(secrets, storage):
+    ok, _ = session.set_max_hours(storage, ADMIN_FOR_SETTINGS, 8)
+    assert ok
+    at = AppTest.from_function(_cookie_bridge_script)
+    at.session_state["storage"] = storage
+    at.session_state["step"] = "persistent_with_storage"
+    at.run()
+    writes = _cookie_writes(at)
+    assert writes and f"Max-Age={8 * 3600}" in writes[0]
 
 
 def test_a_persistent_cookie_write_includes_a_max_age_tied_to_max_hours(secrets):

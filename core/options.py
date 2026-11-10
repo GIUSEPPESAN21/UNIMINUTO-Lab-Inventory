@@ -20,6 +20,7 @@ DOUBLE_READ_WINDOW = "ventana_doble_lectura"  # M5: segundos (número, no interr
 COUNT_BY_LOCATION = "conteo_por_ubicacion"   # M6: continuidad y control del conteo por ubicación
 RESEARCH_METRICS = "metricas_investigacion"  # M7: métricas de la lúdica (solo lectura)
 NFC_SESSION_PERSISTENT = "nfc_sesion_persistente"   # cookie persistente + espera del puente + versión global
+SESSION_MAX_HOURS = "sesion_max_horas"       # horas (número); techo de la sesión/cookie persistente, ver core/session.py
 
 # clave -> (título, explicación) para Despacho → Ajustes.
 FLAGS = {

@@ -21,6 +21,8 @@ from core.config import safe_secret
 COOKIE_NAME = "uniminuto_lab_session"
 DEFAULT_IDLE_MINUTES = 30
 DEFAULT_MAX_HOURS = 12
+MAX_HOURS_SETTING = options.SESSION_MAX_HOURS   # Despacho -> Ajustes (junto a nfc_sesion_persistente)
+MAX_HOURS_RANGE = (1, 24)                        # horas; acota lo que un administrador puede guardar
 ROTATE_EVERY_SECONDS = 60
 _REVOKED_LIMIT = 10000
 _revoked_lock = threading.Lock()
@@ -53,8 +55,28 @@ def idle_minutes() -> int:
     return _integer("SESSION_IDLE_MINUTES", DEFAULT_IDLE_MINUTES)
 
 
-def max_hours() -> int:
-    return _integer("SESSION_MAX_HOURS", DEFAULT_MAX_HOURS)
+def max_hours(storage=None) -> int:
+    """Horas hasta el vencimiento ABSOLUTO del token (techo fijo: a diferencia de ``idle_minutes``,
+    la actividad no lo extiende; ver ``issue_token``, que fija ``exp`` una sola vez por sesión).
+
+    Por omisión viene del Secret ``SESSION_MAX_HOURS`` (``DEFAULT_MAX_HOURS`` = 12 h si no está
+    puesto). Con ``storage``, un administrador puede guardar su propio valor desde Despacho ->
+    Ajustes -> Mejoras opcionales (junto a ``nfc_sesion_persistente``, acotado a
+    ``MAX_HOURS_RANGE``); si todavía no lo ha guardado, ``options.number`` devuelve ese mismo
+    valor de siempre (el Secret o 12h), así que nada cambia para quien no lo toque."""
+    secret_default = _integer("SESSION_MAX_HOURS", DEFAULT_MAX_HOURS)
+    if storage is None:
+        return secret_default
+    try:
+        value = options.number(storage, MAX_HOURS_SETTING, secret_default, *MAX_HOURS_RANGE)
+    except Exception:  # un storage sin get_setting (prueba antigua, por ejemplo) no debe romper nada
+        return secret_default
+    return int(value) if value else secret_default
+
+
+def set_max_hours(storage, actor: dict, value):
+    """Guarda cuántas horas dura la sesión (y la cookie persistente) como máximo. Solo administrador."""
+    return options.set_number(storage, actor, MAX_HOURS_SETTING, value, *MAX_HOURS_RANGE)
 
 
 def tab_close_grace_seconds() -> int:
@@ -131,8 +153,12 @@ def token_version() -> int:
         return 1
 
 
-def issue_token(user: dict, now=None, claims: dict = None) -> tuple:
-    """Devuelve (token, claims). Sin SESSION_SECRET devuelve ("", {})."""
+def issue_token(user: dict, now=None, claims: dict = None, storage=None) -> tuple:
+    """Devuelve (token, claims). Sin SESSION_SECRET devuelve ("", {}).
+
+    ``storage`` es opcional (compatibilidad con las llamadas existentes, que no lo pasaban):
+    sin él, el techo de la sesión (``exp``) usa el valor de siempre (Secret o 12h); con él,
+    respeta lo que el administrador haya guardado en Ajustes (ver ``max_hours``)."""
     secret = session_secret()
     if not secret or not user:
         return "", {}
@@ -144,7 +170,7 @@ def issue_token(user: dict, now=None, claims: dict = None) -> tuple:
         "epoch": int(user.get("session_epoch") or 0),
         "iat": issued,
         "last": int(moment.timestamp()),
-        "exp": issued + max_hours() * 3600,
+        "exp": issued + max_hours(storage) * 3600,
         "sid": str(previous.get("sid") or secrets.token_urlsafe(18)),
         "ver": token_version(),
     }
@@ -278,7 +304,7 @@ def cookie_from_browser():
 _COMMAND_KEY = "session_cookie_command"
 
 
-def queue_cookie(token: str = "", clear: bool = False, persistent: bool = False) -> None:
+def queue_cookie(token: str = "", clear: bool = False, persistent: bool = False, storage=None) -> None:
     """Programa escribir o borrar la cookie de sesión.
 
     La ESCRITURA se vuelve a emitir al inicio de cada ejecución hasta que una
@@ -293,11 +319,15 @@ def queue_cookie(token: str = "", clear: bool = False, persistent: bool = False)
     ``persistent`` (nfc_sesion_persistente, apagada por omisión): si es True, la escritura incluye
     ``Max-Age`` para que la cookie sobreviva a cerrar la pestaña o el navegador, acotada por
     ``max_hours()``. Apagada, la cookie sigue siendo de sesión del navegador (sin ``Max-Age``), que
-    es el comportamiento de siempre."""
+    es el comportamiento de siempre.
+
+    ``storage`` es opcional: solo se usa para que ese ``Max-Age`` respete lo que el administrador
+    haya guardado en Ajustes (ver ``max_hours``); sin él, usa el valor de siempre (Secret o 12h)."""
     try:
         import streamlit as st
         st.session_state[_COMMAND_KEY] = {
             "token": token, "clear": bool(clear), "emitted": False, "persistent": bool(persistent),
+            "storage": storage,
         }
     except Exception:
         pass
@@ -345,9 +375,10 @@ def _emit_cookie(command: dict) -> None:
     if clear:
         max_age = "; Max-Age=0"
     elif command.get("persistent"):
-        # nfc_sesion_persistente: Max-Age acotado por max_hours(); la revalidación de exp/idle/epoch
-        # en verify_token (en CADA carga) sigue siendo la que de verdad decide si el token aún sirve.
-        max_age = f"; Max-Age={max_hours() * 3600}"
+        # nfc_sesion_persistente: Max-Age acotado por max_hours() (respeta lo que el administrador
+        # haya guardado en Ajustes, ver queue_cookie); la revalidación de exp/idle/epoch en
+        # verify_token (en CADA carga) sigue siendo la que de verdad decide si el token aún sirve.
+        max_age = f"; Max-Age={max_hours(command.get('storage')) * 3600}"
     else:
         max_age = ""
     html = f"""<script>
