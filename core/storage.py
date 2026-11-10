@@ -407,13 +407,42 @@ def _github_request(method: str, url: str, attempts: int = 3, session=None, **kw
     raise last_exc
 
 
+_ATOMIC_REPLACE_MAX_ATTEMPTS = 5
+_ATOMIC_REPLACE_BASE_DELAY_SECONDS = 0.05  # 50ms, se duplica en cada reintento
+
+
 def _atomic_write_bytes(path: str, data: bytes) -> None:
-    tmp_path = f"{path}.tmp"
-    with open(tmp_path, "wb") as f:
-        f.write(data)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp_path, path)
+    """Escribe ``data`` en ``path`` sin dejar nunca un archivo a medias.
+
+    El temporal usa un sufijo unico por llamada (dos escrituras concurrentes
+    nunca compiten por el mismo archivo) y el reemplazo final reintenta ante
+    ``PermissionError``: en Windows, un lector que todavia no solto su handle
+    sobre ``path`` puede bloquear el rename por una fraccion de segundo."""
+    tmp_path = f"{path}.{uuid.uuid4().hex}.tmp"
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        delay = _ATOMIC_REPLACE_BASE_DELAY_SECONDS
+        for attempt in range(1, _ATOMIC_REPLACE_MAX_ATTEMPTS + 1):
+            try:
+                os.replace(tmp_path, path)
+                return
+            except PermissionError:
+                if attempt == _ATOMIC_REPLACE_MAX_ATTEMPTS:
+                    raise PermissionError(
+                        f"No se pudo reemplazar '{path}': el archivo sigue abierto por "
+                        f"otro proceso tras {_ATOMIC_REPLACE_MAX_ATTEMPTS} intentos."
+                    ) from None
+                time.sleep(delay)
+                delay *= 2
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 _MIN_REMOTE_CHECK_SECONDS = 10
@@ -849,24 +878,28 @@ def _load_cache() -> dict:
         if _cached_dfs is not None:
             return _cached_dfs
         try:
-            xls = pd.ExcelFile(EXCEL_PATH, engine="openpyxl")
-            dfs = {}
-            for sheet, cols in SHEET_COLUMNS.items():
-                if sheet in xls.sheet_names:
-                    # keep_default_na=False + fillna: las celdas vacias llegan como "" (no
-                    # como NaN, que rompia .strip() al editar items tras recargar el Excel)
-                    # y un texto legitimo como "NA" o "None" ya no se convierte en nulo.
-                    # astype(object): desde pandas 3, dtype=str crea columnas de texto
-                    # estrictas que rechazan numeros (editar la cantidad de un item tras
-                    # reiniciar fallaba con TypeError); object conserva el comportamiento
-                    # de pandas 2 (cada celda leida sigue siendo texto).
-                    df = xls.parse(sheet, dtype=str, keep_default_na=False).fillna("").astype(object)
-                    for col in cols:
-                        if col not in df.columns:
-                            df[col] = ""
-                    dfs[sheet] = df[cols]
-                else:
-                    dfs[sheet] = pd.DataFrame(columns=cols)
+            # El ``with`` cierra el handle de ``openpyxl`` sobre EXCEL_PATH en cuanto
+            # termina de leerse: en Windows, un handle que queda abierto por el ciclo
+            # de recoleccion de basura bloquea el os.replace() de la siguiente escritura
+            # atomica (PermissionError [WinError 5]).
+            with pd.ExcelFile(EXCEL_PATH, engine="openpyxl") as xls:
+                dfs = {}
+                for sheet, cols in SHEET_COLUMNS.items():
+                    if sheet in xls.sheet_names:
+                        # keep_default_na=False + fillna: las celdas vacias llegan como "" (no
+                        # como NaN, que rompia .strip() al editar items tras recargar el Excel)
+                        # y un texto legitimo como "NA" o "None" ya no se convierte en nulo.
+                        # astype(object): desde pandas 3, dtype=str crea columnas de texto
+                        # estrictas que rechazan numeros (editar la cantidad de un item tras
+                        # reiniciar fallaba con TypeError); object conserva el comportamiento
+                        # de pandas 2 (cada celda leida sigue siendo texto).
+                        df = xls.parse(sheet, dtype=str, keep_default_na=False).fillna("").astype(object)
+                        for col in cols:
+                            if col not in df.columns:
+                                df[col] = ""
+                        dfs[sheet] = df[cols]
+                    else:
+                        dfs[sheet] = pd.DataFrame(columns=cols)
         except FileNotFoundError:
             dfs = {sheet: pd.DataFrame(columns=cols) for sheet, cols in SHEET_COLUMNS.items()}
         _normalize_legacy_columns(dfs)
@@ -977,14 +1010,7 @@ def _serialize_workbook(dfs: dict) -> None:
         logger.exception("El escritor rápido falló; se usa pandas para guardar el libro.")
         buffer = io.BytesIO()
         excel_safe.write_frames(buffer, dfs)         # sin fórmulas accidentales ni caracteres de control
-    try:
-        _atomic_write_bytes(EXCEL_PATH, buffer.getvalue())
-    except Exception:
-        try:
-            os.remove(f"{EXCEL_PATH}.tmp")
-        except OSError:
-            pass
-        raise
+    _atomic_write_bytes(EXCEL_PATH, buffer.getvalue())  # limpia su propio temporal si falla
 
 
 def _write_excel(dfs: dict) -> None:
