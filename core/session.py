@@ -15,6 +15,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from core import options
 from core.config import safe_secret
 
 COOKIE_NAME = "uniminuto_lab_session"
@@ -116,6 +117,20 @@ def _sign(body: str, secret: str) -> str:
     return _b64(hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest())
 
 
+def token_version() -> int:
+    """Versión global de los tokens de sesión (Secret ``SESSION_TOKEN_VERSION``, 1 por omisión).
+
+    Subirla (p. ej. de 1 a 2) invalida TODOS los tokens persistentes ya emitidos, sin tocar el
+    ``session_epoch`` de cada usuario; es el equivalente a un ``kid`` global. Solo se EXIGE (ver
+    ``verify_token``) con la opción ``nfc_sesion_persistente`` activa: apagada, el claim ``ver`` se
+    guarda igual en el token (no cambia su tamaño ni su firma de forma incompatible) pero nunca se
+    revisa, así que el comportamiento de siempre no cambia."""
+    try:
+        return int(safe_secret("SESSION_TOKEN_VERSION", 1) or 1)
+    except (TypeError, ValueError):
+        return 1
+
+
 def issue_token(user: dict, now=None, claims: dict = None) -> tuple:
     """Devuelve (token, claims). Sin SESSION_SECRET devuelve ("", {})."""
     secret = session_secret()
@@ -131,6 +146,7 @@ def issue_token(user: dict, now=None, claims: dict = None) -> tuple:
         "last": int(moment.timestamp()),
         "exp": issued + max_hours() * 3600,
         "sid": str(previous.get("sid") or secrets.token_urlsafe(18)),
+        "ver": token_version(),
     }
     body = _b64(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"))
     return f"{body}.{_sign(body, secret)}", payload
@@ -208,6 +224,11 @@ def verify_token(token: str, storage, now=None) -> tuple:
         return None, None, "Tu cuenta no está disponible."
     if int(user.get("session_epoch") or 0) != int(claims.get("epoch") or 0):
         return None, None, "La sesión fue revocada. Inicia sesión de nuevo."
+    # nfc_sesion_persistente: con la opción apagada esta comprobación no se hace (comportamiento de
+    # siempre); activa, un token de una versión anterior a SESSION_TOKEN_VERSION queda revocado para
+    # TODOS los usuarios de una sola vez, aunque su session_epoch individual no haya cambiado.
+    if options.enabled(storage, options.NFC_SESSION_PERSISTENT) and int(claims.get("ver") or 1) != token_version():
+        return None, None, "La sesión fue revocada (nueva versión). Inicia sesión de nuevo."
     from core.auth import public_user
     return public_user(user), claims, None
 
@@ -223,6 +244,12 @@ def cookie_from_context() -> str:
 _BRIDGE_DIR = Path(__file__).resolve().parent / "session_bridge"
 _BRIDGE_KEY = "session_cookie_bridge"
 RESTORE_DONE_KEY = "session_restore_done"   # esta pestaña ya intentó recuperar la sesión desde la cookie
+# nfc_sesion_persistente: mientras el puente (JS) no contesta (cookie_from_browser() devuelve None), la
+# pestaña espera en vez de decidir ya que hay que iniciar sesión (causa (c) del diagnóstico). Acotado para
+# no quedar esperando para siempre si el puente nunca responde (navegador sin JS, componente roto, etc.).
+RESTORE_WAIT_KEY = "session_restore_wait_tries"
+RESTORE_WAIT_LIMIT = 2
+RESTORE_WAIT_SECONDS = 0.3
 _bridge = None
 
 
@@ -251,7 +278,7 @@ def cookie_from_browser():
 _COMMAND_KEY = "session_cookie_command"
 
 
-def queue_cookie(token: str = "", clear: bool = False) -> None:
+def queue_cookie(token: str = "", clear: bool = False, persistent: bool = False) -> None:
     """Programa escribir o borrar la cookie de sesión.
 
     La ESCRITURA se vuelve a emitir al inicio de cada ejecución hasta que una
@@ -261,10 +288,17 @@ def queue_cookie(token: str = "", clear: bool = False) -> None:
     desde un toque NFC (el toque lleva al conteo, al despacho o a la ruta), la
     cookie nunca llegaba y cada toque siguiente, que abre una pestaña nueva, volvía
     a pedir el inicio de sesión. El BORRADO se emite una sola vez, como antes: la
-    revocación en el servidor ya invalida el token."""
+    revocación en el servidor ya invalida el token.
+
+    ``persistent`` (nfc_sesion_persistente, apagada por omisión): si es True, la escritura incluye
+    ``Max-Age`` para que la cookie sobreviva a cerrar la pestaña o el navegador, acotada por
+    ``max_hours()``. Apagada, la cookie sigue siendo de sesión del navegador (sin ``Max-Age``), que
+    es el comportamiento de siempre."""
     try:
         import streamlit as st
-        st.session_state[_COMMAND_KEY] = {"token": token, "clear": bool(clear), "emitted": False}
+        st.session_state[_COMMAND_KEY] = {
+            "token": token, "clear": bool(clear), "emitted": False, "persistent": bool(persistent),
+        }
     except Exception:
         pass
 
@@ -308,7 +342,14 @@ def _emit_cookie(command: dict) -> None:
     clear = bool(command.get("clear"))
     name_js = json.dumps(COOKIE_NAME)
     value_js = json.dumps("" if clear else token)
-    max_age = "; Max-Age=0" if clear else ""
+    if clear:
+        max_age = "; Max-Age=0"
+    elif command.get("persistent"):
+        # nfc_sesion_persistente: Max-Age acotado por max_hours(); la revalidación de exp/idle/epoch
+        # en verify_token (en CADA carga) sigue siendo la que de verdad decide si el token aún sirve.
+        max_age = f"; Max-Age={max_hours() * 3600}"
+    else:
+        max_age = ""
     html = f"""<script>
 const name={name_js}; const value={value_js};
 // Este script corre en un iframe about:srcdoc: el protocolo real es el de la página de la app.

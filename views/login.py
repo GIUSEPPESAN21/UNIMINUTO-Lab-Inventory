@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 import streamlit as st
 
-from core import auth, session
+from core import auth, options, session
 from core.ui import esc, footer, icon_html, logo_data_uri
 
 PENDING_KEY = "pending_registration"
@@ -179,7 +179,9 @@ def render():
                                 st.session_state.session_token = token
                                 st.session_state.session_claims = claims
                                 if token:
-                                    session.queue_cookie(token)
+                                    session.queue_cookie(
+                                        token, persistent=options.enabled(storage, options.NFC_SESSION_PERSISTENT)
+                                    )
                                 session.audit(storage, "session_login", user)
                                 st.rerun()
 
