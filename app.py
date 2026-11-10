@@ -7,13 +7,14 @@ maestro + items hijos) y login por roles (estudiante / profesor / maestro)
 via correo institucional.
 """
 
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 import streamlit as st
 
 from core.storage import LabStorage, RemoteUnavailableError
-from core import auth, live_data, permissions, session
+from core import auth, live_data, options, permissions, session
 from core.ui import LOGO_PATH, SYMBOL_PATH, footer, sync_status_banner, user_chip_html
 
 st.set_page_config(
@@ -86,6 +87,19 @@ if not st.session_state.user and session.enabled() and not st.session_state.get(
             session.queue_cookie(clear=True)
             session.render_cookie_command()
             st.session_state.session_notice = restore_problem
+    elif saved_token is None and options.enabled(storage, options.NFC_SESSION_PERSISTENT):
+        # nfc_sesion_persistente: el puente (JS, Streamlit Community Cloud) todavia no contesto en esta
+        # pestana nueva. Con la opcion APAGADA no se llega aqui y el comportamiento es el de siempre: la
+        # ejecucion sigue de una vez hacia el acceso (visible mientras el puente responde). Con la opcion
+        # ENCENDIDA se espera un numero acotado de intentos antes de decidir que hay que iniciar sesion
+        # (causa (c) del diagnostico: la primera ejecucion ve el valor vacio y por eso pide login de mas).
+        tries = int(st.session_state.get(session.RESTORE_WAIT_KEY, 0)) + 1
+        st.session_state[session.RESTORE_WAIT_KEY] = tries
+        if tries <= session.RESTORE_WAIT_LIMIT:
+            with st.spinner("Verificando tu sesión…"):
+                time.sleep(session.RESTORE_WAIT_SECONDS)
+            st.rerun()
+        # Se agotaron los intentos: se cae al flujo de siempre (pedir el inicio de sesion si hace falta).
 
 # Chip NFC: un toque abre la app con ?nfc=<codigo>. Se guarda ANTES del login
 # para registrarlo en cuanto la persona inicie sesion (ver views/nfc_tap.py).
@@ -129,10 +143,11 @@ if session.enabled():
     # auto-actualización nunca cuenta como actividad. Se reescribe la cookie a
     # lo sumo una vez por minuto y nunca se escribe en el Excel.
     if session.needs_rotation(session_claims):
-        rotated, claims = session.issue_token(session_user, claims=session_claims)
+        rotated, claims = session.issue_token(session_user, claims=session_claims, storage=storage)
         st.session_state.session_token = rotated
         st.session_state.session_claims = claims
-        session.queue_cookie(rotated)
+        session.queue_cookie(rotated, persistent=options.enabled(storage, options.NFC_SESSION_PERSISTENT),
+                              storage=storage)
     else:
         st.session_state.session_claims = session_claims
 user = session_user
