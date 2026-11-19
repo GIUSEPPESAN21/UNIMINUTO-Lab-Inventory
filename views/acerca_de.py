@@ -51,6 +51,15 @@ def render():
          "text": "Gestiona usuarios, roles y contraseñas, configura los correos y tiene visibilidad total del laboratorio."},
     ])
 
+    section_title("Equipo del proyecto", icon=":material/badge:")
+    with st.container(border=True, key="lab_card_acerca_equipo"):
+        st.markdown(
+            "**Joseph Javier Sánchez Acuña** · Desarrollador del software y encargado del proyecto.  \n"
+            "Estudiante de Ingeniería Industrial, 8.º semestre · UNIMINUTO.\n\n"
+            "**Co-investigadores:** Xammy Alexander Victoria y Andrés Felipe Buitrago Castillo, "
+            "profesores que apoyaron el proceso de investigación."
+        )
+
     st.info(
         "Para dudas sobre el uso del sistema o solicitudes de soporte, contacta al "
         "administrador del laboratorio desde tu programa académico.",
