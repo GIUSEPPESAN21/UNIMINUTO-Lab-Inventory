@@ -19,6 +19,8 @@ ROBUST_READS = "lectura_robusta"             # M5: anti doble lectura, normaliza
 DOUBLE_READ_WINDOW = "ventana_doble_lectura"  # M5: segundos (número, no interruptor; 1,5 por omisión)
 COUNT_BY_LOCATION = "conteo_por_ubicacion"   # M6: continuidad y control del conteo por ubicación
 RESEARCH_METRICS = "metricas_investigacion"  # M7: métricas de la lúdica (solo lectura)
+NFC_SESSION_PERSISTENT = "nfc_sesion_persistente"   # cookie persistente + espera del puente + versión global
+SESSION_MAX_HOURS = "sesion_max_horas"       # horas (número); techo de la sesión/cookie persistente, ver core/session.py
 
 # clave -> (título, explicación) para Despacho → Ajustes.
 FLAGS = {
@@ -51,6 +53,14 @@ FLAGS = {
         "Métricas para la investigación",
         "Pestaña «Métricas» en Despacho (solo administrador y solo lectura): exactitud de registros, tiempo por "
         "transacción y lecturas fallidas por escenario y por sesión, con exportación CSV.",
+    ),
+    NFC_SESSION_PERSISTENT: (
+        "Sesión persistente en toques NFC",
+        "La cookie de sesión dura hasta el máximo de la sesión (en vez de borrarse al cerrar la pestaña) y, si "
+        "un toque NFC abre una pestaña nueva, la app espera un instante a que el puente de la cookie conteste "
+        "antes de pedir el inicio de sesión. Un administrador puede invalidar todas las sesiones persistentes "
+        "a la vez subiendo el Secret SESSION_TOKEN_VERSION (p. ej. de 1 a 2). El toque NFC solo navega al "
+        "artículo: nunca autentica por sí mismo, eso siempre depende de esta cookie.",
     ),
 }
 

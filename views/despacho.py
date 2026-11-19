@@ -13,7 +13,7 @@ import json
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import dispatch, event_log, live_data, loans, ludica, options, permissions, pick_route, picking, reading, research_metrics, returns, service_requests, traceability
+from core import dispatch, event_log, live_data, loans, ludica, options, permissions, pick_route, picking, reading, research_metrics, returns, service_requests, session, traceability
 from core.ui import (
     card, card_header, empty_state, esc, guard_cap, page_header, persistent_tabs, section_title,
     stat_cards,
@@ -729,6 +729,21 @@ def _research_options(storage, user: dict) -> None:
                                      value=float(saved), step=0.1, format="%.1f", key="double_read_window")
             if st.button("Guardar ventana", key="double_read_window_save", disabled=window == saved):
                 ok, message = reading.set_window(storage, user, window)
+                _notice(ok, message)
+                st.rerun()
+        if key == options.NFC_SESSION_PERSISTENT and current:
+            saved_hours = session.max_hours(storage)
+            low, high = session.MAX_HOURS_RANGE
+            hours = st.number_input(
+                "Duración máxima de la sesión (horas)", min_value=float(low), max_value=float(high),
+                value=float(saved_hours), step=1.0, format="%.0f", key="session_max_hours_input",
+                help="Techo fijo de la sesión (y de la cookie persistente): se cierra sola al llegar a este "
+                     "tiempo desde el inicio de sesión, sin importar la actividad. En equipos compartidos "
+                     "del laboratorio, un valor cercano a la duración de un turno (por ejemplo 8 horas) es "
+                     "más seguro que dejarlo varias horas más allá del turno.",
+            )
+            if st.button("Guardar duración", key="session_max_hours_save", disabled=int(hours) == saved_hours):
+                ok, message = session.set_max_hours(storage, user, hours)
                 _notice(ok, message)
                 st.rerun()
 
