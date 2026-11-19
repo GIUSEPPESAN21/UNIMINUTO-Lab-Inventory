@@ -63,7 +63,7 @@ def test_default_off_writes_nothing_new_and_keeps_both_csv_formats(lab):
     failed = next(e for e in lab.trace_events if e["event_type"] == traceability.EVENT_ORDER_SCAN_FAILED)
     assert "in_read_log" not in traceability.event_details(failed)
     header = dispatch.dispatch_csv(lab, SUPERVISOR).decode("utf-8-sig").splitlines()[0]
-    assert header.split(",") == LEGACY_TIME_FIELDS
+    assert header.split(",") == LEGACY_TIME_FIELDS + ["cancelled_at"]      # v1.23: la hora de cancelación, al final
     assert ludica.events_csv(lab, SUPERVISOR).decode("utf-8").splitlines()[0] == ",".join(ludica.COLUMNS)
 
 
@@ -146,7 +146,8 @@ def test_times_derived_from_the_log_match_the_tiempos_report(lab):
     for column in ("claim_seconds", "picking_seconds", "delivery_seconds"):
         assert derived[column] == report[column] != ""
     data = list(csv.DictReader(io.StringIO(dispatch.dispatch_csv(lab, SUPERVISOR).decode("utf-8-sig"))))
-    assert list(data[0])[:7] == LEGACY_TIME_FIELDS and list(data[0])[7:] == list(event_log.TIME_COLUMNS)
+    assert list(data[0])[:7] == LEGACY_TIME_FIELDS and list(data[0])[7:10] == list(event_log.TIME_COLUMNS)
+    assert list(data[0])[10:] == ["cancelled_at"]                         # v1.23: siempre la última columna
     assert data[0]["transaccion_id"] == ludica.pseudonym(request_id) and data[0]["escenario"] == "C"
 
 

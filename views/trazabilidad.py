@@ -75,6 +75,9 @@ def _request_card(row: dict, events: list, loan: dict, names: dict, show_request
                 for event in events:
                     title = traceability.EVENT_LABELS.get(event.get("event_type"), event.get("event_type", "Evento"))
                     actor = event.get("actor_name") or permissions.role_short_label(event.get("actor_role"))
+                    if (event.get("event_type") == traceability.EVENT_ORDER_CANCELLED and event.get("actor_name")
+                            and event.get("actor_role")):
+                        actor += f" ({permissions.role_short_label(event.get('actor_role'))})"   # quién y su rol
                     st.markdown(
                         f"**{esc(title)}** — {esc(actor)} · {esc(traceability.fmt_local(event.get('created_at')))}"
                     )

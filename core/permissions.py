@@ -31,7 +31,6 @@ ROLE_SHORT_LABELS = {
 
 CAP_REQUEST = "request"
 CAP_VIEW_OWN_REQUESTS = "view_own_requests"
-CAP_CANCEL_OWN_REQUEST = "cancel_own_request"
 CAP_CONFIRM_RECEIPT = "confirm_receipt"
 CAP_RESERVE = "reserve"
 CAP_CHECKOUT = "checkout"
@@ -61,9 +60,12 @@ CAP_MANAGE_EMAIL = "manage_email"
 CAP_ADJUST_COUNTS = "adjust_counts"
 CAP_MANAGE_RESERVATIONS = "manage_reservations"
 CAP_DELETE_PHOTOS = "delete_photos"
+# Cancelar un pedido (en Despacho y en Solicitudes), en cualquier etapa hasta «Recibida · por entregar». Es la ÚNICA
+# capacidad que cancela: ni el cliente (ni siquiera lo suyo) ni el operario ni el encargado la tienen.
+CAP_CANCEL_ORDER = "cancel_order"
 
 _CLIENT = {
-    CAP_REQUEST, CAP_VIEW_OWN_REQUESTS, CAP_CANCEL_OWN_REQUEST,
+    CAP_REQUEST, CAP_VIEW_OWN_REQUESTS,
     CAP_CONFIRM_RECEIPT, CAP_RESERVE, CAP_CHECKOUT,
 }
 # Los operarios (auxiliares) guardan en el estante lo que el cliente devolvió y el supervisor verificó.
@@ -80,6 +82,7 @@ _PROFESSOR = {
     CAP_EDIT_INVENTORY, CAP_MANAGE_NFC, CAP_MANAGE_LOCATIONS,
     CAP_REPORTS, CAP_MANAGE_RESERVATIONS,
     CAP_VIEW_ALL_LOANS, CAP_CHECKIN_ANY,
+    CAP_CANCEL_ORDER,           # solo profesor y administrador cancelan pedidos
 }
 _ADMIN = {
     CAP_MANAGE_USERS, CAP_MANAGE_EMAIL, CAP_ADJUST_COUNTS, CAP_DELETE_PHOTOS, CAP_DISPATCH_SETTINGS,

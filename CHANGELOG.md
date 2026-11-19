@@ -1,5 +1,75 @@
 # Changelog
 
+## v1.23.0 — Cancelar un pedido en Despacho
+
+Caso real (7-nov): el mismo cliente pidió 2-1-04-10-000 dos veces con 2 s de diferencia y los dos pedidos llegaron a
+«Entregada». Despacho no tenía cómo cancelar, cancelar solo se podía en «Solicitada» y «Aprobada · por tomar», y los
+pedidos cancelados no se distinguían en Tiempos ni en las métricas de la lúdica.
+
+### Permiso: solo profesor y administrador cancelan
+- Capacidad nueva **`cancel_order`** (`permissions.CAP_CANCEL_ORDER`), concedida solo a `profesor` y `maestro`. Es la
+  **única** que cancela, en Despacho y en Solicitudes.
+- Se elimina `cancel_own_request` (el estudiante ya no cancela, ni siquiera lo suyo) y `approve` deja de servir para
+  cancelar (el encargado aprueba y rechaza, pero no cancela). El operario tampoco.
+- Las vistas solo muestran los botones a quien tiene la capacidad; `dispatch.cancel_request` / `cancel_order`,
+  `service_requests.cancel_request` / `cancel_order` y `LabStorage.transition_request` (`dispatch.plan_transition`) la
+  vuelven a exigir. Un intento sin permiso queda auditado (`order_action_failed`).
+
+### Cancelar en Despacho
+- Botón **Cancelar** en cada tarjeta (Por aprobar, Por preparar, Mis pedidos, Por entregar) y **Cancelar este pedido**
+  en «Reasignar o liberar» para lo que otro operario está preparando. Se elige **una línea o todo el pedido**.
+- Se cancela en **todas las etapas hasta «Recibida · por entregar»** (`traceability.CANCELLABLE_STAGES`: se agregan
+  `order_cancelled` a «Tomada · en picking», «Picking completo» y «Recibida»). Desde «Entregada» (o un retiro por
+  autoservicio) no: el panel y el mensaje dicen que se use **Devoluciones**.
+- **Motivo obligatorio:** Pedido duplicado · Error del cliente · Sin stock · Otro (con texto). Con «Pedido duplicado» se
+  elige el **pedido original** entre los del mismo cliente y producto que siguen en pie (`dispatch.duplicate_candidates`,
+  `order_duplicate_candidates`); el dominio verifica que sea otro pedido del mismo cliente y producto.
+- **Confirmación previa** (`views/cancelar.py`, panel arriba de la página): etapa actual de cada línea y qué pasa con
+  las unidades (`dispatch.cancel_preview`), y «Sí, cancelar» / «No, volver».
+- **Préstamo:** si ya hubo «Picking completo» (o se devolvió al picking con el préstamo abierto), la cancelación cierra
+  el préstamo **en la misma escritura** y las unidades vuelven al estante, como «Devuelto al estante». El historial del
+  producto registra el reingreso «Pedido cancelado: unidades devueltas al estante».
+- El panel de picking de quien lo preparaba avisa «se canceló» con el motivo y se cierra; una lectura tardía no suma.
+  Con el registro de eventos activo, sus lecturas pendientes viajan en el evento.
+
+### Trazabilidad y Mis pedidos
+- Cada cancelación es un evento `order_cancelled` con quién (nombre y rol), cuándo, `from_stage` / `from_stage_label`,
+  el motivo (`reason_code`, `reason`, `reason_text`), `original_request_id` si es duplicado y `closed_loan_id` /
+  `returned_units` si se cerró el préstamo. Se usa el estado `cancelled` que ya existía: **sin columnas nuevas** en el
+  Excel.
+- Trazabilidad y la línea de tiempo lo dicen en palabras (`traceability.describe_cancellation`): «Canceló el pedido en
+  picking: pedido duplicado de #a1b2c3. Se cerró el préstamo: 2 unidad(es) volvieron al estante», con «Carlos
+  (Supervisor)». Un pedido cancelado antes de tomarlo también muestra la línea de tiempo del despacho.
+- El solicitante ve en **Mis pedidos** que se canceló y por qué (`tracker.cancel_hint`): «Lo canceló Carlos
+  (Supervisor) en picking: Pedido duplicado de #a1b2c3.». Las cancelaciones anteriores se siguen leyendo como antes.
+
+### Tiempos y métricas
+- Un pedido cancelado sale de las listas abiertas y deja de sumar tiempo: en Tiempos queda con `stage = cancelled` y
+  **sin duraciones**, y Tiempos muestra los promedios sin los cancelados (`dispatch.time_summary`).
+- CSV de Tiempos: columna nueva **`cancelled_at`** (hora de cancelación), siempre la última (las demás no cambian de
+  posición, con o sin el registro de eventos).
+- CSV de eventos de la lúdica y registro de eventos: `tipo_evento = pedido_cancelado` (`ludica.kind_name`).
+- `research_metrics` (y las métricas por escenario) excluyen por completo los pedidos cancelados
+  (`research_metrics.cancelled_transactions`): registros, lecturas, transacciones y tiempos.
+
+### Aviso de posible duplicado
+- En Por aprobar y en las listas abiertas, pastilla **Posible duplicado** y aviso con el otro pedido (cuánto antes o
+  después llegó y su etapa) cuando el mismo solicitante pide el mismo producto dentro de una ventana corta
+  (`dispatch.possible_duplicates`, calculado una vez por versión de datos).
+- Ventana ajustable en **Despacho → Ajustes → Aviso de posible duplicado**: 2 min por omisión, 0 lo apaga (setting
+  `duplicate_window_minutes`, solo el administrador).
+- Lo ven todos los que trabajan en Despacho; el atajo **Cancelar como duplicado de #…** (en el que llegó después, con
+  el original ya elegido) solo aparece para profesor y administrador. Solo avisa: no bloquea.
+
+### Pruebas
+- `tests/test_cancel_order.py`: permisos por rol en vista y capa de datos, cancelar en cada etapa permitida y rechazo
+  desde «Entregada»/«Confirmada», cierre del préstamo tras el picking (también en `LabStorage`), motivos y pedido
+  original, pedidos de varios productos, línea de tiempo y Mis pedidos, Tiempos/CSV/`research_metrics`, y el aviso de
+  duplicados (caso de 2 s, ventana, ajuste).
+- `test_permission_matrix` (fila `cancel_order`, sin `cancel_own_request`, y prueba de dominio por rol),
+  `test_dispatch_transitions`, `test_multi_item_orders`, `test_unified_views`, `test_search_tracker`,
+  `test_service_requests` y `test_event_log` adaptadas a la nueva regla.
+
 ## v1.22.0 — Despacho profesional y sencillo
 
 Auditoría de usabilidad con datos en todas las etapas y cada rol. Lo que más costaba: el supervisor no veía en Inicio lo

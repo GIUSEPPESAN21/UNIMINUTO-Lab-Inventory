@@ -5,7 +5,7 @@ La trazabilidad completa (eventos, actores, comprobantes) es para el personal. E
 solo necesita saber **dónde va su pedido y qué le toca hacer**: ``client_tracker`` lo
 resume en un titular, una pista y una línea de pasos."""
 
-from core import reservations, service_requests, traceability
+from core import permissions, reservations, service_requests, traceability
 
 DONE, CURRENT, PENDING, BLOCKED = "done", "current", "pending", "blocked"
 
@@ -37,6 +37,23 @@ _TERMINAL = {
 }
 
 
+def cancel_hint(events: list) -> str:
+    """Por qué se canceló, en palabras del cliente: «Lo canceló Carlos (Supervisor) en picking: pedido duplicado de
+    #a1b2c3.» Vacío si no hay una cancelación con motivo (las anteriores a v1.23 dicen solo «El pedido se canceló»)."""
+    event = traceability.cancel_event(events)
+    details = traceability.event_details(event)
+    if not details.get("reason_code"):
+        return ""
+    who = event.get("actor_name") or "El laboratorio"
+    role = permissions.role_short_label(event.get("actor_role")) if event.get("actor_role") else ""
+    where = traceability.CANCEL_STAGE_WORDS.get(str(details.get("from_stage") or ""), "")
+    text = f"Lo canceló {who}" + (f" ({role})" if role else "") + (f" {where}" if where else "")
+    text += f": {traceability.cancel_reason_text(details)}."
+    if details.get("closed_loan_id"):
+        text += " Las unidades volvieron al estante."
+    return text
+
+
 def _steps(labels: tuple, current: int, terminal: bool = False) -> list:
     steps = []
     for index, label in enumerate(labels):
@@ -65,6 +82,8 @@ def client_tracker(request: dict, events: list = None, loan: dict = None) -> dic
             else traceability.request_stage_key(request, events)
         headline, hint, tone = _TERMINAL[key]
         reached = 1 if key != traceability.STAGE_CANCELLED else 0
+        if key == traceability.STAGE_CANCELLED:
+            hint = cancel_hint(events) or hint
         return {"headline": headline, "hint": hint, "tone": tone, "can_confirm": False,
                 "steps": _steps(labels, min(reached, len(labels) - 1), terminal=True)}
 

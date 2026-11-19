@@ -21,7 +21,8 @@ Apagada, no se sella ni se guarda nada nuevo y los CSV salen igual que antes.
 
 Valores de ``tipo_evento`` además de los tipos de evento existentes:
 ``lectura_correcta``, ``lectura_incorrecta``, ``reintento`` (lectura tras una
-rechazada), ``lectura_repetida``, ``lectura_deshecha`` y ``confirmacion_manual``.
+rechazada), ``lectura_repetida``, ``lectura_deshecha``, ``confirmacion_manual`` y
+``pedido_cancelado`` (el evento ``order_cancelled``, como en el CSV de la lúdica).
 ``resultado_sistema``: ``ok``, ``rechazado``, ``ignorado`` (repetida) o
 ``deshecho``.
 """
@@ -106,7 +107,7 @@ def _timestamp(value) -> str:
 def _row(sid, scenario, when, role, kind, item, transaction, actor_id, result, salt) -> dict:
     return {
         "sesion_id": sid or "", "timestamp": _timestamp(when), "estacion": ludica.station_of(role),
-        "tipo_evento": kind, "item_codigo": item or "", "transaccion_id": ludica.pseudonym(transaction, salt),
+        "tipo_evento": ludica.kind_name(kind), "item_codigo": item or "", "transaccion_id": ludica.pseudonym(transaction, salt),
         "usuario_sim": ludica.pseudonym(actor_id, salt), "resultado_sistema": result, "escenario": scenario or "",
     }
 

@@ -122,15 +122,22 @@ def test_my_orders_shows_the_progress_in_plain_words_and_lets_the_client_confirm
     assert "Completado" in _text(_open("solicitudes", people["estudiante"]))
 
 
-def test_client_sees_only_their_own_orders_and_can_cancel_a_pending_one(lab):
+def test_client_sees_only_their_own_orders_and_cannot_cancel_them(lab):
     storage, people = lab
     mine, _, _ = service_requests.submit_request(storage, people["estudiante"], "product", CODE, 1)
-    service_requests.submit_request(storage, people["profesor"], "product", "LAB-RES-220", 1)
+    own, _, _ = service_requests.submit_request(storage, people["profesor"], "product", "LAB-RES-220", 1)
     at = _open("solicitudes", people["estudiante"])
     text = _text(at)
     assert "Microscopio óptico" in text and "Resistencia 220" not in text and "Persona profesor" not in text
-    _button(at, "Cancelar pedido").click().run()
-    assert storage.get_service_request(mine["id"])["status"] == "cancelled"
+    assert not [b for b in at.button if "Cancelar pedido" in b.label]     # v1.23: solo profesor y administrador
+    assert storage.get_service_request(mine["id"])["status"] == "pending"
+    # El profesor cancela (lo suyo, en Mis pedidos) con motivo y confirmación.
+    professor = _open("solicitudes", people["profesor"])
+    _button(professor, "Cancelar pedido").click().run()
+    professor.radio(key=f"cancel_reason_{own['id']}").set_value("client_error").run()
+    professor.button(key=f"cancel_confirm_{own['id']}").click().run()
+    assert not professor.exception
+    assert storage.get_service_request(own["id"])["status"] == "cancelled"
 
 
 def test_reviewer_manages_requests_and_reservations_in_one_place(lab):

@@ -83,7 +83,7 @@ def test_review_request_checks_role_and_stock_again(storage):
     assert ok is False and "stock" in message.lower()
 
 
-def test_owner_can_cancel_request(storage):
+def test_only_cancel_order_cancels_even_the_owners_request(storage):
     user = _user()
     row = storage.create_service_request(
         {
@@ -91,6 +91,10 @@ def test_owner_can_cancel_request(storage):
             "service_name": "Impresión", "description": "Pieza", "needed_at": "",
         }, user,
     )
-    ok, _ = service_requests.cancel_request(storage, row["id"], user)
+    ok, message = service_requests.cancel_request(storage, row["id"], user, "client_error")
+    assert ok is False and "permiso" in message                          # v1.23: el dueño ya no cancela
+    ok, message = service_requests.cancel_request(storage, row["id"], _user("profesor", "prof"))
+    assert ok is False and "motivo" in message                           # el motivo es obligatorio
+    ok, _ = service_requests.cancel_request(storage, row["id"], _user("profesor", "prof"), "client_error")
     assert ok is True
     assert storage.get_service_request(row["id"])["status"] == "cancelled"

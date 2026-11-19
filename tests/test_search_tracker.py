@@ -113,8 +113,10 @@ def test_rejected_cancelled_and_returned_orders_end_clearly(lab):
     assert result["headline"] == "Rechazada" and result["tone"] == "danger" and "blocked" in _states(result)
 
     cancelled, _, _ = service_requests.submit_request(storage, people["estudiante"], "product", "LAB-MIC-01", 1)
-    assert service_requests.cancel_request(storage, cancelled["id"], people["estudiante"])[0]
-    assert _track(storage, cancelled["id"])["headline"] == "Cancelada"
+    assert not service_requests.cancel_request(storage, cancelled["id"], people["estudiante"], "client_error")[0]
+    assert service_requests.cancel_request(storage, cancelled["id"], people["maestro"], "client_error")[0]
+    result = _track(storage, cancelled["id"])
+    assert result["headline"] == "Cancelada" and "Error del cliente" in result["hint"]
 
 
 def test_service_and_reservation_trackers(lab):
