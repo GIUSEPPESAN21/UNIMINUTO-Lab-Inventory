@@ -57,7 +57,9 @@ def render():
             "**Joseph Javier Sánchez Acuña** · Desarrollador del software y encargado del proyecto.  \n"
             "Estudiante de Ingeniería Industrial, 8.º semestre · UNIMINUTO.\n\n"
             "**Co-investigadores:** Xammy Alexander Victoria y Andrés Felipe Buitrago Castillo, "
-            "profesores que apoyaron el proceso de investigación."
+            "profesores que apoyaron el proceso de investigación.\n\n"
+            "**Instituciones:** UNIMINUTO (Corporación Universitaria Minuto de Dios) · "
+            "Uniandes (Universidad de los Andes)."
         )
 
     st.info(
