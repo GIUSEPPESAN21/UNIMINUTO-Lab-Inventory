@@ -41,6 +41,14 @@ _STATION = {
     permissions.ROLE_MASTER: "administrador",
 }
 RESULT_OK, RESULT_REJECTED = "ok", "rechazado"
+# Nombre del tipo de evento en los CSV cuando no es el id técnico del evento.
+KIND_CANCELLED = "pedido_cancelado"
+_KIND_NAMES = {traceability.EVENT_ORDER_CANCELLED: KIND_CANCELLED}
+
+
+def kind_name(kind) -> str:
+    """``tipo_evento`` en los CSV: el id del evento, salvo la cancelación de un pedido (``pedido_cancelado``)."""
+    return _KIND_NAMES.get(str(kind or ""), str(kind or ""))
 
 # Eventos que entran al CSV (el resto: inicios de sesión, cambios de rol, conteos…, no).
 _LIFECYCLE = traceability.DISPATCH_LIFECYCLE_EVENTS - {traceability.EVENT_ORDER_REQUESTED}
@@ -81,7 +89,7 @@ def _row(sid: str, when, role, kind: str, item: str, request_id: str, actor_id: 
          salt: str) -> dict:
     return {
         "sesion_id": sid, "timestamp": _stamp(when), "estacion": station_of(role),
-        "tipo_evento": kind, "item_codigo": item or "",
+        "tipo_evento": kind_name(kind), "item_codigo": item or "",
         "transaccion_id": pseudonym(request_id, salt), "usuario_sim": pseudonym(actor_id, salt),
         "resultado_sistema": result,
     }

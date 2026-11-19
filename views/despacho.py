@@ -18,7 +18,7 @@ from core.ui import (
     card, card_header, empty_state, esc, guard_cap, page_header, persistent_tabs, section_title,
     stat_cards,
 )
-from views import location_guide, photo_panel
+from views import cancelar, location_guide, photo_panel
 
 _DISPATCH_EVERY = live_data.run_every(live_data.dispatch_refresh_seconds())
 
@@ -98,13 +98,15 @@ def _group_title(group: dict) -> str:
     return f"{row.get('item_name') or row.get('item_id')} × {int(row.get('quantity') or 0)}"
 
 
-def _group_header(group: dict, badges: list = None) -> None:
+def _group_header(group: dict, badges: list = None, dups: dict = None) -> None:
     first = group["rows"][0]
     meta = [str(first.get("requester_name") or "Cliente"), dispatch.waiting_text(first.get("created_at"))]
     if first.get("needed_at"):
         meta.append("para el " + traceability.to_datetime(first["needed_at"]).astimezone(
             loans.BOGOTA_TZ).strftime("%d/%m %I:%M %p"))
     pills = list(badges or [])
+    if any(row["id"] in (dups or {}) for row in group["rows"]):
+        pills.insert(0, {"text": "Posible duplicado", "tone": "warning", "icon": "⚠️"})
     if any(dispatch.is_urgent(row) for row in group["rows"]):
         pills.insert(0, {"text": "Urgente", "tone": "danger", "icon": "⏱️"})
     card_header(_group_title(group), subtitle=" · ".join(m for m in meta if m),
@@ -112,6 +114,38 @@ def _group_header(group: dict, badges: list = None) -> None:
     note = str(first.get("description") or "").strip()
     if note:      # la nota que escribió el cliente la ve quien aprueba, prepara y entrega
         st.info(f"Nota del cliente: {note}", icon=":material/sticky_note_2:")
+
+
+def _gap_text(seconds: int, earlier: bool) -> str:
+    """«2 s antes», «1 min 5 s después» o «en el mismo segundo»."""
+    if not seconds:
+        return "en el mismo segundo"
+    return f"{traceability.fmt_duration(seconds)} {'antes' if earlier else 'después'}"
+
+
+def _duplicate_notes(storage, user: dict, group: dict, dups: dict, key: str) -> None:
+    """«Posible duplicado»: el mismo cliente pidió el mismo producto dentro de la ventana corta (Despacho → Ajustes).
+    Lo ven todos los que trabajan en Despacho; el acceso directo a cancelar, solo quien tiene ``cancel_order``. Solo
+    avisa: no bloquea nada."""
+    for row in group["rows"]:
+        for link in (dups or {}).get(row["id"], []):
+            other = storage.get_service_request(link["id"])
+            if not other:
+                continue
+            stage = traceability.STAGES[traceability.request_stage_key(
+                other, storage.get_trace_events(request_id=other["id"]))][0]
+            st.warning(f"Posible duplicado: {row.get('requester_name') or 'el cliente'} pidió "
+                       f"«{row.get('item_name') or row.get('item_id')}» también en {traceability.short_id(other['id'])}, "
+                       f"{_gap_text(link['seconds'], link['earlier'])} ({stage}). Revisa antes de seguir.",
+                       icon=":material/content_copy:")
+            # El duplicado es el que llegó DESPUÉS: el atajo cancela este, con el otro como original.
+            if link["earlier"] and dispatch.can_cancel(user) and row.get("status") != "cancelled":
+                if st.button(f"Cancelar como duplicado de {traceability.short_id(other['id'])}",
+                             key=f"cancel_dup_{key}_{row['id']}_{other['id']}", icon=":material/cancel:",
+                             use_container_width=True):
+                    cancelar.open_panel(cancelar.FOCUS_DISPATCH, [row["id"]], reason=dispatch.CANCEL_DUPLICATE,
+                                        original=other["id"])
+                    st.rerun()
 
 
 def _lines(storage, rows: list, extra=None) -> None:
@@ -150,10 +184,11 @@ def _approve_fragment(storage, user: dict) -> None:
     if not groups:
         empty_state("Nada por aprobar", "Los pedidos nuevos de los clientes aparecerán aquí.", icon=":material/rule:")
         return
+    dups = dispatch.possible_duplicates(storage)
     for group in groups:
         key = group["order_id"] or group["rows"][0]["id"]
         with card(f"approve_{key}", tone="warning"):
-            _group_header(group)
+            _group_header(group, dups=dups)
 
             def stock(row):
                 available = storage.get_available_quantity(row.get("item_id"))
@@ -161,10 +196,12 @@ def _approve_fragment(storage, user: dict) -> None:
                 return f" · {'🔴 solo hay' if short else 'hay'} {available} disponible(s)"
 
             _lines(storage, group["rows"], stock)
+            _duplicate_notes(storage, user, group, dups, f"approve_{key}")
             own = group["rows"][0].get("requester_id") == user.get("id") and not dispatch.allow_self_approval()
             if own:
                 st.caption("Es tu propio pedido: lo aprueba otra persona.")
-            c1, c2 = st.columns([2, 1])
+            columns = st.columns([2, 1, 1] if dispatch.can_cancel(user) else [2, 1])
+            c1, c2 = columns[0], columns[1]
             if c1.button("Aprobar", key=f"approve_{key}", type="primary", use_container_width=True, disabled=own,
                          icon=":material/check:"):
                 ok, message = _review(storage, user, group, service_requests.STATUS_APPROVED, "")
@@ -176,6 +213,9 @@ def _approve_fragment(storage, user: dict) -> None:
                     ok, message = _review(storage, user, group, service_requests.STATUS_REJECTED, reason)
                     _notice(ok, message)
                     st.rerun()
+            if len(columns) > 2:
+                cancelar.cancel_button(columns[2], storage, user, cancelar.FOCUS_DISPATCH, group["rows"],
+                                       group["order_id"], f"approve_{key}")
 
 
 def _review(storage, user: dict, group: dict, decision: str, notes: str):
@@ -200,15 +240,21 @@ def _queue_fragment(storage, user: dict) -> None:
         empty_state("Cola al día", "No hay pedidos aprobados esperando preparación.", icon=":material/inbox:")
         return
     st.caption("Primero los urgentes y después el que más lleva esperando. Al tomarlo se abre la preparación arriba.")
+    dups = dispatch.possible_duplicates(storage)
     for group in groups:
         key = group["order_id"] or group["rows"][0]["id"]
         with card(f"queue_{key}", tone="info"):
-            _group_header(group)
+            _group_header(group, dups=dups)
             _lines(storage, group["rows"])
+            _duplicate_notes(storage, user, group, dups, f"queue_{key}")
             label = "Tomar pedido y preparar" if len(group["rows"]) > 1 else "Tomar y preparar"
-            if st.button(label, key=f"claim_{key}", type="primary", use_container_width=True,
-                         icon=":material/play_arrow:"):
+            columns = st.columns([3, 1]) if dispatch.can_cancel(user) else [st]
+            if columns[0].button(label, key=f"claim_{key}", type="primary", use_container_width=True,
+                                 icon=":material/play_arrow:"):
                 _claim(storage, user, group)
+            if len(columns) > 1:
+                cancelar.cancel_button(columns[1], storage, user, cancelar.FOCUS_DISPATCH, group["rows"],
+                                       group["order_id"], f"queue_{key}")
 
 
 def _claim(storage, user: dict, group: dict) -> None:
@@ -235,12 +281,14 @@ def _mine_fragment(storage, user: dict) -> None:
     active = picking.active_request(user["id"])
     stages = {row["id"]: traceability.request_stage_key(row, storage.get_trace_events(request_id=row["id"]))
               for row in rows}
+    dups = dispatch.possible_duplicates(storage)
     for group in _sorted_groups(rows):
         key = group["order_id"] or group["rows"][0]["id"]
         with card(f"mine_{key}"):
             done = sum(stages[row["id"]] == traceability.STAGE_PICKED for row in group["rows"])
             _group_header(group, [{"text": f"{done}/{len(group['rows'])} preparado(s)",
-                                   "tone": "success" if done == len(group["rows"]) else "info"}])
+                                   "tone": "success" if done == len(group["rows"]) else "info"}], dups=dups)
+            _duplicate_notes(storage, user, group, dups, f"mine_{key}")
             for row in group["rows"]:
                 c1, c2 = st.columns([3, 1], vertical_alignment="center")
                 route = _route_text(storage, row)
@@ -262,6 +310,8 @@ def _mine_fragment(storage, user: dict) -> None:
                 results = [dispatch.release_request(storage, row["id"], user) for row in claimed]
                 _notice(all(r[0] for r in results), results[-1][1])
                 st.rerun()
+            cancelar.cancel_button(st, storage, user, cancelar.FOCUS_DISPATCH, group["rows"], group["order_id"],
+                                   f"mine_{key}")
 
 
 @st.fragment(run_every=_DISPATCH_EVERY)
@@ -272,22 +322,25 @@ def _review_fragment(storage, user: dict) -> None:
                     icon=":material/handshake:")
         return
     open_rows = dispatch.open_orders(storage)
+    dups = dispatch.possible_duplicates(storage)
     for group in _sorted_groups(rows):
         key = group["order_id"] or group["rows"][0]["id"]
         with card(f"deliver_{key}", tone="success"):
-            _group_header(group)
+            _group_header(group, dups=dups)
 
             def who(row):
                 name = dispatch.assigned_picker_name(storage.get_trace_events(request_id=row["id"]))
                 return f" · preparó {esc(name)}" if name else ""
 
             _lines(storage, group["rows"], who)
+            _duplicate_notes(storage, user, group, dups, f"deliver_{key}")
             missing = [o for o in open_rows if group["order_id"] and o["request"].get("order_id") == group["order_id"]
                        and o["stage"] in (traceability.STAGE_APPROVED, traceability.STAGE_CLAIMED)]
             if missing:
                 st.caption(f":material/hourglass_top: Faltan {len(missing)} producto(s) de este pedido por preparar; "
                            "puedes entregar lo que ya está listo.")
-            c1, c2 = st.columns([2, 1])
+            columns = st.columns([2, 1, 1] if dispatch.can_cancel(user) else [2, 1])
+            c1, c2 = columns[0], columns[1]
             if c1.button("Entregar al cliente", key=f"handover_{key}", type="primary", use_container_width=True,
                          icon=":material/handshake:", help="Registra la revisión y la entrega en un solo paso."):
                 if len(group["rows"]) > 1:
@@ -303,6 +356,9 @@ def _review_fragment(storage, user: dict) -> None:
                                  key=f"review_fix_{row['id']}", use_container_width=True):
                         st.session_state.dispatch_review_focus = row["id"]
                         st.rerun()
+            if len(columns) > 2:
+                cancelar.cancel_button(columns[2], storage, user, cancelar.FOCUS_DISPATCH, group["rows"],
+                                       group["order_id"], f"deliver_{key}")
 
 
 def _return_heading(row: dict) -> None:
@@ -468,8 +524,13 @@ def _picking_panel(storage, user: dict) -> None:
         return
     request = storage.get_service_request(request_id)
     events = storage.get_trace_events(request_id=request_id) if request else []
-    if (not request or traceability.request_stage_key(request, events) != traceability.STAGE_CLAIMED
-            or dispatch.assigned_picker(events) != user["id"]):
+    stage = traceability.request_stage_key(request, events) if request else ""
+    if stage == traceability.STAGE_CANCELLED:
+        # Lo canceló un profesor o el administrador mientras se preparaba: se dice por qué y el panel se cierra.
+        st.warning(f"«{request.get('item_name')}» se canceló: "
+                   f"{traceability.describe_cancellation(traceability.cancel_event(events))}. No sigas preparándolo.",
+                   icon=":material/cancel:")
+    if not request or stage != traceability.STAGE_CLAIMED or dispatch.assigned_picker(events) != user["id"]:
         dispatch.abandon_picking(user, request_id)
         return
     needed = int(request.get("quantity") or 0)
@@ -574,12 +635,28 @@ def _oversight(storage, user: dict) -> None:
             ok, message, _ = dispatch.release_request(storage, request_id, user, reason)
             _notice(ok, message)
             st.rerun()
+        if dispatch.can_cancel(user) and request_id:
+            # Lo que otro operario está preparando no sale en ninguna pestaña del profesor: se cancela desde aquí.
+            selected_row = choices[request_id]
+            cancelar.cancel_button(st, storage, user, cancelar.FOCUS_DISPATCH, [selected_row],
+                                   selected_row.get("order_id", ""), f"oversight_{request_id}",
+                                   label="Cancelar este pedido")
 
 
 def _reports(storage, user: dict) -> None:
     if not permissions.has_cap(user, permissions.CAP_DISPATCH_REPORTS):
         return
     rows = dispatch.dispatch_metrics(storage, user)
+    summary = dispatch.time_summary(rows)
+    parts = [f"{label} {traceability.fmt_duration(summary[column])}" for label, column in (
+        ("tomar", "claim_seconds"), ("picking", "picking_seconds"), ("total", "delivery_seconds"))
+        if summary[column] is not None]
+    if parts:
+        st.caption("Promedios: " + " · ".join(parts) + (
+            f". Sin los {summary['cancelled']} pedido(s) cancelado(s): siguen en la tabla y en el CSV "
+            "(stage = cancelled, cancelled_at) pero no suman tiempo." if summary["cancelled"] else "."))
+    elif summary["cancelled"]:
+        st.caption(f"{summary['cancelled']} pedido(s) cancelado(s): no suman tiempo ni entran en los promedios.")
     if len(rows) > 200:
         st.caption(f"Se muestran los 200 pedidos más recientes de {len(rows)}; el CSV trae todos.")
     st.dataframe(rows[:200], use_container_width=True, hide_index=True)
@@ -650,6 +727,19 @@ def _settings(storage, user: dict) -> None:
     auto = st.toggle("Aprobar automáticamente los pedidos de productos", value=auto_on, key="auto_approve_toggle")
     if st.button("Guardar aprobación", key="auto_approve_save", type="primary", disabled=auto == auto_on):
         ok, message = service_requests.set_auto_approve(storage, user, auto)
+        _notice(ok, message)
+        st.rerun()
+
+    section_title("Aviso de posible duplicado", icon=":material/content_copy:",
+                  caption="Marca «Posible duplicado» en Despacho cuando el mismo cliente pide el mismo producto "
+                          "dentro de esta ventana. Solo avisa: no bloquea. 0 apaga el aviso.")
+    saved_window = dispatch.duplicate_window_minutes(storage)
+    low, high = dispatch.DUPLICATE_WINDOW_RANGE
+    window = st.number_input("Ventana (minutos)", min_value=low, max_value=high, value=float(saved_window), step=0.5,
+                             format="%.1f", key="duplicate_window_input")
+    if st.button("Guardar ventana de duplicados", key="duplicate_window_save", type="primary",
+                 disabled=float(window) == float(saved_window)):
+        ok, message = dispatch.set_duplicate_window(storage, user, window)
         _notice(ok, message)
         st.rerun()
 
@@ -778,6 +868,7 @@ def render() -> None:
     # Lo que se está haciendo ahora, arriba: en el teléfono no hay que recorrer la lista.
     _picking_panel(storage, user)
     _review_action_panel(storage, user)
+    cancelar.render_panel(storage, user, cancelar.FOCUS_DISPATCH, _notice)
     _board(storage, user)
     titles, renderers = [], []
     if permissions.has_cap(user, permissions.CAP_APPROVE):

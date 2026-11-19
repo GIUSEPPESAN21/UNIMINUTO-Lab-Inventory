@@ -18,7 +18,7 @@ from core.ui import (
     badge_html, empty_state, esc, flash, guard_cap, more_button, page_header, paginate, persistent_tabs,
     section_title, show_flash, stepper,
 )
-from views import reservas
+from views import cancelar, reservas
 from views.location_guide import render_location_guide, render_verifiable_route
 
 _TYPES = {"Producto": service_requests.TYPE_PRODUCT, "Servicio": service_requests.TYPE_SERVICE, "Reserva": "reservation"}
@@ -238,8 +238,11 @@ def _status_header(title: str, meta: str, progress: dict) -> None:
 
 
 def render_request_status(storage, user: dict, row: dict, events: list = None, loan: dict = None,
-                          key_prefix: str = "mine") -> None:
-    """Tarjeta de seguimiento de un pedido de producto o servicio (la ve su dueño y el personal)."""
+                          key_prefix: str = "mine", cancel_focus: str = None) -> None:
+    """Tarjeta de seguimiento de un pedido de producto o servicio (la ve su dueño y el personal).
+
+    ``cancel_focus``: clave del panel de cancelación de la página (solo donde ese panel se pinta); el botón
+    «Cancelar pedido» solo aparece a quien tiene ``cancel_order`` (profesor y administrador)."""
     events = events if events is not None else storage.get_trace_events(request_id=row["id"])
     progress = tracker.client_tracker(row, events, loan)
     product = row.get("request_type") == service_requests.TYPE_PRODUCT
@@ -251,7 +254,8 @@ def render_request_status(storage, user: dict, row: dict, events: list = None, l
                        + ("" if own else f" · {row.get('requester_name')}"), progress)
         if row.get("description"):
             st.caption(f"Nota: {row['description']}")
-        if row.get("review_notes"):
+        cancelled_with_reason = bool(traceability.event_details(traceability.cancel_event(events)).get("reason_code"))
+        if row.get("review_notes") and not cancelled_with_reason:      # el motivo de una cancelación ya va arriba
             st.caption(f"Respuesta del supervisor: {row['review_notes']}")
         c1, c2 = st.columns(2)
         if own and progress["can_confirm"] and permissions.has_cap(user, permissions.CAP_CONFIRM_RECEIPT):
@@ -262,12 +266,15 @@ def render_request_status(storage, user: dict, row: dict, events: list = None, l
                 st.rerun()
         picked_up = bool(traceability.first_event(events, traceability.EVENT_PICKED_UP))
         started = traceability.dispatch_started(events)
-        if (own and row.get("status") in ("pending", "approved") and not picked_up and not started
-                and permissions.has_cap(user, permissions.CAP_CANCEL_OWN_REQUEST)):
-            if c2.button("Cancelar pedido", key=f"{key_prefix}_cancel_{row['id']}", use_container_width=True):
-                ok, message = service_requests.cancel_request(storage, row["id"], user)
-                flash(message, "success" if ok else "error", key=_FLASH)
-                st.rerun()
+        stage = traceability.request_stage_key(row, events)
+        if cancel_focus and dispatch.can_cancel(user):
+            if stage in traceability.CANCELLABLE_STAGES and not picked_up:
+                if c2.button("Cancelar pedido", key=f"{key_prefix}_cancel_{row['id']}", use_container_width=True,
+                             icon=":material/cancel:"):
+                    cancelar.open_panel(cancel_focus, [row["id"]])
+                    st.rerun()
+            elif picked_up or stage in (traceability.STAGE_DELIVERED, traceability.STAGE_CONFIRMED):
+                st.caption("Ya se entregó: no se cancela. Si lo devuelve, se recibe en Despacho → Devoluciones.")
         # Retiro por cuenta propia (sin despacho): la ruta verificable sigue disponible.
         if (own and product and row.get("status") == service_requests.STATUS_APPROVED and not picked_up
                 and not started and permissions.has_cap(user, permissions.CAP_CHECKOUT)):
@@ -283,20 +290,20 @@ def _order_status(storage, user: dict, order: dict) -> None:
     lines = order["lines"]
     first = lines[0][0]
     total = sum(int(row.get("quantity") or 0) for row, *_ in lines)
-    open_lines = [row for row, events, _, closed in lines
-                  if not closed and row.get("status") in ("pending", "approved")
-                  and not traceability.dispatch_started(events)
+    open_lines = [row for row, events, _, _ in lines
+                  if traceability.request_stage_key(row, events) in traceability.CANCELLABLE_STAGES
                   and not traceability.first_event(events, traceability.EVENT_PICKED_UP)]
     with st.container(border=True):
         st.markdown(f"**Pedido {esc(order['order_id'].upper())}** · {len(lines)} productos · {total} unidades")
         st.caption(f"Enviado {_local(first.get('created_at'))}. El supervisor lo aprueba completo y el laboratorio lo "
                    "prepara junto; cada producto muestra su avance.")
         for row, events, loan, _ in lines:
-            render_request_status(storage, user, row, events, loan, key_prefix=f"order_{order['order_id']}")
-        if open_lines and permissions.has_cap(user, permissions.CAP_CANCEL_OWN_REQUEST):
-            if st.button("Cancelar todo el pedido", key=f"order_cancel_{order['order_id']}", use_container_width=True):
-                ok, message = service_requests.cancel_order(storage, order["order_id"], user)
-                flash(message, "success" if ok else "error", key=_FLASH)
+            render_request_status(storage, user, row, events, loan, key_prefix=f"order_{order['order_id']}",
+                                  cancel_focus=cancelar.FOCUS_REQUESTS)
+        if open_lines and dispatch.can_cancel(user):
+            if st.button("Cancelar todo el pedido", key=f"order_cancel_{order['order_id']}", use_container_width=True,
+                         icon=":material/cancel:"):
+                cancelar.open_panel(cancelar.FOCUS_REQUESTS, [row["id"] for row in open_lines], order["order_id"])
                 st.rerun()
 
 
@@ -349,7 +356,7 @@ def _render_mine(storage, user: dict) -> None:
     def draw(entry):
         _, kind, row, events, loan, _ = entry
         if kind == "request":
-            render_request_status(storage, user, row, events, loan)
+            render_request_status(storage, user, row, events, loan, cancel_focus=cancelar.FOCUS_REQUESTS)
         elif kind == "order":
             _order_status(storage, user, row)
         else:
@@ -475,6 +482,8 @@ def render():
     with tabs[0]:
         _render_new(storage, user)
     with tabs[1]:
+        cancelar.render_panel(storage, user, cancelar.FOCUS_REQUESTS,
+                              lambda ok, message: flash(message, "success" if ok else "error", key=_FLASH))
         _render_mine(storage, user)
     if reviewer:
         with tabs[2]:

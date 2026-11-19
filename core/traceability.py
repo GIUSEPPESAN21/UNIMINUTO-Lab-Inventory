@@ -99,14 +99,32 @@ ALLOWED_TRANSITIONS = {
         EVENT_ORDER_RELEASED: STAGE_APPROVED,
         EVENT_ORDER_REASSIGNED: STAGE_CLAIMED,
         EVENT_ORDER_PICKED: STAGE_PICKED,
+        EVENT_ORDER_CANCELLED: STAGE_CANCELLED,
     },
-    STAGE_PICKED: {EVENT_ORDER_RECEIVED: STAGE_RECEIVED},
+    STAGE_PICKED: {
+        EVENT_ORDER_RECEIVED: STAGE_RECEIVED,
+        EVENT_ORDER_CANCELLED: STAGE_CANCELLED,
+    },
     STAGE_RECEIVED: {
         EVENT_ORDER_DELIVERED: STAGE_DELIVERED,
         EVENT_ORDER_REWORK: STAGE_CLAIMED,
         EVENT_ORDER_RETURNED_TO_SHELF: STAGE_RETURNED,
+        EVENT_ORDER_CANCELLED: STAGE_CANCELLED,
     },
     STAGE_DELIVERED: {EVENT_ORDER_CLIENT_CONFIRMED: STAGE_CONFIRMED},
+}
+# Un pedido se cancela en cualquier etapa hasta «Recibida · por entregar». Desde «Entregada» ya está en manos del
+# cliente: lo que devuelva entra por Devoluciones. Si ya hubo picking, la cancelación cierra el préstamo abierto en la
+# misma escritura (las unidades vuelven al estante, igual que «Devuelto al estante»).
+CANCELLABLE_STAGES = frozenset(stage for stage, moves in ALLOWED_TRANSITIONS.items()
+                               if EVENT_ORDER_CANCELLED in moves)
+# Cómo se dice, en una frase, la etapa en la que se canceló: «Canceló el pedido en picking: …».
+CANCEL_STAGE_WORDS = {
+    STAGE_REQUESTED: "en revisión",
+    STAGE_APPROVED: "en la cola, antes de tomarlo",
+    STAGE_CLAIMED: "en picking",
+    STAGE_PICKED: "con el picking completo",
+    STAGE_RECEIVED: "cuando estaba por entregar",
 }
 
 EVENT_CAPABILITIES = {
@@ -123,6 +141,9 @@ EVENT_CAPABILITIES = {
     EVENT_ORDER_RETURNED_TO_SHELF: permissions.CAP_RECEIVE_AND_DELIVER,
     EVENT_ORDER_CLIENT_CONFIRMED: permissions.CAP_CONFIRM_RECEIPT,
 }
+# EVENT_ORDER_CANCELLED no va en EVENT_CAPABILITIES a propósito: la regla (solo `cancel_order`) la exige
+# core.dispatch.plan_transition, y así las cancelaciones anteriores a v1.23 (las hacía el cliente o el encargado) no
+# aparecen como «realizado por un rol sin permiso» en la verificación de integridad.
 
 # Chips NFC (core/nfc.py) y conteo de inventario con el telefono
 # (core/inventory_count.py). Viven en la misma hoja `trace_events`.
@@ -610,6 +631,54 @@ _PICK_METHODS = {"barcode_gun": "pistola de códigos", "camera": "cámara", "nfc
                  "mixed": "varios métodos"}
 
 
+# Motivos de una cancelación (detalle ``reason_code`` del evento ``order_cancelled``). «Otro» exige un texto y
+# «Pedido duplicado» exige el pedido original (del mismo cliente y del mismo producto).
+CANCEL_DUPLICATE, CANCEL_CLIENT_ERROR, CANCEL_NO_STOCK, CANCEL_OTHER = "duplicate", "client_error", "no_stock", "other"
+CANCEL_REASONS = {
+    CANCEL_DUPLICATE: "Pedido duplicado",
+    CANCEL_CLIENT_ERROR: "Error del cliente",
+    CANCEL_NO_STOCK: "Sin stock",
+    CANCEL_OTHER: "Otro",
+}
+
+
+def cancel_reason_text(details: dict) -> str:
+    """El motivo de una cancelación para el cliente: «Pedido duplicado de #a1b2c3», «Sin stock (nota)», «texto»."""
+    details = details or {}
+    code = str(details.get("reason_code") or "")
+    text = " ".join(str(details.get("reason_text") or "").split())
+    if code == CANCEL_OTHER:
+        return text or CANCEL_REASONS[CANCEL_OTHER]
+    if code == CANCEL_DUPLICATE:
+        original = details.get("original_request_id")
+        base = CANCEL_REASONS[CANCEL_DUPLICATE] + (f" de {short_id(original)}" if original else "")
+    else:
+        base = CANCEL_REASONS.get(code) or str(details.get("reason") or "Cancelada")
+    return f"{base} ({text})" if text else base
+
+
+def cancel_event(events: list):
+    """La cancelación de un pedido (el último ``order_cancelled``) o ``None``."""
+    return next((event for event in reversed(events or []) if event.get("event_type") == EVENT_ORDER_CANCELLED), None)
+
+
+def describe_cancellation(event: dict) -> str:
+    """«Canceló el pedido en picking: pedido duplicado de #a1b2c3. Se cerró el préstamo: 2 unidad(es) volvieron al
+    estante». Las cancelaciones anteriores a v1.23 (sin motivo codificado) se dicen como antes."""
+    details = event_details(event)
+    if not details.get("reason_code"):
+        reason = str(details.get("reason") or details.get("notes") or "").strip()
+        return "Canceló la solicitud" + (f" · «{reason}»" if reason else "")
+    what = "el pedido" if (event or {}).get("item_id") else "la solicitud"
+    where = CANCEL_STAGE_WORDS.get(str(details.get("from_stage") or ""), "")
+    reason = cancel_reason_text(details)
+    text = f"Canceló {what}" + (f" {where}" if where else "") + f": {reason[:1].lower()}{reason[1:]}"
+    if details.get("closed_loan_id"):
+        text += (f". Se cerró el préstamo: {int(details.get('returned_units') or 0)} unidad(es) volvieron al "
+                 "estante")
+    return text
+
+
 def describe_event(event: dict) -> str:
     """Frase corta y legible de lo que pasó en un evento (sin JSON ni nombres técnicos)."""
     kind = (event or {}).get("event_type")
@@ -621,7 +690,7 @@ def describe_event(event: dict) -> str:
     if kind == EVENT_ORDER_REJECTED:
         return f"Rechazó la solicitud{note}"
     if kind == EVENT_ORDER_CANCELLED:
-        return f"Canceló la solicitud{note}"
+        return describe_cancellation(event)
     if kind == EVENT_ORDER_AUTHORIZED:
         allowed = details.get("authorized_pickers") or []
         return (f"Autorizó el despacho a {len(allowed)} operario(s)" if allowed
@@ -1055,9 +1124,11 @@ def _who(email: str, names: dict = None) -> str:
 
 
 def _dispatch_timeline(request: dict, events: list, now=None) -> list:
-    """Etapas de T1 con quién y cuándo, más «cuánto lleva» en la actual."""
+    """Etapas de T1 con quién y cuándo, más «cuánto lleva» en la actual. Un pedido cancelado con motivo (v1.23)
+    muestra esta línea aunque nadie lo haya tomado: así se lee en qué etapa y por qué se canceló."""
     lifecycle = [event for event in events if event.get("event_type") in DISPATCH_LIFECYCLE_EVENTS]
-    if not dispatch_started(events):
+    cancelled = cancel_event(events)
+    if not dispatch_started(events) and not event_details(cancelled).get("reason_code"):
         return []
     steps = [{
         "title": "Solicitud creada", "state": "done",
@@ -1078,11 +1149,15 @@ def _dispatch_timeline(request: dict, events: list, now=None) -> list:
             counted = details.get("method") == "count"
             detail = (f"{actor} · {len(details.get('readings') or [])} unidad(es) "
                       + ("contadas" if counted else "leídas"))
+        elif event.get("event_type") == EVENT_ORDER_CANCELLED:
+            role = permissions.role_short_label(event.get("actor_role")) if event.get("actor_role") else ""
+            detail = f"{actor}" + (f" ({role})" if role and role != actor else "") + f" · {describe_cancellation(event)}"
         elif details.get("reason"):
             detail = f"{actor} · {details['reason']}"
         steps.append({
             "title": EVENT_LABELS.get(event.get("event_type"), event.get("event_type")),
-            "state": "done", "time": fmt_local(event.get("created_at")), "detail": detail,
+            "state": "blocked" if event.get("event_type") == EVENT_ORDER_CANCELLED else "done",
+            "time": fmt_local(event.get("created_at")), "detail": detail,
         })
     stage = request_stage_key(request, events)
     if stage not in {STAGE_CONFIRMED, STAGE_REJECTED, STAGE_CANCELLED, STAGE_RETURNED}:

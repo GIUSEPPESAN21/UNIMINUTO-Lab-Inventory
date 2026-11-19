@@ -18,12 +18,15 @@ Por escenario (A/B/C) y por sesión de la lúdica:
   ``tiempo_total_promedio_s``: promedio de picking_seconds y delivery_seconds,
   recalculados del registro (los mismos valores del reporte de Tiempos). Cada pedido
   cuenta en la sesión y el escenario de su último picking.
+
+Un pedido **cancelado** (fila ``pedido_cancelado`` con resultado ok) sale de TODAS las métricas: sus registros,
+lecturas, transacción y tiempos no cuentan. Sigue en los CSV (registro de eventos y Tiempos).
 """
 
 import csv
 import io
 
-from core import event_log, excel_safe, options, permissions, traceability
+from core import event_log, excel_safe, ludica, options, permissions, traceability
 
 SETTING = options.RESEARCH_METRICS
 ALL_SESSIONS = "(todas)"
@@ -49,10 +52,20 @@ def _mean(values: list):
     return round(sum(values) / len(values), 1) if values else ""
 
 
+def cancelled_transactions(log_rows: list) -> set:
+    """``transaccion_id`` de los pedidos cancelados (se excluyen de promedios y métricas)."""
+    return {row.get("transaccion_id") for row in log_rows or []
+            if row.get("tipo_evento") == ludica.KIND_CANCELLED and row.get("resultado_sistema") == event_log.RESULT_OK
+            and row.get("transaccion_id")}
+
+
 def summarize(log_rows: list, by_session: bool = True) -> list:
-    """Una fila por (sesión, escenario); con ``by_session=False``, una por escenario (sesión «(todas)»)."""
+    """Una fila por (sesión, escenario); con ``by_session=False``, una por escenario (sesión «(todas)»).
+    Los pedidos cancelados no cuentan (ver ``cancelled_transactions``)."""
+    cancelled = cancelled_transactions(log_rows)
+    log_rows = [row for row in log_rows or [] if row.get("transaccion_id") not in cancelled]
     groups, picked_in = {}, {}
-    for row in log_rows or []:
+    for row in log_rows:
         key = (row.get("sesion_id", "") if by_session else ALL_SESSIONS, row.get("escenario", ""))
         group = groups.setdefault(key, {"records": 0, "correct": 0, "reads": 0, "failed": 0})
         verdict, kind = row.get("resultado_sistema"), row.get("tipo_evento")

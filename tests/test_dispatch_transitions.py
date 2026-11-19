@@ -11,6 +11,8 @@ STUDENT = {"id": "s1", "full_name": "Ana", "institutional_email": "ana@uniminuto
 OPERATOR = {"id": "o1", "full_name": "Olga", "institutional_email": "olga@uniminuto.edu.co", "role": "operario"}
 SUPERVISOR = {"id": "p1", "full_name": "Pablo", "institutional_email": "pablo@uniminuto.edu.co", "role": "encargado"}
 ADMIN = {"id": "m1", "full_name": "Maria", "institutional_email": "maria@uniminuto.edu.co", "role": "maestro"}
+PROFESSOR = {"id": "f1", "full_name": "Fabio", "institutional_email": "fabio@uniminuto.edu.co", "role": "profesor"}
+CANCEL = {"reason_code": "client_error"}     # v1.23: cancelar exige motivo
 
 # Cómo llegar a cada etapa desde una solicitud nueva (cada paso es una función del dominio).
 STEPS = {
@@ -31,7 +33,7 @@ STEPS = {
 def lab(storage):
     storage.add_item("2-1-01-00-000", name="Electrónica", item_type="master")
     storage.add_item(ITEM, name="Arduino UNO", item_type="child", parent_id="2-1-01-00-000", quantity=500)
-    for person in (STUDENT, OPERATOR, SUPERVISOR, ADMIN):
+    for person in (STUDENT, OPERATOR, SUPERVISOR, ADMIN, PROFESSOR):
         storage.users[person["id"]] = {**person, "status": "active"}
     storage.set_setting("picking_route_required", "0")      # aquí se prueban las transiciones, no la ruta (test_pick_route)
     return storage
@@ -41,7 +43,7 @@ def _advance(storage, request_id, steps):
     actions = {
         "approve": lambda: service_requests.review_request(storage, request_id, "approved", SUPERVISOR)[0],
         "reject": lambda: service_requests.review_request(storage, request_id, "rejected", SUPERVISOR)[0],
-        "cancel": lambda: service_requests.cancel_request(storage, request_id, STUDENT)[0],
+        "cancel": lambda: service_requests.cancel_request(storage, request_id, PROFESSOR, "client_error")[0],
         "claim": lambda: dispatch.claim_request(storage, request_id, OPERATOR)[0],
         "pick": lambda: (dispatch.start_picking(storage, request_id, OPERATOR)[0]
                          and dispatch.confirm_units(storage, request_id, OPERATOR,
@@ -68,7 +70,7 @@ def _order(storage, stage):
 ATTEMPTS = {
     traceability.EVENT_ORDER_APPROVED: (SUPERVISOR, {}),
     traceability.EVENT_ORDER_REJECTED: (SUPERVISOR, {}),
-    traceability.EVENT_ORDER_CANCELLED: (SUPERVISOR, {}),   # quien revisa puede cancelar en cualquier etapa abierta
+    traceability.EVENT_ORDER_CANCELLED: (PROFESSOR, CANCEL),   # v1.23: profesor o administrador, hasta «Recibida»
     traceability.EVENT_ORDER_AUTHORIZED: (SUPERVISOR, {"authorized_pickers": []}),
     traceability.EVENT_ORDER_CLAIMED: (OPERATOR, {}),
     traceability.EVENT_ORDER_RELEASED: (OPERATOR, {"reason": "x"}),
@@ -118,18 +120,20 @@ def test_permissions_are_checked_before_the_stage(lab):
     assert traceability.request_stage_key(lab.get_service_request(request_id), []) == traceability.STAGE_REQUESTED
 
 
-def test_only_the_owner_confirms_and_cancels_only_while_the_request_is_in_review(lab):
+def test_only_the_owner_confirms_and_only_cancel_order_cancels(lab):
     delivered = _order(lab, traceability.STAGE_DELIVERED)
     other = {"id": "s2", "full_name": "Otra", "institutional_email": "o@x.edu.co", "role": "estudiante"}
     ok, message, _ = lab.transition_request(delivered, traceability.EVENT_ORDER_CLIENT_CONFIRMED, other, {})
     assert not ok and "solicitante" in message
     requested = _order(lab, traceability.STAGE_REQUESTED)
-    assert lab.transition_request(requested, traceability.EVENT_ORDER_CANCELLED, other, {})[0] is False   # ajena: no
-    assert lab.transition_request(requested, traceability.EVENT_ORDER_CANCELLED, STUDENT, {})[0] is True   # propia en revisión: sí
+    for person in (other, STUDENT, OPERATOR, SUPERVISOR):                # ni ajena ni propia, ni el encargado
+        ok, message, _ = lab.transition_request(requested, traceability.EVENT_ORDER_CANCELLED, person, dict(CANCEL))
+        assert not ok and "permiso" in message, person["role"]
     approved = _order(lab, traceability.STAGE_APPROVED)
-    ok, message, _ = lab.transition_request(approved, traceability.EVENT_ORDER_CANCELLED, STUDENT, {})
-    assert not ok and "mientras está en revisión" in message             # ya aprobada: solo quien revisa la cancela
-    assert lab.transition_request(approved, traceability.EVENT_ORDER_CANCELLED, SUPERVISOR, {})[0] is True
+    assert lab.transition_request(approved, traceability.EVENT_ORDER_CANCELLED, PROFESSOR, dict(CANCEL))[0] is True
+    assert lab.transition_request(requested, traceability.EVENT_ORDER_CANCELLED, ADMIN, dict(CANCEL))[0] is True
+    ok, message, _ = lab.transition_request(delivered, traceability.EVENT_ORDER_CANCELLED, ADMIN, dict(CANCEL))
+    assert not ok and "Devoluciones" in message                          # entregado: se usa Devoluciones
 
 
 def test_picking_needs_the_exact_quantity_the_right_product_and_available_stock(lab):

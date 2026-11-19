@@ -2415,11 +2415,13 @@ class LabStorage:
                 returned = _int(dfs["loans"].at[loan_index, "quantity"])
                 dfs["loans"].at[loan_index, "return_at"] = now
                 dfs["loans"].at[loan_index, "status"] = "returned"
+                why = ("Pedido cancelado: unidades devueltas al estante" if event_type == "order_cancelled"
+                       else "Devuelto al estante")
                 history = {
                     "id": _new_id(), "item_id": item_id, "timestamp": now,
                     "type": "Reingreso", "quantity_change": returned,
                     "actor_user_id": actor.get("institutional_email", ""),
-                    "details": f"Devuelto al estante desde la solicitud {request_id} ({loan_id})",
+                    "details": f"{why} desde la solicitud {request_id} ({loan_id})",
                 }
                 dfs["item_history"] = pd.concat(
                     [dfs["item_history"], pd.DataFrame([history])], ignore_index=True

@@ -141,6 +141,47 @@ def _clean(text) -> str:
     return " ".join(str(text or "").split())
 
 
+# --- Cancelación de pedidos (v1.23) -------------------------------------------------------------
+#
+# Solo `cancel_order` (profesor y administrador) cancela, en Despacho y en Solicitudes, en cualquier etapa hasta
+# «Recibida · por entregar». La vista oculta el botón a quien no la tiene; estas funciones y plan_transition la
+# vuelven a exigir. El estado `cancelled` y el evento `order_cancelled` ya existían: no hay columnas nuevas.
+
+CANCEL_REASONS = traceability.CANCEL_REASONS
+CANCEL_DUPLICATE, CANCEL_CLIENT_ERROR, CANCEL_NO_STOCK, CANCEL_OTHER = (
+    traceability.CANCEL_DUPLICATE, traceability.CANCEL_CLIENT_ERROR, traceability.CANCEL_NO_STOCK,
+    traceability.CANCEL_OTHER)
+CANCEL_DENIED = "No tienes permiso para cancelar pedidos: solo un profesor o el administrador los cancelan."
+CANCEL_DELIVERED = ("El pedido ya se entregó al cliente: no se cancela. Si lo devuelve, regístralo en "
+                    "Despacho → Devoluciones.")
+
+
+def can_cancel(user: dict) -> bool:
+    """¿``user`` puede cancelar pedidos? (para mostrar u ocultar el botón; el dominio lo vuelve a exigir)."""
+    return permissions.has_cap(user, permissions.CAP_CANCEL_ORDER)
+
+
+def _cancel_details_problem(details: dict, request: dict) -> str:
+    """Valida (y normaliza en su lugar) el motivo de una cancelación. Devuelve el problema o ``""``."""
+    code = str(details.get("reason_code") or "").strip()
+    if code not in CANCEL_REASONS:
+        return "Elige el motivo de la cancelación."
+    details["reason_code"] = code
+    details["reason_text"] = _clean(details.get("reason_text"))
+    if code == CANCEL_OTHER and not details["reason_text"]:
+        return "Escribe el motivo de la cancelación (elegiste «Otro»)."
+    if code == CANCEL_DUPLICATE:
+        original = str(details.get("original_request_id") or "").strip()
+        if not original:
+            return "Elige el pedido original del que este es un duplicado."
+        if original == str((request or {}).get("id") or ""):
+            return "Un pedido no puede ser duplicado de sí mismo."
+        details["original_request_id"] = original
+    else:
+        details.pop("original_request_id", None)
+    return ""
+
+
 def plan_transition(request: dict, events: list, actor: dict, event_type: str,
                     details: dict = None, available=None, open_loan: dict = None) -> dict:
     """Valida una transición SIN efectos y describe lo que debe escribirse.
@@ -167,6 +208,13 @@ def plan_transition(request: dict, events: list, actor: dict, event_type: str,
     capability = traceability.EVENT_CAPABILITIES.get(event_type)
     if capability and not permissions.has_cap(actor, capability):
         return fail("No tienes permiso para realizar esta transición.")
+    if event_type == traceability.EVENT_ORDER_CANCELLED:
+        # La capa de datos vuelve a exigir la capacidad aunque se llame a transition_request directamente.
+        if not permissions.has_cap(actor, permissions.CAP_CANCEL_ORDER):
+            return fail(CANCEL_DENIED)
+        if stage in (traceability.STAGE_DELIVERED, traceability.STAGE_CONFIRMED) or (
+                stage == traceability.STAGE_APPROVED and traceability.first_event(events, traceability.EVENT_PICKED_UP)):
+            return fail(CANCEL_DELIVERED)
     target = traceability.transition_target(stage, event_type)
     if target is None:
         if event_type == traceability.EVENT_ORDER_CLAIMED and stage == traceability.STAGE_CLAIMED:
@@ -186,14 +234,21 @@ def plan_transition(request: dict, events: list, actor: dict, event_type: str,
     }
 
     if event_type == traceability.EVENT_ORDER_CANCELLED:
-        if owner:
-            if not permissions.has_cap(actor, permissions.CAP_CANCEL_OWN_REQUEST):
-                return fail("No tienes permiso para cancelar esta solicitud.")
-            if stage != traceability.STAGE_REQUESTED:
-                return fail("Solo puedes cancelar tu solicitud mientras está en revisión.")
-        elif not permissions.has_cap(actor, permissions.CAP_APPROVE):
-            return fail("No tienes permiso para cancelar esta solicitud.")
+        problem = _cancel_details_problem(details, request)
+        if problem:
+            return fail(problem)
+        details["from_stage"] = stage
+        details["from_stage_label"] = traceability.STAGES[stage][0]
+        details["reason"] = traceability.cancel_reason_text(details)     # también queda como respuesta al cliente
+        if open_loan:
+            # Ya hubo picking: las unidades salieron con este préstamo. Se cierra en la MISMA escritura y vuelven al
+            # estante, igual que «Devuelto al estante».
+            plan["loan_action"], plan["loan_id"] = "close", str(open_loan.get("id") or "")
+            details["closed_loan_id"] = plan["loan_id"]
+            details["returned_units"] = int(open_loan.get("quantity") or 0)
         plan["status"] = "cancelled"
+        plan["message"] = "Pedido cancelado." + (
+            f" Se cerró el préstamo: {details['returned_units']} unidad(es) vuelven al estante." if open_loan else "")
     elif event_type in {traceability.EVENT_ORDER_APPROVED, traceability.EVENT_ORDER_REJECTED}:
         approved = event_type == traceability.EVENT_ORDER_APPROVED
         if approved and owner and not allow_self_approval():
@@ -313,9 +368,10 @@ _orders_cache = {"generation": None, "version": None, "rows": [], "closed": set(
 
 
 def reset_orders_cache() -> None:
-    """Olvida lo calculado (pruebas)."""
+    """Olvida lo calculado (pruebas): listas abiertas y avisos de posible duplicado."""
     with _orders_lock:
         _orders_cache.update(generation=None, version=None, rows=[], closed=set())
+    reset_duplicates_cache()
 
 
 def _data_state(storage):
@@ -1047,6 +1103,264 @@ def return_to_shelf(storage, request_id: str, actor: dict, reason: str):
     )
 
 
+def _stage_of(storage, request: dict) -> str:
+    return traceability.request_stage_key(request, storage.get_trace_events(request_id=request["id"]))
+
+
+def _original_problem(storage, request: dict, original_id: str) -> str:
+    """El pedido original de un duplicado debe existir, ser OTRO pedido del mismo cliente y del mismo producto, y no
+    estar cancelado ni rechazado (es el que sigue)."""
+    original_id = str(original_id or "").strip()
+    if not original_id:
+        return "Elige el pedido original del que este es un duplicado."
+    if original_id == request.get("id"):
+        return "Un pedido no puede ser duplicado de sí mismo."
+    original = storage.get_service_request(original_id)
+    if not original:
+        return "El pedido original no existe."
+    if (original.get("requester_id") != request.get("requester_id")
+            or original.get("item_id") != request.get("item_id")):
+        return "El pedido original debe ser del mismo cliente y del mismo producto."
+    if original.get("status") in ("cancelled", "rejected"):
+        return "El pedido original está cancelado o rechazado: elige el que sigue en pie."
+    return ""
+
+
+def cancel_request(storage, request_id: str, actor: dict, reason_code: str, reason_text: str = "",
+                   original_id: str = ""):
+    """Cancela UNA línea en cualquier etapa hasta «Recibida · por entregar», con motivo obligatorio.
+
+    ``reason_code``: ``duplicate`` (con ``original_id``: el pedido original, del mismo cliente y producto),
+    ``client_error``, ``no_stock`` u ``other`` (con ``reason_text``). Si ya hubo picking, la misma escritura cierra el
+    préstamo y las unidades vuelven al estante. Con el registro de eventos activo, las lecturas pendientes de quien
+    lo preparaba viajan en el evento; su panel de picking queda abierto hasta su próxima recarga, que avisa «se
+    canceló» y lo cierra (descarta las lecturas). Devuelve ``(ok, mensaje, evento)``."""
+    permissions.require_cap(actor, permissions.CAP_CANCEL_ORDER, CANCEL_DENIED)
+    request = storage.get_service_request(request_id)
+    if not request:
+        return False, "La solicitud no existe.", None
+    details = {"reason_code": str(reason_code or "").strip(), "reason_text": _clean(reason_text)}
+    if details["reason_code"] == CANCEL_DUPLICATE:
+        problem = _original_problem(storage, request, original_id)
+        if problem:
+            return False, problem, None
+        details["original_request_id"] = str(original_id).strip()
+    previous = assigned_picker(storage.get_trace_events(request_id=request_id))
+    log = _pending_log(storage, previous, request_id) if previous else []
+    if log:
+        details["read_log"] = log                # M3: lo leído antes de cancelar no se pierde
+    return storage.transition_request(request_id, traceability.EVENT_ORDER_CANCELLED, actor, details)
+
+
+def order_lines(storage, order_id: str) -> list:
+    """Líneas de un pedido de varios productos (cualquier estado), en el orden en que se crearon."""
+    if not order_id:
+        return []
+    rows = [row for row in storage.get_service_requests() if row.get("order_id") == order_id]
+    return sorted(rows, key=lambda row: str(row.get("created_at") or ""))
+
+
+def _original_lines(storage, original_ref: str) -> list:
+    """Líneas del pedido original: ``original_ref`` es un ``order_id`` o el id de una solicitud suelta."""
+    lines = order_lines(storage, original_ref)
+    if lines:
+        return lines
+    row = storage.get_service_request(original_ref) if original_ref else None
+    return [row] if row else []
+
+
+def cancel_order(storage, order_id: str, actor: dict, reason_code: str, reason_text: str = "",
+                 original_ref: str = ""):
+    """Cancela todas las líneas de un pedido que todavía se pueden cancelar, con el mismo motivo.
+
+    Las líneas ya entregadas no se tocan (se usa Devoluciones). Con «Pedido duplicado», ``original_ref`` es el
+    pedido original (``order_id`` o id de una solicitud) y cada línea queda enlazada a la línea del original con su
+    mismo producto; si al original le falta alguno, no se cancela nada. Devuelve ``(ok, mensaje, líneas canceladas)``."""
+    permissions.require_cap(actor, permissions.CAP_CANCEL_ORDER, CANCEL_DENIED)
+    lines = order_lines(storage, order_id)
+    if not lines:
+        return False, "El pedido no existe.", []
+    stages = {row["id"]: _stage_of(storage, row) for row in lines}
+    open_lines = [row for row in lines if stages[row["id"]] in traceability.CANCELLABLE_STAGES]
+    delivered = [row for row in lines if stages[row["id"]] in (traceability.STAGE_DELIVERED,
+                                                               traceability.STAGE_CONFIRMED)]
+    note = (f" {len(delivered)} producto(s) ya entregado(s): no se cancelan; si los devuelve, usa Devoluciones."
+            if delivered else "")
+    if not open_lines:
+        return False, ("Este pedido ya no tiene productos para cancelar." + note).strip(), []
+    originals = {}
+    if str(reason_code or "").strip() == CANCEL_DUPLICATE:
+        source = [row for row in _original_lines(storage, original_ref)
+                  if row.get("id") not in {line["id"] for line in lines}]
+        for row in open_lines:
+            match = next((o for o in source if o.get("item_id") == row.get("item_id")
+                          and o.get("requester_id") == row.get("requester_id")), None)
+            if match is None:
+                return False, (f"El pedido original no tiene «{row.get('item_name') or row.get('item_id')}» del mismo "
+                               "cliente: cancela ese producto aparte con otro motivo."), []
+            originals[row["id"]] = match["id"]
+    ok, message, done = _order_batch(
+        open_lines, lambda rid: cancel_request(storage, rid, actor, reason_code, reason_text, originals.get(rid, "")),
+        "Cancelaste")
+    return ok, message + note, done
+
+
+def cancel_preview(storage, request_ids) -> list:
+    """Qué pasaría al cancelar cada línea, para la confirmación previa: ``[{request, stage, stage_label, can_cancel,
+    units_back, effect}]``. ``units_back`` son las unidades que vuelven al estante (préstamo abierto del picking)."""
+    rows = []
+    open_loans = {loan.get("request_id"): loan for loan in storage.get_all_loans(status="out") if loan.get("request_id")}
+    for request_id in request_ids or []:
+        request = storage.get_service_request(request_id)
+        if not request:
+            continue
+        events = storage.get_trace_events(request_id=request_id)
+        stage = traceability.request_stage_key(request, events)
+        picked_up = traceability.first_event(events, traceability.EVENT_PICKED_UP) is not None
+        allowed = stage in traceability.CANCELLABLE_STAGES and not picked_up
+        loan = open_loans.get(request_id) if allowed else None
+        units = int((loan or {}).get("quantity") or 0)
+        if not allowed and (picked_up or stage in (traceability.STAGE_DELIVERED, traceability.STAGE_CONFIRMED)):
+            effect = "Ya se entregó al cliente: no se cancela. Si lo devuelve, usa Despacho → Devoluciones."
+        elif not allowed:
+            effect = f"Ya está cerrado («{traceability.STAGES[stage][0]}»): no hay nada que cancelar."
+        elif loan:
+            effect = (f"Ya hubo picking: se cierra el préstamo y {units} unidad(es) vuelven al estante (quedan "
+                      "disponibles de nuevo).")
+        elif stage == traceability.STAGE_CLAIMED:
+            effect = ("Está en picking: el panel de quien lo prepara se cierra y sus lecturas se descartan. Las unidades "
+                      "todavía no salieron del inventario.")
+        else:
+            effect = "Las unidades todavía no salieron del inventario: no hay nada que devolver al estante."
+        rows.append({"request": request, "stage": stage, "stage_label": traceability.STAGES[stage][0],
+                     "can_cancel": allowed, "units_back": units, "effect": effect})
+    return rows
+
+
+def duplicate_candidates(storage, request: dict) -> list:
+    """Pedidos que pueden ser el original de ``request``: del mismo cliente y del mismo producto, que siguen en pie
+    (ni cancelados ni rechazados), del más cercano en el tiempo al más lejano."""
+    request = request or {}
+    when = traceability.to_datetime(request.get("created_at"))
+    rows = [row for row in storage.get_service_requests(user_id=request.get("requester_id"))
+            if row.get("id") != request.get("id") and row.get("item_id") == request.get("item_id")
+            and row.get("request_type") == "product" and row.get("status") not in ("cancelled", "rejected")]
+
+    def distance(row):
+        other = traceability.to_datetime(row.get("created_at"))
+        return abs((other - when).total_seconds()) if other and when else float("inf")
+
+    return sorted(rows, key=distance)
+
+
+def order_duplicate_candidates(storage, lines: list) -> list:
+    """Originales posibles para un pedido de varios productos: otros pedidos (o solicitudes sueltas) del mismo
+    cliente, en pie, que tengan TODOS los productos de ``lines``. ``[{"ref", "rows"}]``."""
+    if not lines:
+        return []
+    requester = lines[0].get("requester_id")
+    own = {row["id"] for row in lines}
+    wanted = {row.get("item_id") for row in lines}
+    pool = [row for row in storage.get_service_requests(user_id=requester)
+            if row["id"] not in own and row.get("status") not in ("cancelled", "rejected")]
+    groups = {}
+    for row in pool:
+        groups.setdefault(row.get("order_id") or row["id"], []).append(row)
+    found = [{"ref": ref, "rows": rows} for ref, rows in groups.items()
+             if wanted <= {row.get("item_id") for row in rows}]
+    return sorted(found, key=lambda group: str(group["rows"][0].get("created_at") or ""), reverse=True)
+
+
+# --- Aviso de posible duplicado ----------------------------------------------------------------
+#
+# Caso real (7-nov): el mismo cliente pidió el mismo producto dos veces con 2 s de diferencia y los dos pedidos
+# llegaron a «Entregada». Despacho marca «Posible duplicado» cuando el mismo solicitante pide el mismo producto dentro
+# de una ventana corta. Solo avisa: no bloquea ni cancela nada.
+
+SETTING_DUPLICATE_WINDOW = "duplicate_window_minutes"
+DEFAULT_DUPLICATE_WINDOW = 2.0
+DUPLICATE_WINDOW_RANGE = (0.0, 60.0)          # 0 apaga el aviso
+
+_dup_lock = threading.Lock()
+_dup_cache = {"key": None, "map": {}}
+
+
+def reset_duplicates_cache() -> None:
+    with _dup_lock:
+        _dup_cache.update(key=None, map={})
+
+
+def duplicate_window_minutes(storage) -> float:
+    """Ventana del aviso de posible duplicado, en minutos (Despacho → Ajustes; 2 por omisión, 0 lo apaga)."""
+    try:
+        value = float(str(storage.get_setting(SETTING_DUPLICATE_WINDOW, "") or "").replace(",", "."))
+    except (TypeError, ValueError):
+        return DEFAULT_DUPLICATE_WINDOW
+    low, high = DUPLICATE_WINDOW_RANGE
+    return value if low <= value <= high else DEFAULT_DUPLICATE_WINDOW
+
+
+def set_duplicate_window(storage, actor: dict, minutes):
+    """Fija la ventana del aviso (solo el administrador). Devuelve ``(ok, mensaje)``."""
+    permissions.require_cap(actor, permissions.CAP_DISPATCH_SETTINGS,
+                            "Solo un administrador cambia la ventana del aviso de duplicados.")
+    low, high = DUPLICATE_WINDOW_RANGE
+    try:
+        value = round(float(str(minutes).replace(",", ".")), 1)
+    except (TypeError, ValueError):
+        return False, "Escribe los minutos con un número."
+    if not low <= value <= high:
+        return False, f"La ventana va de {low:g} a {high:g} minutos (0 apaga el aviso)."
+    storage.set_setting(SETTING_DUPLICATE_WINDOW, f"{value:g}", (actor or {}).get("institutional_email", ""))
+    if value == 0:
+        return True, "Aviso de posible duplicado apagado."
+    return True, f"Aviso de posible duplicado: mismo cliente y mismo producto en menos de {value:g} min."
+
+
+def _compute_duplicates(rows: list, window_seconds: float) -> dict:
+    groups = {}
+    for row in rows:
+        if row.get("request_type") != "product" or row.get("status") in ("cancelled", "rejected"):
+            continue
+        when = traceability.to_datetime(row.get("created_at"))
+        if when is None or not row.get("requester_id") or not row.get("item_id"):
+            continue
+        groups.setdefault((row["requester_id"], row["item_id"]), []).append((when, row))
+    found = {}
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        members.sort(key=lambda pair: (pair[0], str(pair[1].get("id"))))
+        for index, (when, row) in enumerate(members):
+            for other_when, other in members[index + 1:]:
+                gap = (other_when - when).total_seconds()
+                if gap > window_seconds:
+                    break
+                found.setdefault(row["id"], []).append(
+                    {"id": other["id"], "seconds": int(gap), "earlier": False, "order_id": other.get("order_id", "")})
+                found.setdefault(other["id"], []).append(
+                    {"id": row["id"], "seconds": int(gap), "earlier": True, "order_id": row.get("order_id", "")})
+    return found
+
+
+def possible_duplicates(storage) -> dict:
+    """``{request_id: [{"id", "seconds", "earlier", "order_id"}]}``: los otros pedidos del mismo cliente y producto
+    dentro de la ventana. ``earlier`` dice si el otro llegó ANTES (este sería el duplicado). Se calcula una vez por
+    versión de datos; sin ``get_data_state`` (pruebas), en cada llamada."""
+    minutes = duplicate_window_minutes(storage)
+    if minutes <= 0:
+        return {}
+    state = _data_state(storage)
+    if state is None:
+        return _compute_duplicates(storage.get_service_requests(), minutes * 60)
+    key = (state.get("generation"), state.get("version"), minutes)
+    with _dup_lock:
+        if _dup_cache["key"] != key:
+            _dup_cache["map"] = _compute_duplicates(storage.get_service_requests(), minutes * 60)
+            _dup_cache["key"] = key
+        return {rid: [dict(link) for link in links] for rid, links in _dup_cache["map"].items()}
+
+
 def confirm_client_receipt(storage, request_id: str, actor: dict):
     permissions.require_cap(actor, permissions.CAP_CONFIRM_RECEIPT)
     return storage.transition_request(
@@ -1066,12 +1380,18 @@ def dispatch_metrics(storage, actor: dict) -> list:
         if request.get("request_type") != "product" or not events:
             continue
         by_type = {event.get("event_type"): event for event in events}
+        stage = traceability.request_stage_key(request, events)
         requested = traceability.to_datetime(request.get("created_at"))
         delivered = traceability.to_datetime((by_type.get(traceability.EVENT_ORDER_DELIVERED) or {}).get("created_at"))
         claimed = traceability.to_datetime((by_type.get(traceability.EVENT_ORDER_CLAIMED) or {}).get("created_at"))
         picked = traceability.to_datetime((by_type.get(traceability.EVENT_ORDER_PICKED) or {}).get("created_at"))
+        cancelled = stage == traceability.STAGE_CANCELLED
+        if cancelled:
+            # Un pedido cancelado deja de sumar tiempo: sigue en la lista (stage = cancelled, con su hora de
+            # cancelación) pero sin duraciones, para que no entre en ningún promedio.
+            claimed = picked = delivered = None
         row = {
-            "request_id": request["id"], "stage": traceability.request_stage_key(request, events),
+            "request_id": request["id"], "stage": stage,
             "requested_at": request.get("created_at", ""),
             "claim_seconds": int((claimed - requested).total_seconds()) if requested and claimed else "",
             "picking_seconds": int((picked - claimed).total_seconds()) if claimed and picked else "",
@@ -1080,8 +1400,25 @@ def dispatch_metrics(storage, actor: dict) -> list:
         }
         if log_on:
             row.update(event_log.time_columns(request, events))     # columnas nuevas, siempre al final
+        cancel = traceability.cancel_event(events) if cancelled else None
+        row["cancelled_at"] = (cancel or {}).get("created_at", "") or (
+            request.get("reviewed_at", "") if cancelled else "")
         rows.append(row)
     return rows
+
+
+def time_summary(rows: list) -> dict:
+    """Promedios de Tiempos SIN los pedidos cancelados: ``{"orders", "cancelled", "claim_seconds",
+    "picking_seconds", "delivery_seconds"}`` (segundos o ``None`` si no hay datos)."""
+    kept = [row for row in rows or [] if row.get("stage") != traceability.STAGE_CANCELLED]
+
+    def mean(column):
+        values = [row[column] for row in kept if row.get(column) not in ("", None)]
+        return round(sum(values) / len(values)) if values else None
+
+    return {"orders": len(kept), "cancelled": len(rows or []) - len(kept),
+            "claim_seconds": mean("claim_seconds"), "picking_seconds": mean("picking_seconds"),
+            "delivery_seconds": mean("delivery_seconds")}
 
 
 def dispatch_csv(storage, actor: dict, salt: str = "dispatch-report") -> bytes:
@@ -1093,6 +1430,7 @@ def dispatch_csv(storage, actor: dict, salt: str = "dispatch-report") -> bytes:
               "delivery_seconds", "picker_role"]
     if event_log.enabled(storage):
         fields += list(event_log.TIME_COLUMNS)
+    fields.append("cancelled_at")      # v1.23: hora de cancelación (vacía si no se canceló), siempre la última
     writer = csv.DictWriter(output, fieldnames=fields)
     writer.writeheader()
     for row in rows:

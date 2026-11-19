@@ -79,12 +79,15 @@ def test_the_supervisor_approves_or_rejects_the_whole_order(lab):
     assert not service_requests.review_order(lab, _order(lab)[0]["order_id"], "approved", STUDENT)[0]
 
 
-def test_the_client_cancels_the_whole_order_until_the_lab_starts(lab):
+def test_only_a_professor_or_the_admin_cancels_the_whole_order(lab):
     rows = _order(lab)
-    ok, message = service_requests.cancel_order(lab, rows[0]["order_id"], STUDENT)
-    assert ok and "2" in message
+    assert not service_requests.cancel_order(lab, rows[0]["order_id"], STUDENT, "client_error")[0]      # v1.23
+    assert not service_requests.cancel_order(lab, rows[0]["order_id"], SUPERVISOR, "client_error")[0]
+    professor = {"id": "f1", "full_name": "Fabio", "institutional_email": "fabio@uniminuto.edu.co", "role": "profesor"}
+    ok, message = service_requests.cancel_order(lab, rows[0]["order_id"], professor, "client_error")
+    assert ok and "2 de 2" in message
     assert {lab.get_service_request(r["id"])["status"] for r in rows} == {"cancelled"}
-    assert not service_requests.cancel_order(lab, rows[0]["order_id"], STUDENT)[0]
+    assert not service_requests.cancel_order(lab, rows[0]["order_id"], professor, "client_error")[0]
 
 
 def test_the_operator_takes_every_line_with_one_action_and_the_supervisor_closes_it(lab):
@@ -195,13 +198,13 @@ def _real_order():
     return storage, people, rows
 
 
-def test_the_client_sees_one_grouped_order_with_a_cancel_for_all():
+def test_the_client_sees_one_grouped_order_and_no_cancel_button():
     pytest.importorskip("streamlit.testing.v1")
     storage, people, rows = _real_order()
     at = _open("solicitudes", people["estudiante"])
     text = " ".join(str(m.value) for m in at.markdown)
     assert f"Pedido {rows[0]['order_id'].upper()}" in text and "2 productos" in text
-    assert [b for b in at.button if b.label == "Cancelar todo el pedido"]
+    assert not [b for b in at.button if "Cancelar" in b.label]          # v1.23: el cliente ya no cancela
 
 
 def test_the_supervisor_reviews_the_group_and_the_operator_takes_it_whole():

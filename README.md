@@ -241,7 +241,9 @@ para qué día) y el personal sigue pudiendo dar salida o reingresar. La ruta de
 - **Mis pedidos:** cada pedido con su avance en palabras sencillas —**Enviada → Aprobada → Preparando tu
   pedido → Listo para reclamar → Completado**— y qué le toca hacer al cliente (por ejemplo, *Recibí mi pedido*
   cuando ya se lo entregaron). El cliente solo ve lo suyo y no necesita Trazabilidad; si prefiere retirarlo
-  él mismo, ahí mismo tiene la **ruta verificable** hasta el producto.
+  él mismo, ahí mismo tiene la **ruta verificable** hasta el producto. Si su pedido se canceló, ve **quién, en qué
+  etapa y por qué** («Lo canceló Carlos (Supervisor) en picking: Pedido duplicado de #a1b2c3.»). Desde la v1.23 el
+  cliente **no cancela**: lo hacen un profesor o el administrador (ver *Cancelar un pedido* en Despacho).
 - **Gestionar** (quien aprueba): solicitudes por revisar con operarios autorizados y respuesta, y, con permiso de
   reservas, las reservas por revisar y las próximas aprobadas.
 
@@ -289,6 +291,46 @@ columna nueva `loose_pieces` de `items` se completa sola en las bases antiguas.
   tengas tomado): «Producto preparado. Sigue: «Pinzas de punta» × 2».
 - **Por entregar** (supervisor): **Entregar al cliente** registra la revisión y la entrega en **un solo clic** (también
   para todo el pedido). Si algo no cuadra, **Corregir** devuelve un producto al picking o al estante.
+- **Cancelar** (solo profesor y administrador): botón en cada tarjeta, por línea o para el pedido completo, en todas
+  las etapas hasta «Recibida · por entregar». Ver *Cancelar un pedido* más abajo.
+- **Posible duplicado**: aviso en Por aprobar y en las listas abiertas cuando el mismo cliente pide el mismo producto
+  dentro de una ventana corta.
+
+**Cancelar un pedido (v1.23).** Solo quien tiene la capacidad `cancel_order` —**profesor** y **administrador**— cancela,
+en Despacho y en Solicitudes; el estudiante (ni siquiera lo suyo), el operario y el encargado no. La vista solo les muestra
+el botón a ellos y `core/dispatch.py` (`cancel_request`, `cancel_order`) y `LabStorage.transition_request`
+(`dispatch.plan_transition`) la vuelven a exigir aunque alguien llame la función directamente.
+
+- **Dónde:** botón **Cancelar** en cada tarjeta de Por aprobar, Por preparar, Mis pedidos y Por entregar; lo que otro
+  operario está preparando se cancela desde **Reasignar o liberar → Cancelar este pedido**. En Solicitudes → Mis
+  pedidos, **Cancelar pedido** (por línea) y **Cancelar todo el pedido**.
+- **Motivo obligatorio:** *Pedido duplicado* · *Error del cliente* · *Sin stock* · *Otro* (con texto). Con *Pedido
+  duplicado* se elige el **pedido original** entre los del mismo cliente y producto que siguen en pie (para un pedido de
+  varios productos, otro pedido que los tenga todos: cada línea queda enlazada a la suya).
+- **Confirmación previa:** el panel aparece arriba de la página con la **etapa actual** de cada línea y **qué pasa con las
+  unidades** («Las unidades todavía no salieron del inventario» / «Ya hubo picking: se cierra el préstamo y 2 unidad(es)
+  vuelven al estante»), y pide **Sí, cancelar** o **No, volver**.
+- **Tras el picking:** la cancelación **cierra el préstamo abierto en la misma escritura** (las unidades vuelven al
+  estante y el historial del producto registra el reingreso «Pedido cancelado»), igual que «Devuelto al estante».
+  Si alguien lo estaba preparando, su panel avisa «se canceló» y se cierra.
+- **Desde «Entregada» no se cancela:** lo que el cliente devuelva entra por **Despacho → Devoluciones** (el panel y el
+  mensaje de error lo dicen).
+- **Trazabilidad:** cada cancelación es un evento `order_cancelled` con quién (nombre y rol), cuándo, la etapa en que se
+  canceló (`from_stage`), el motivo (`reason_code`, `reason`, `reason_text`), el pedido original si es duplicado
+  (`original_request_id`) y el préstamo cerrado si lo hubo (`closed_loan_id`, `returned_units`). En Trazabilidad y en la
+  línea de tiempo se lee en palabras: «Canceló el pedido en picking: pedido duplicado de #a1b2c3». Se usa el estado
+  `cancelled` que ya existía: **no hay columnas nuevas** en el Excel.
+- **Tiempos y métricas:** un pedido cancelado sale de las listas abiertas, deja de sumar tiempo y no entra en los
+  promedios de Tiempos, en `research_metrics` ni en las métricas por escenario. Sigue en el CSV de Tiempos con
+  `stage = cancelled` y su hora en la columna nueva `cancelled_at` (siempre la última), y en el CSV de eventos de la
+  lúdica (y en el registro de eventos) como `tipo_evento = pedido_cancelado`.
+
+**Aviso de posible duplicado.** Caso real: el 7-nov el mismo cliente pidió 2-1-04-10-000 dos veces con 2 s de diferencia
+y los dos pedidos llegaron a «Entregada». Ahora Despacho marca **Posible duplicado** (pastilla y aviso con el otro pedido,
+cuánto antes o después llegó y en qué etapa va) cuando el mismo solicitante pide el mismo producto dentro de una ventana
+corta: **2 min por omisión**, ajustable en **Despacho → Ajustes → Aviso de posible duplicado** (0 lo apaga). Lo ven
+todos los que trabajan en Despacho; el acceso directo **Cancelar como duplicado de #…** (en el pedido que llegó después,
+con el original ya elegido) solo aparece para profesor y administrador. Solo avisa: no bloquea nada.
 
 Por dentro, un pedido de producto recorre: **solicitado → aprobado → tomado → picking
 completo → recibido → entregado → confirmado por el cliente** (los eventos siguen siendo los mismos para la
@@ -563,18 +605,20 @@ como «Ana (Cliente)»).
 
 | Etiqueta | Id técnico | Puede |
 |---|---|---|
-| **Estudiante (Cliente)** | `estudiante` | Busca, pide productos, servicios y reservas, sigue su pedido en **Mis pedidos**, devuelve lo suyo, **confirma la recepción** de su pedido. Ve solo lo suyo |
+| **Estudiante (Cliente)** | `estudiante` | Busca, pide productos, servicios y reservas, sigue su pedido en **Mis pedidos**, devuelve lo suyo, **confirma la recepción** de su pedido. Ve solo lo suyo. **No cancela pedidos** (desde v1.23; ve por qué se canceló el suyo) |
 | **Operario (Auxiliar de laboratorio)** | `operario` | Toma un pedido autorizado, recorre el laboratorio, hace el **picking** unidad por unidad y lo entrega al supervisor. **No aprueba, no recibe, no ve inventario ni reportes** |
-| **Supervisor (Encargado del laboratorio)** | `encargado` | **Aprueba** solicitudes, **autoriza operarios**, **recibe** el picking del operario, lo revisa y lo **entrega al cliente**; ve las trazas y los tiempos. **No edita el inventario ni ve los préstamos de otras personas** |
-| **Supervisor (Profesor)** | `profesor` | Todo lo del encargado + alta/edición/baja de ítems, ubicaciones, fotos, chips NFC, conteos, reportes, reservas y **todos los préstamos** |
+| **Supervisor (Encargado del laboratorio)** | `encargado` | **Aprueba** solicitudes, **autoriza operarios**, **recibe** el picking del operario, lo revisa y lo **entrega al cliente**; ve las trazas y los tiempos. **No edita el inventario, no ve los préstamos de otras personas y no cancela pedidos** |
+| **Supervisor (Profesor)** | `profesor` | Todo lo del encargado + alta/edición/baja de ítems, ubicaciones, fotos, chips NFC, conteos, reportes, reservas, **todos los préstamos** y **cancelar pedidos** (`cancel_order`, en Despacho y en Solicitudes) |
 | **Administrador** | `maestro` | Todo lo anterior + usuarios, roles y contraseñas, la lista blanca, correos automáticos, el escenario de despacho y el **retiro por autoservicio**, **resolver conflictos de sincronización**, **borrar datos operativos** (Usuarios → Datos), eliminar fotos y ajustar cantidades tras un conteo |
 
 Los dos supervisores se distinguen por su cargo: el **encargado del laboratorio** opera (aprueba, recibe,
-entrega) y el **profesor** además administra inventario, ubicaciones, reservas y reportes.
+entrega) y el **profesor** además administra inventario, ubicaciones, reservas y reportes, y **cancela pedidos**.
+`cancel_order` es la **única** capacidad que cancela (la de «cancelar lo propio», `cancel_own_request`, ya no existe, y
+`approve` ya no sirve para cancelar): solo la tienen `profesor` y `maestro`.
 
 **Seguridad por capacidad (no por nombre de rol).** Cada rol concede un conjunto de
 capacidades (`request`, `approve`, `claim`, `pick`, `receive_and_deliver`, `view_all_loans`,
-`checkin_any_loan`, `edit_inventory`, `manage_users`…) y el código pregunta por la capacidad,
+`checkin_any_loan`, `cancel_order`, `edit_inventory`, `manage_users`…) y el código pregunta por la capacidad,
 nunca por `role == "estudiante"` (una prueba recorre el código para impedirlo). Se comprueba
 en tres capas, porque ocultar un botón no es autorizar:
 

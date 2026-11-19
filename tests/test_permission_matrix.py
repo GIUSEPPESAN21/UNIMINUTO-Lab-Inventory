@@ -108,7 +108,6 @@ CAPABILITY_TABLE = {
     # cliente
     permissions.CAP_REQUEST: _CLIENT_AND_ABOVE,
     permissions.CAP_VIEW_OWN_REQUESTS: _CLIENT_AND_ABOVE,
-    permissions.CAP_CANCEL_OWN_REQUEST: _CLIENT_AND_ABOVE,
     permissions.CAP_CONFIRM_RECEIPT: _CLIENT_AND_ABOVE,
     permissions.CAP_RESERVE: _CLIENT_AND_ABOVE,
     permissions.CAP_CHECKOUT: _CLIENT_AND_ABOVE,
@@ -134,6 +133,7 @@ CAPABILITY_TABLE = {
     permissions.CAP_MANAGE_RESERVATIONS: _SUPERVISOR_PROFESSOR,
     permissions.CAP_VIEW_ALL_LOANS: _SUPERVISOR_PROFESSOR,
     permissions.CAP_CHECKIN_ANY: _SUPERVISOR_PROFESSOR,
+    permissions.CAP_CANCEL_ORDER: _SUPERVISOR_PROFESSOR,                   # v1.23: solo ellos cancelan pedidos
     # administrador
     permissions.CAP_MANAGE_USERS: {"maestro"},
     permissions.CAP_MANAGE_EMAIL: {"maestro"},
@@ -191,3 +191,24 @@ def test_domain_actions_enforce_the_capability_even_without_a_view(people):
         loans.checkout(storage, "LAB-MIC-01", 1, people["operario"])
     with pytest.raises(PermissionError):                                  # el supervisor no fija el escenario
         dispatch.set_scenario(storage, people["encargado"], "A")
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_only_professor_and_admin_cancel_orders_in_the_domain_and_the_data_layer(people, role):
+    """v1.23: cancelar exige `cancel_order` en dispatch, en service_requests y en LabStorage.transition_request."""
+    storage = LabStorage()
+    storage.save_item({"name": "Microscopio", "item_type": "standalone", "quantity": 5}, "LAB-MIC-01", is_new=True)
+    row, _, _ = service_requests.submit_request(storage, people["estudiante"], "product", "LAB-MIC-01", 1)
+    allowed = role in _SUPERVISOR_PROFESSOR
+    ok, message = service_requests.cancel_request(storage, row["id"], people[role], dispatch.CANCEL_CLIENT_ERROR)
+    assert ok is allowed, (role, message)
+    if allowed:
+        assert storage.get_service_request(row["id"])["status"] == "cancelled"
+        return
+    assert "permiso" in message
+    with pytest.raises(PermissionError):
+        dispatch.cancel_request(storage, row["id"], people[role], dispatch.CANCEL_CLIENT_ERROR)
+    ok, message, _ = storage.transition_request(row["id"], "order_cancelled", people[role],
+                                                {"reason_code": dispatch.CANCEL_CLIENT_ERROR})
+    assert not ok and "permiso" in message
+    assert storage.get_service_request(row["id"])["status"] == "pending"

@@ -223,21 +223,16 @@ def review_order(storage, order_id: str, decision: str, reviewer: dict, notes: s
     return True, f"Pedido de {done} producto(s): todas las líneas {verb}."
 
 
-def cancel_order(storage, order_id: str, actor: dict):
-    """Cancela las líneas de un pedido que todavía se pueden cancelar. Devuelve ``(ok, mensaje)``."""
-    rows = [row for row in order_rows(storage, order_id) if row.get("status") in (STATUS_PENDING, STATUS_APPROVED)]
-    if not rows:
-        return False, "Este pedido ya no tiene líneas para cancelar."
-    done, problems = 0, []
-    for row in rows:
-        ok, message = cancel_request(storage, row["id"], actor)
-        if ok:
-            done += 1
-        else:
-            problems.append(message)
-    if problems:
-        return done > 0, f"Se cancelaron {done} de {len(rows)} línea(s). " + problems[0]
-    return True, f"Pedido cancelado ({done} producto(s))."
+def cancel_order(storage, order_id: str, actor: dict, reason_code: str = "", reason_text: str = "",
+                 original_ref: str = ""):
+    """Cancela las líneas de un pedido que todavía se pueden cancelar (hasta «Recibida · por entregar»), con motivo.
+    Solo ``cancel_order`` (profesor y administrador). Devuelve ``(ok, mensaje)``; ver ``core.dispatch.cancel_order``."""
+    from core import dispatch       # diferido: dispatch importa (vía traceability) este módulo
+
+    if not permissions.has_cap(actor, permissions.CAP_CANCEL_ORDER):
+        return False, dispatch.CANCEL_DENIED
+    ok, message, _ = dispatch.cancel_order(storage, order_id, actor, reason_code, reason_text, original_ref)
+    return ok, message
 
 
 def review_request(storage, request_id: str, decision: str, reviewer: dict, notes: str = "",
@@ -262,14 +257,15 @@ def review_request(storage, request_id: str, decision: str, reviewer: dict, note
     return True, "Solicitud aprobada." if decision == STATUS_APPROVED else "Solicitud rechazada."
 
 
-def cancel_request(storage, request_id: str, actor: dict):
-    request = storage.get_service_request(request_id)
-    if not request:
+def cancel_request(storage, request_id: str, actor: dict, reason_code: str = "", reason_text: str = "",
+                   original_id: str = ""):
+    """Cancela una solicitud (producto o servicio) con motivo obligatorio. Solo ``cancel_order`` (profesor y
+    administrador): el cliente ya no cancela, ni siquiera lo suyo. Devuelve ``(ok, mensaje)``."""
+    from core import dispatch
+
+    if not permissions.has_cap(actor, permissions.CAP_CANCEL_ORDER):
+        return False, dispatch.CANCEL_DENIED
+    if not storage.get_service_request(request_id):
         return False, "La solicitud no existe."
-    owner = request.get("requester_id") == actor.get("id")
-    if owner and not permissions.has_cap(actor, permissions.CAP_CANCEL_OWN_REQUEST):
-        return False, "No tienes permiso para cancelar esta solicitud."
-    ok, message, _ = storage.transition_request(
-        request_id, "order_cancelled", actor, {"reason": "Cancelada"}
-    )
-    return ok, "Solicitud cancelada." if ok else message
+    ok, message, _ = dispatch.cancel_request(storage, request_id, actor, reason_code, reason_text, original_id)
+    return ok, message
